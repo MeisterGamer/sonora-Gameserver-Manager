@@ -1,0 +1,6 @@
+{
+  "name": "ApexHost - Game Server Manager",
+  "description": "Fortschrittlicher Gameserver Manager für über 100 Steam Games, alle Minecraft-Servertypen (Paper, Purpur, Forge, Fabric, Bedrock) mit integriertem Mod- & Plugin-Browser.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

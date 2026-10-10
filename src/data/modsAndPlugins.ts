@@ -1,0 +1,424 @@
+import { ModItem } from '../types/game';
+
+export const MODS_AND_PLUGINS_DATABASE: ModItem[] = [
+  // --- MINECRAFT PLUGINS (Paper / Purpur / Spigot) ---
+  {
+    id: 'luckperms',
+    name: 'LuckPerms',
+    gameId: 'minecraft',
+    category: 'Admin & Werkzeuge',
+    author: 'Luck',
+    downloads: '28.4M',
+    version: '5.4.140',
+    description: 'Das ultimative Rechte- und Rang-Verwaltungssystem mit modernem Web-Editor, Vererbung und SQL-Synchronisation.',
+    source: 'SpigotMC',
+    fileSize: '1.9 MB',
+    tags: ['Paper', 'Spigot', 'Purpur', 'Permissions', 'Must-Have']
+  },
+  {
+    id: 'essentialsx',
+    name: 'EssentialsX',
+    gameId: 'minecraft',
+    category: 'Utility',
+    author: 'EssentialsX Team',
+    downloads: '32.1M',
+    version: '2.20.1',
+    description: 'Kern-Suite mit über 100 essenziellen Befehlen: Teleportation (/tpa, /spawn), Warps, Kits, Wirtschaft, Chatformatierung und Schutz.',
+    source: 'SpigotMC',
+    fileSize: '3.4 MB',
+    tags: ['Paper', 'Spigot', 'Purpur', 'Economy', 'Homes', 'Warps']
+  },
+  {
+    id: 'worldedit',
+    name: 'WorldEdit',
+    gameId: 'minecraft',
+    category: 'Welt & Dimensionen',
+    author: 'EngineHub',
+    downloads: '45.0M',
+    version: '7.3.9',
+    description: 'Der leistungsfähigste In-Game-Karteneditor für schnelles Bauen, Kopieren, Einfügen, Terraforming und Schematics.',
+    source: 'SpigotMC',
+    fileSize: '4.8 MB',
+    tags: ['Paper', 'Spigot', 'Builder', 'Brush', 'Schematics']
+  },
+  {
+    id: 'vault',
+    name: 'Vault',
+    gameId: 'minecraft',
+    category: 'Wirtschaft',
+    author: 'MilkBowl',
+    downloads: '29.7M',
+    version: '1.7.3',
+    description: 'Standardisierte Schnittstelle (API) für Chat-, Rechte- und Wirtschafts-Plugins in Bukkit/Spigot.',
+    source: 'SpigotMC',
+    fileSize: '320 KB',
+    tags: ['Paper', 'Spigot', 'API', 'Economy', 'Dependency']
+  },
+  {
+    id: 'coreprotect',
+    name: 'CoreProtect',
+    gameId: 'minecraft',
+    category: 'Sicherheit',
+    author: 'Intelli',
+    downloads: '14.2M',
+    version: '22.4',
+    description: 'Blitzschnelle Block-Protokollierung und Rollback-System gegen Griefer, Diebe und Zerstörung.',
+    source: 'SpigotMC',
+    fileSize: '2.2 MB',
+    tags: ['Paper', 'Purpur', 'Anti-Grief', 'Rollback', 'Security']
+  },
+  {
+    id: 'dynmap',
+    name: 'Dynmap',
+    gameId: 'minecraft',
+    category: 'Welt & Dimensionen',
+    author: 'mikeprimm',
+    downloads: '18.9M',
+    version: '3.7-beta',
+    description: 'Echtzeit Google-Maps-ähnliche Web-Karte deiner Minecraft-Welt mit Spielermarkern, Chat und Tag-/Nacht-Rendering.',
+    source: 'SpigotMC',
+    fileSize: '15.4 MB',
+    tags: ['Paper', 'Spigot', 'Web-Map', 'Live-Map', 'World']
+  },
+  {
+    id: 'viaversion',
+    name: 'ViaVersion',
+    gameId: 'minecraft',
+    category: 'Utility',
+    author: 'FormularMC',
+    downloads: '21.5M',
+    version: '5.2.1',
+    description: 'Ermöglicht neueren Minecraft-Client-Versionen die Verbindung zu älteren oder neueren Server-Versionen.',
+    source: 'SpigotMC',
+    fileSize: '3.1 MB',
+    tags: ['Paper', 'Spigot', 'Velocity', 'Cross-Version']
+  },
+  {
+    id: 'chunky',
+    name: 'Chunky',
+    gameId: 'minecraft',
+    category: 'Performance',
+    author: 'pop4959',
+    downloads: '8.3M',
+    version: '1.4.28',
+    description: 'Multi-Threaded Chunk-Vorabgenerierung zur Vermeidung von Lags bei Erkundung mit Elytren und Pferden.',
+    source: 'SpigotMC',
+    fileSize: '890 KB',
+    tags: ['Paper', 'Purpur', 'Performance', 'Lag-Fix', 'Pre-Gen']
+  },
+  {
+    id: 'griefprevention',
+    name: 'GriefPrevention',
+    gameId: 'minecraft',
+    category: 'Sicherheit',
+    author: 'RoboMWM',
+    downloads: '9.4M',
+    version: '16.18.3',
+    description: 'Intuitiver Selbstschutz für Spieler mit Goldschaufel: Grundstücke sichern ohne komplizierte Befehle.',
+    source: 'SpigotMC',
+    fileSize: '1.4 MB',
+    tags: ['Paper', 'Spigot', 'Claims', 'Protection']
+  },
+  {
+    id: 'multiverse_core',
+    name: 'Multiverse-Core',
+    gameId: 'minecraft',
+    category: 'Welt & Dimensionen',
+    author: 'Multiverse Team',
+    downloads: '16.7M',
+    version: '4.3.14',
+    description: 'Ermöglicht das gleichzeitige Betreiben beliebig vieler Welten (Minigames, Nether, Void, Flat, Creative) auf einem Server.',
+    source: 'SpigotMC',
+    fileSize: '2.6 MB',
+    tags: ['Paper', 'Spigot', 'Multi-World', 'Portals']
+  },
+
+  // --- MINECRAFT MODS (Fabric / Forge / NeoForge) ---
+  {
+    id: 'sodium',
+    name: 'Sodium',
+    gameId: 'minecraft',
+    category: 'Performance',
+    author: 'CaffeineMC',
+    downloads: '58.2M',
+    version: '0.6.0',
+    description: 'Revolutionäre Rendering-Engine für moderne FPS-Steigerung und flüssiges Chunk-Laden auf Fabric/NeoForge.',
+    source: 'Modrinth',
+    fileSize: '1.1 MB',
+    tags: ['Fabric', 'NeoForge', 'FPS-Boost', 'Must-Have']
+  },
+  {
+    id: 'lithium',
+    name: 'Lithium',
+    gameId: 'minecraft',
+    category: 'Performance',
+    author: 'CaffeineMC',
+    downloads: '42.9M',
+    version: '0.14.0',
+    description: 'Allgemeine Server- und Physik-Optimierung (KI, Tick-Schleifen, Chunk-Kollisionen) ohne Änderung des Vanilla-Verhaltens.',
+    source: 'Modrinth',
+    fileSize: '780 KB',
+    tags: ['Fabric', 'NeoForge', 'Server-Optimization', 'TPS-Boost']
+  },
+  {
+    id: 'create_mod',
+    name: 'Create Mod',
+    gameId: 'minecraft',
+    category: 'Gameplay',
+    author: 'simibubi',
+    downloads: '38.5M',
+    version: '0.5.1j',
+    description: 'Wunderschöne kinetische Steampunk-Automatisierung mit Zahnrädern, Förderbändern, Zügen und beweglichen Fabriken.',
+    source: 'CurseForge',
+    fileSize: '24.2 MB',
+    tags: ['Forge', 'Fabric', 'NeoForge', 'Automation', 'Trains', 'Machinery']
+  },
+  {
+    id: 'jei',
+    name: 'Just Enough Items (JEI)',
+    gameId: 'minecraft',
+    category: 'Utility',
+    author: 'mezz',
+    downloads: '260M',
+    version: '19.8.0',
+    description: 'Unverzichtbarer Item- und Rezept-Browser direkt im Inventarbildschirm mit Suchleiste.',
+    source: 'CurseForge',
+    fileSize: '1.8 MB',
+    tags: ['Forge', 'Fabric', 'NeoForge', 'Recipes', 'UI']
+  },
+  {
+    id: 'journeymap',
+    name: 'JourneyMap',
+    gameId: 'minecraft',
+    category: 'Welt & Dimensionen',
+    author: 'techbrew',
+    downloads: '115M',
+    version: '5.10.3',
+    description: 'Echtzeit-Minimap und Vollbildkarte mit Wegpunkten, Mob-Radar und Höhlenerkennung.',
+    source: 'CurseForge',
+    fileSize: '6.4 MB',
+    tags: ['Forge', 'Fabric', 'Minimap', 'Waypoints']
+  },
+  {
+    id: 'applied_energistics_2',
+    name: 'Applied Energistics 2 (AE2)',
+    gameId: 'minecraft',
+    category: 'Gameplay',
+    author: 'AlgorithmX2',
+    downloads: '64M',
+    version: '16.0.4',
+    description: 'Materiell-digitale Massenspeicher, Glasfasernetzwerke, Auto-Crafting und molekulare Assembler.',
+    source: 'CurseForge',
+    fileSize: '12.8 MB',
+    tags: ['Forge', 'NeoForge', 'Fabric', 'Storage', 'Tech']
+  },
+
+  // --- RUST (Oxide / uMod) ---
+  {
+    id: 'rust_nteleportation',
+    name: 'NTeleportation',
+    gameId: 'rust',
+    category: 'Utility',
+    author: 'Nogrod / LaserHydra',
+    downloads: '1.4M',
+    version: '1.8.2',
+    description: 'Erlaubt Spielern das Setzen von Home-Punkten (/sethome, /home), Teleportanfragen (/tpa) und Stadt-Spawns.',
+    source: 'uMod',
+    fileSize: '68 KB',
+    tags: ['Oxide', 'uMod', 'Teleport', 'Homes']
+  },
+  {
+    id: 'rust_gathermanager',
+    name: 'GatherManager',
+    gameId: 'rust',
+    category: 'Gameplay',
+    author: 'Mughisi',
+    downloads: '1.1M',
+    version: '2.2.75',
+    description: 'Anpassbare Ressourcen-Multiplikatoren (2x, 5x, 10x Holz, Schwefel, Stein, Schrott) für schnellere Runden.',
+    source: 'uMod',
+    fileSize: '24 KB',
+    tags: ['Oxide', 'uMod', 'Gather-Rates', 'Loot']
+  },
+  {
+    id: 'rust_bgrade',
+    name: 'BGrade (Building Grade)',
+    gameId: 'rust',
+    category: 'Utility',
+    author: 'Ryan',
+    downloads: '920K',
+    version: '1.1.3',
+    description: 'Automatisches Upgraden von Bauteilen beim Platzieren direkt auf Holz, Stein, Metall oder Panzerglas.',
+    source: 'uMod',
+    fileSize: '18 KB',
+    tags: ['Oxide', 'uMod', 'Building', 'QoL']
+  },
+  {
+    id: 'rust_kits',
+    name: 'Kits',
+    gameId: 'rust',
+    category: 'Gameplay',
+    author: 'k1lly0u',
+    downloads: '880K',
+    version: '4.1.2',
+    description: 'Erstellt Start-Kits, VIP-Belohnungen und zeitgesteuerte Ausrüstungen für Spieler (/kit).',
+    source: 'uMod',
+    fileSize: '45 KB',
+    tags: ['Oxide', 'uMod', 'Kits', 'VIP']
+  },
+
+  // --- VALHEIM (BepInEx / Thunderstore) ---
+  {
+    id: 'valheim_plus',
+    name: 'Valheim Plus',
+    gameId: 'valheim',
+    category: 'Gameplay',
+    author: 'Grantapher',
+    downloads: '4.8M',
+    version: '0.9.13',
+    description: 'Die umfassendste Modifikation: Größeres Inventar, automatisches Craften aus Kisten, Bau-Raster und Geschwindigkeits-Tuning.',
+    source: 'Thunderstore',
+    fileSize: '480 KB',
+    tags: ['BepInEx', 'Quality-of-Life', 'Building', 'Storage']
+  },
+  {
+    id: 'valheim_jotunn',
+    name: 'Jötunn, the Valheim Library',
+    gameId: 'valheim',
+    category: 'Admin & Werkzeuge',
+    author: 'ValheimModding',
+    downloads: '6.2M',
+    version: '2.21.3',
+    description: 'Die essenzielle Modding-Bibliothek für benutzerdefinierte Rüstungen, Waffen, Rezepte und Server-Synchronisation.',
+    source: 'Thunderstore',
+    fileSize: '1.8 MB',
+    tags: ['BepInEx', 'Core-Library', 'API']
+  },
+  {
+    id: 'valheim_epic_loot',
+    name: 'Epic Loot',
+    gameId: 'valheim',
+    category: 'Gameplay',
+    author: 'RandyKnapp',
+    downloads: '2.1M',
+    version: '0.10.4',
+    description: 'Fügt RPG-Beute im Diablo-Stil hinzu: Seltene, epische und legendäre Gegenstände mit magischen Verzauberungen.',
+    source: 'Thunderstore',
+    fileSize: '5.2 MB',
+    tags: ['BepInEx', 'RPG', 'Enchanting', 'Loot']
+  },
+
+  // --- PALWORLD (UE4SS) ---
+  {
+    id: 'palworld_mod_framework',
+    name: 'Palworld Modding Framework',
+    gameId: 'palworld',
+    category: 'Admin & Werkzeuge',
+    author: 'UE4SS Team',
+    downloads: '1.9M',
+    version: '3.0.1',
+    description: 'Unreal Engine 4/5 Subsystem für Lua-Skripte und C++ DLL-Injektion zur Modifikation von Palworld-Servern.',
+    source: 'GitHub',
+    fileSize: '8.4 MB',
+    tags: ['UE4SS', 'Framework', 'Lua']
+  },
+  {
+    id: 'palworld_faster_breeding',
+    name: 'Faster Breeding & Incubator',
+    gameId: 'palworld',
+    category: 'Gameplay',
+    author: 'Kiyoz',
+    downloads: '740K',
+    version: '1.2.0',
+    description: 'Verringert die Brut- und Zuchtzeiten für Pals im Zuchtgehege auf dem Server für angenehmeres Endgame.',
+    source: 'GitHub',
+    fileSize: '120 KB',
+    tags: ['Breeding', 'Pals', 'Speed']
+  },
+
+  // --- COUNTER-STRIKE 2 (CounterStrikeSharp) ---
+  {
+    id: 'cs2_matchzy',
+    name: 'MatchZy',
+    gameId: 'cs2',
+    category: 'Admin & Werkzeuge',
+    author: 'shobhit-pathak',
+    downloads: '380K',
+    version: '0.8.2',
+    description: 'Vollständiges Match-Management-Plugin für CS2: Scrims, Practice-Modus (.setup, .pause), Pause/Unpause und Demos.',
+    source: 'GitHub',
+    fileSize: '1.2 MB',
+    tags: ['CounterStrikeSharp', 'Competitive', 'Scrims']
+  },
+  {
+    id: 'cs2_retakes',
+    name: 'CS2 Retakes Plugin',
+    gameId: 'cs2',
+    category: 'Gameplay',
+    author: 'B3none',
+    downloads: '210K',
+    version: '1.4.1',
+    description: 'Automatisierte Bomb-Retake-Runden auf A- und B-Spots mit dynamischer Waffenauswahl für intensives Training.',
+    source: 'GitHub',
+    fileSize: '640 KB',
+    tags: ['CounterStrikeSharp', 'Practice', 'Retakes']
+  },
+
+  // --- 7 DAYS TO DIE ---
+  {
+    id: '7days_darkness_falls',
+    name: 'Darkness Falls Overhaul',
+    gameId: '7days_to_die',
+    category: 'Gameplay',
+    author: 'KhaineGB',
+    downloads: '950K',
+    version: 'V5.1',
+    description: 'Monumentale Total-Conversion: Klassen-System, Dämonen-Zombies, Laser-Waffen und erweiterte Forschungsbäume.',
+    source: 'GitHub',
+    fileSize: '1.6 GB',
+    tags: ['Total-Conversion', 'RPG', 'Classes']
+  },
+
+  // --- PROJECT ZOMBOID ---
+  {
+    id: 'pz_brita_weapons',
+    name: "Brita's Weapon Pack",
+    gameId: 'project_zomboid',
+    category: 'Gameplay',
+    author: 'BRITA',
+    downloads: '3.4M',
+    version: '2.0.2',
+    description: 'Hunderte reale Schusswaffen, Munitionstypen, Zielfernrohre, Schalldämpfer und realistische Nachlade-Mechaniken.',
+    source: 'Steam Workshop',
+    fileSize: '85 MB',
+    tags: ['Steam Workshop', 'Weapons', 'Guns']
+  },
+
+  // --- GARRY'S MOD ---
+  {
+    id: 'gmod_darkrp',
+    name: 'DarkRP Gamemode',
+    gameId: 'gmod',
+    category: 'Gameplay',
+    author: 'FPtje',
+    downloads: '15.2M',
+    version: '2.7.0',
+    description: 'Der legendäre Rollenspiel-Modus: Polizisten, Bürgermeister, Diebe, Gelddrucker, Türenkauf und Waffenhändler.',
+    source: 'Steam Workshop',
+    fileSize: '4.2 MB',
+    tags: ['Gamemode', 'Roleplay', 'DarkRP']
+  },
+  {
+    id: 'gmod_wiremod',
+    name: 'Wiremod',
+    gameId: 'gmod',
+    category: 'Utility',
+    author: 'Wiremod Team',
+    downloads: '8.7M',
+    version: '3.1.0',
+    description: 'Komplexe Elektronik, Logik-Gatter, Laser, E2-Skripte und CPU-Chips für fortgeschrittene Physik-Bauten.',
+    source: 'Steam Workshop',
+    fileSize: '14.8 MB',
+    tags: ['Electronics', 'Wiring', 'E2']
+  }
+];

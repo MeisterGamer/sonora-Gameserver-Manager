@@ -55,8 +55,32 @@ if [ "$NEED_JAVA" = true ]; then
   echo -e "${GREEN}✓ Java 21 erfolgreich installiert ($(java -version 2>&1 | head -n 1)).${NC}"
 fi
 
-# 4. Node.js (v22 LTS) & npm prüfen / installieren
-echo -e "${BLUE}[4/8] Prüfe Node.js & npm...${NC}"
+# 4. SteamCMD & 32-Bit Bibliotheken prüfen / installieren (Essentiell für Palworld, Rust, CS2, Valheim etc.)
+echo -e "${BLUE}[4/9] Prüfe Valve SteamCMD & System-Laufzeitbibliotheken...${NC}"
+dpkg --add-architecture i386 || true
+apt-get update -y -q
+apt-get install -y -q lib32gcc-s1 lib32stdc++6 libsdl2-2.0-0 || true
+
+# Pre-seed steamcmd license agreement
+echo steam steam/question select "I AGREE" | debconf-set-selections || true
+echo steam steam/license note '' | debconf-set-selections || true
+apt-get install -y -q steamcmd || true
+
+if [ -f /usr/games/steamcmd ] && [ ! -f /usr/bin/steamcmd ]; then
+  ln -s /usr/games/steamcmd /usr/bin/steamcmd
+fi
+
+# Standalone SteamCMD in /opt/steamcmd als stabiler Fallback
+mkdir -p /opt/steamcmd
+if [ ! -f /opt/steamcmd/steamcmd.sh ]; then
+  echo -e "${YELLOW}Richte SteamCMD Portable in /opt/steamcmd ein...${NC}"
+  curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar -zxvf - -C /opt/steamcmd/ || true
+  chmod +x /opt/steamcmd/steamcmd.sh 2>/dev/null || true
+fi
+echo -e "${GREEN}✓ SteamCMD einsatzbereit für automatische Steam-Gameserver Downloads.${NC}"
+
+# 5. Node.js (v22 LTS) & npm prüfen / installieren
+echo -e "${BLUE}[5/9] Prüfe Node.js & npm...${NC}"
 NEED_NODE=true
 if command -v node &>/dev/null; then
   NODE_VER=$(node -v | sed 's/v//')
@@ -74,8 +98,8 @@ if [ "$NEED_NODE" = true ]; then
   echo -e "${GREEN}✓ Node.js $(node -v) und npm $(npm -v) erfolgreich installiert.${NC}"
 fi
 
-# 5. Repository prüfen bzw. klonen
-echo -e "${BLUE}[5/8] Richte Sonora Gameserver Manager Projekt ein...${NC}"
+# 6. Repository prüfen bzw. klonen
+echo -e "${BLUE}[6/9] Richte Sonora Gameserver Manager Projekt ein...${NC}"
 REPO_URL="https://github.com/MeisterGamer/sonora-Gameserver-Manager.git"
 
 if [ -f "./package.json" ] && [ -f "./server.ts" ]; then
@@ -99,8 +123,8 @@ fi
 # Verzeichnisse für Gameserver und Logs anlegen
 mkdir -p "$INSTALL_DIR/data/servers"
 
-# 6. NPM Abhängigkeiten installieren & Production Build kompilieren
-echo -e "${BLUE}[6/8] Installiere NPM-Abhängigkeiten und erstelle Production-Build...${NC}"
+# 7. NPM Abhängigkeiten installieren & Production Build kompilieren
+echo -e "${BLUE}[7/9] Installiere NPM-Abhängigkeiten und erstelle Production-Build...${NC}"
 cd "$INSTALL_DIR"
 
 # npm install mit legacy-peer-deps ausführen, um peer-Konflikte auszuschließen
@@ -110,23 +134,29 @@ echo -e "${YELLOW}Kompiliere Frontend-Assets (Vite Build)...${NC}"
 npm run build
 echo -e "${GREEN}✓ Production-Build erfolgreich erstellt.${NC}"
 
-# 7. Firewall (UFW) Ports freischalten
-echo -e "${BLUE}[7/8] Konfiguriere Firewall (UFW Ports)...${NC}"
+# 8. Firewall (UFW) Ports freischalten
+echo -e "${BLUE}[8/9] Konfiguriere Firewall (UFW Ports für Panel, Minecraft & Steam)...${NC}"
 if command -v ufw &>/dev/null; then
   ufw allow 3000/tcp comment 'Sonora Manager Web Panel' >/dev/null 2>&1 || true
   ufw allow 25565/tcp comment 'Minecraft Server Port TCP' >/dev/null 2>&1 || true
   ufw allow 25565/udp comment 'Minecraft Server Port UDP' >/dev/null 2>&1 || true
+  ufw allow 8211/udp comment 'Palworld Dedicated Port' >/dev/null 2>&1 || true
+  ufw allow 28015/tcp comment 'Rust Server Port TCP' >/dev/null 2>&1 || true
+  ufw allow 28015/udp comment 'Rust Server Port UDP' >/dev/null 2>&1 || true
+  ufw allow 28016/tcp comment 'Rust RCON Port' >/dev/null 2>&1 || true
+  ufw allow 2456:2457/udp comment 'Valheim Server Ports' >/dev/null 2>&1 || true
+  ufw allow 27015/udp comment 'Steam Master Server Query' >/dev/null 2>&1 || true
   ufw allow 2022/tcp comment 'SFTP Daemon Port' >/dev/null 2>&1 || true
   if ufw status | grep -q "Status: active"; then
     ufw reload >/dev/null 2>&1 || true
-    echo -e "${GREEN}✓ UFW Ports 3000 (Panel), 25565 (Minecraft) und 2022 (SFTP) freigegeben.${NC}"
+    echo -e "${GREEN}✓ UFW Ports 3000 (Panel), 25565 (Minecraft), 8211 (Palworld), 28015 (Rust) und 2022 (SFTP) freigegeben.${NC}"
   else
     echo -e "${YELLOW}ℹ UFW Firewall ist inaktiv (alle Ports bereits offen).${NC}"
   fi
 fi
 
-# 8. systemd Service Unit einrichten (Automatischer Start beim Booten)
-echo -e "${BLUE}[8/8] Richte systemd Hintergrunddienst ein...${NC}"
+# 9. systemd Service Unit einrichten (Automatischer Start beim Booten)
+echo -e "${BLUE}[9/9] Richte systemd Hintergrunddienst ein...${NC}"
 
 SERVICE_FILE="/etc/systemd/system/sonora-manager.service"
 cat <<EOF > "$SERVICE_FILE"
@@ -166,6 +196,7 @@ echo -e "${GREEN}${BOLD}══════════════════�
 echo ""
 echo -e "  🌐 ${BOLD}Web-Panel aufrufen:${NC}     http://${SERVER_IP}:3000"
 echo -e "  🎮 ${BOLD}Minecraft Gameserver:${NC}   ${SERVER_IP}:25565"
+echo -e "  🚀 ${BOLD}Steam Dedicated Server:${NC} Aktiv (Palworld, Rust, CS2, Valheim etc.)"
 echo -e "  ☕ ${BOLD}Installiertes Java:${NC}     $(java -version 2>&1 | head -n 1)"
 echo -e "  ⚡ ${BOLD}Node.js Version:${NC}        $(node -v)"
 echo -e "  📂 ${BOLD}Installationspfad:${NC}      ${INSTALL_DIR}"

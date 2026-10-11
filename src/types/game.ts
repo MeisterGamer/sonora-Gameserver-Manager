@@ -81,6 +81,9 @@ export interface ServerInstance {
   gameId: string;
   gameName: string;
   category: GameCategory;
+  steamAppId?: number;
+  linuxExecutable?: string;
+  linuxStartArgs?: string;
   status: ServerStatus;
   allocatedRamGb: number;
   port: number;

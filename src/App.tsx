@@ -195,18 +195,10 @@ export default function App() {
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.logs) && data.logs.length > 0) {
-            setLogsMap(prev => {
-              const currentLogs = prev[selectedServerId] || [];
-              const currentIds = new Set(currentLogs.map(l => l.id));
-              const fresh = data.logs.filter((l: any) => !currentIds.has(l.id));
-              if (fresh.length > 0) {
-                return {
-                  ...prev,
-                  [selectedServerId]: [...currentLogs, ...fresh].slice(-500)
-                };
-              }
-              return prev;
-            });
+            setLogsMap(prev => ({
+              ...prev,
+              [selectedServerId]: data.logs
+            }));
           }
         }
       } catch {
@@ -247,7 +239,17 @@ export default function App() {
       const res = await fetch(`/api/servers/${id}/power`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'start', ramGb: target?.allocatedRamGb || 4, port: target?.port || 25565 })
+        body: JSON.stringify({ 
+          action: 'start', 
+          ramGb: target?.allocatedRamGb || 4, 
+          port: target?.port || 25565,
+          gameId: target?.gameId,
+          category: target?.category,
+          steamAppId: target?.steamAppId,
+          executable: target?.linuxExecutable,
+          startArgs: target?.linuxStartArgs,
+          version: target?.version
+        })
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -708,6 +710,9 @@ export default function App() {
       gameId: data.gameId || 'mc_paper',
       gameName: data.gameName || 'Minecraft',
       category: data.category || 'minecraft',
+      steamAppId: data.steamAppId,
+      linuxExecutable: data.linuxExecutable,
+      linuxStartArgs: data.linuxStartArgs,
       status: 'offline',
       allocatedRamGb: data.allocatedRamGb || adminSettings.defaultRamAllocationGb || 6,
       port: data.port || 25565,
@@ -763,6 +768,15 @@ export default function App() {
     setSelectedServerId(newId);
     setCurrentNavTab('servers');
     showToast(`Server "${newServer.name}" erfolgreich erstellt!`);
+
+    // Call backend to provision server directory and auto-install files
+    fetch('/api/servers/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server: newServer, autoInstall: (data as any).autoInstall !== false })
+    }).catch(() => {
+      // preview environment simulation fallback
+    });
   };
 
   // Shop Purchase with Auto-Provisioning

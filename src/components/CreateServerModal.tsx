@@ -31,6 +31,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
   const [ramGb, setRamGb] = useState<number>(currentSettings.defaultRamAllocationGb || 6);
   const [targetOS, setTargetOS] = useState<PlatformOS>(currentOS);
   const [autoRestart, setAutoRestart] = useState<boolean>(true);
+  const [autoInstallFiles, setAutoInstallFiles] = useState<boolean>(true);
 
   // Minecraft specific
   const [mcVersion, setMcVersion] = useState<string>(currentSettings.defaultMinecraftVersion || '26.3');
@@ -79,11 +80,14 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     e.preventDefault();
     if (!instanceName.trim() || !activeGame) return;
 
-    const newServer: Partial<ServerInstance> = {
+    const newServer: Partial<ServerInstance> & { autoInstall?: boolean } = {
       name: instanceName.trim(),
       gameId: activeGame.id,
       gameName: activeGame.name,
       category: activeGame.category,
+      steamAppId: activeGame.steamAppId,
+      linuxExecutable: activeGame.executable?.linux,
+      linuxStartArgs: activeGame.defaultStartArgs?.linux,
       status: 'offline',
       allocatedRamGb: ramGb,
       port,
@@ -110,6 +114,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
       }, {} as Record<string, string>)
     };
 
+    (newServer as any).autoInstall = autoInstallFiles;
     onCreateServer(newServer);
     onClose();
   };
@@ -302,6 +307,30 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             <label htmlFor="autoRestartCheckbox" className="text-neutral-300 cursor-pointer">
               Automatischer Neustart bei unerwartetem Absturz (Crash-Guard)
             </label>
+          </div>
+
+          {/* Auto Download & Install Server Files Toggle */}
+          <div className="p-3 rounded-lg bg-emerald-950/30 border border-emerald-800/60 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="autoInstallCheckbox"
+                checked={autoInstallFiles}
+                onChange={(e) => setAutoInstallFiles(e.target.checked)}
+                className="accent-emerald-500 cursor-pointer w-4 h-4"
+              />
+              <label htmlFor="autoInstallCheckbox" className="text-emerald-300 font-semibold cursor-pointer flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Server-Dateien nach Erstellung sofort automatisch installieren</span>
+              </label>
+            </div>
+            <p className="text-[11px] text-neutral-400 pl-6">
+              {isMinecraft 
+                ? 'Lädt automatisch die offizielle PaperMC Server-JAR herunter und akzeptiert die EULA, damit der Server sofort gestartet werden kann.' 
+                : activeGame.steamAppId 
+                ? `Installiert das Spiel automatisch via SteamCMD (AppID: ${activeGame.steamAppId}) direkt auf deinen Server.` 
+                : 'Initialisiert das Server-Verzeichnis und alle Standard-Konfigurationsdateien.'}
+            </p>
           </div>
 
           {/* Action Buttons */}

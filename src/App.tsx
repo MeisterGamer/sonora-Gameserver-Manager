@@ -76,6 +76,7 @@ import { UserControlView } from './components/UserControlView';
 import { LoginModal } from './components/LoginModal';
 import { CRMView } from './components/CRMView';
 import { ExpiryWarningBanner } from './components/ExpiryWarningBanner';
+import { DeleteServerModal } from './components/DeleteServerModal';
 
 export default function App() {
   const [servers, setServers] = useState<ServerInstance[]>(getStoredServers);
@@ -103,6 +104,7 @@ export default function App() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCustomGameModalOpen, setIsCustomGameModalOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [serverToDelete, setServerToDelete] = useState<ServerInstance | null>(null);
   const [preselectedGame, setPreselectedGame] = useState<GameDefinition | null>(null);
 
   // Success toast message
@@ -282,14 +284,72 @@ export default function App() {
   };
 
   const handleDeleteServer = (id: string) => {
-    if (confirm('Möchtest du diesen Gameserver wirklich unwiderruflich löschen?')) {
-      setServers(servers.filter(s => s.id !== id));
-      setContracts(contracts.filter(c => c.serverId !== id));
-      if (selectedServerId === id) {
-        setSelectedServerId(null);
-      }
-      showToast('Server erfolgreich gelöscht.');
+    const srv = servers.find(s => s.id === id);
+    if (srv) {
+      setServerToDelete(srv);
     }
+  };
+
+  const handleConfirmDeleteServer = (id: string, keepBackups?: boolean) => {
+    const target = servers.find(s => s.id === id);
+    const targetName = target ? target.name : 'Server';
+
+    // 1. Remove from active servers list
+    setServers(prev => prev.filter(s => s.id !== id));
+
+    // 2. Clear from logs
+    setLogsMap(prev => {
+      const copy = { ...prev };
+      delete copy[id];
+      return copy;
+    });
+
+    // 3. Mark or terminate associated contract in CRM
+    setContracts(prev => prev.filter(c => c.serverId !== id));
+
+    // 4. Reset selected view if currently open
+    if (selectedServerId === id) {
+      setSelectedServerId(null);
+    }
+
+    setServerToDelete(null);
+    showToast(`Server "${targetName}" wurde erfolgreich und unwiderruflich gelöscht.`);
+  };
+
+  const handleUpdateVersion = (serverId: string, newVersion: string, notes?: string) => {
+    setServers(prev => prev.map(s => {
+      if (s.id === serverId) {
+        return { ...s, version: newVersion };
+      }
+      return s;
+    }));
+  };
+
+  const handleCloneServer = (serverId: string) => {
+    const srv = servers.find(s => s.id === serverId);
+    if (!srv) return;
+
+    const maxPort = Math.max(...servers.map(s => s.port), srv.port);
+    const newPort = maxPort + 1;
+    const newId = `srv_${srv.gameId}_${Date.now()}`;
+
+    const clonedServer: ServerInstance = {
+      ...srv,
+      id: newId,
+      name: `${srv.name} (Klon)`,
+      status: 'offline',
+      port: newPort,
+      queryPort: newPort,
+      rconPort: srv.rconPort ? srv.rconPort + 10 : undefined,
+      uptimeSeconds: 0,
+      cpuUsagePercent: 0,
+      ramUsageMb: 0,
+      currentPlayers: 0,
+      createdAt: new Date().toISOString()
+    };
+
+    setServers(prev => [...prev, clonedServer]);
+    showToast(`Server "${srv.name}" erfolgreich dupliziert auf Port ${newPort}!`);
   };
 
   // Interactive Command Execution
@@ -1030,6 +1090,9 @@ export default function App() {
               onUninstallMod={handleUninstallMod}
               onToggleMod={handleToggleMod}
               onSaveConfigFile={handleSaveConfigFile}
+              onUpdateVersion={handleUpdateVersion}
+              onDeleteServer={handleDeleteServer}
+              onNotify={showToast}
             />
           ) : (
             <ServerList
@@ -1039,6 +1102,7 @@ export default function App() {
               onStopServer={handleStopServer}
               onRestartServer={handleRestartServer}
               onDeleteServer={handleDeleteServer}
+              onCloneServer={handleCloneServer}
               onOpenCreateModal={() => {
                 setPreselectedGame(null);
                 setIsCreateModalOpen(true);
@@ -1092,6 +1156,7 @@ export default function App() {
             onFastForwardTime={handleFastForwardTime}
             onCreateTicket={handleCreateTicket}
             onReplyTicket={handleReplyTicket}
+            onDeleteServer={handleDeleteServer}
           />
         )}
 
@@ -1164,6 +1229,13 @@ export default function App() {
         currentUser={currentUser}
         onSelectUser={handleSelectUser}
         onRegisterUser={handleRegisterUser}
+      />
+
+      <DeleteServerModal
+        isOpen={Boolean(serverToDelete)}
+        server={serverToDelete}
+        onClose={() => setServerToDelete(null)}
+        onConfirmDelete={handleConfirmDeleteServer}
       />
     </div>
   );

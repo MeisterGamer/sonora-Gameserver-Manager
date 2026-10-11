@@ -151,3 +151,32 @@ export interface ScheduledTask {
   lastRun?: string;
   nextRun: string;
 }
+
+export interface ServerFileItem {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  sizeBytes: number;
+  lastModified: string;
+  content?: string;
+  isEditable?: boolean;
+}
+
+export interface ServerAuditLog {
+  id: string;
+  serverId: string;
+  action: 'start' | 'stop' | 'restart' | 'kill' | 'config_edit' | 'mod_install' | 'mod_uninstall' | 'backup' | 'command' | 'port_change';
+  user: string;
+  details: string;
+  timestamp: string;
+  severity: 'info' | 'warning' | 'success';
+}
+
+export interface PortAllocation {
+  id: string;
+  port: number;
+  type: 'primary' | 'query' | 'rcon' | 'web';
+  protocol: 'TCP' | 'UDP' | 'TCP/UDP';
+  serviceName: string;
+  isPrimary?: boolean;
+}

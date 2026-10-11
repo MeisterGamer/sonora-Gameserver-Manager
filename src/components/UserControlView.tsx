@@ -24,6 +24,7 @@ export const UserControlView: React.FC<UserControlViewProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'profile' | 'subusers' | 'api'>('subusers');
   const [copiedToken, setCopiedToken] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
 
   // New SubUser modal state
   const [showAddSubUserModal, setShowAddSubUserModal] = useState(false);
@@ -241,12 +242,19 @@ export const UserControlView: React.FC<UserControlViewProps> = ({
                 placeholder="Neues Passwort"
                 className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded text-neutral-200"
               />
-              <button
-                onClick={() => alert('Passwort wurde erfolgreich aktualisiert.')}
-                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded cursor-pointer"
-              >
-                Passwort speichern
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setPasswordSuccess(true)}
+                  className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded cursor-pointer transition-colors"
+                >
+                  Passwort speichern
+                </button>
+                {passwordSuccess && (
+                  <span className="text-xs text-emerald-400 flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5" /> Passwort erfolgreich aktualisiert
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>

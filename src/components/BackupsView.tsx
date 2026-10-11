@@ -57,6 +57,8 @@ export const BackupsView: React.FC<BackupsViewProps> = ({ server }) => {
 
   const [creatingBackup, setCreatingBackup] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [backupToDelete, setBackupToDelete] = useState<string | null>(null);
+  const [backupToRestore, setBackupToRestore] = useState<BackupItem | null>(null);
 
   const handleCreateBackup = () => {
     setCreatingBackup(true);
@@ -76,14 +78,26 @@ export const BackupsView: React.FC<BackupsViewProps> = ({ server }) => {
   };
 
   const handleRestoreBackup = (b: BackupItem) => {
-    if (confirm(`Möchtest du das Backup "${b.name}" wirklich wiederherstellen? Bestehende Weltdaten werden überschrieben.`)) {
-      setSuccessToast(`Backup "${b.name}" wurde erfolgreich wiederhergestellt!`);
-      setTimeout(() => setSuccessToast(null), 3500);
-    }
+    setBackupToRestore(b);
+  };
+
+  const handleConfirmRestore = () => {
+    if (!backupToRestore) return;
+    setSuccessToast(`Backup "${backupToRestore.name}" wurde erfolgreich wiederhergestellt!`);
+    setBackupToRestore(null);
+    setTimeout(() => setSuccessToast(null), 3500);
   };
 
   const handleDeleteBackup = (id: string) => {
-    setBackups(backups.filter(b => b.id !== id));
+    setBackupToDelete(id);
+  };
+
+  const handleConfirmDeleteBackup = () => {
+    if (!backupToDelete) return;
+    setBackups(prev => prev.filter(b => b.id !== backupToDelete));
+    setBackupToDelete(null);
+    setSuccessToast('Backup erfolgreich gelöscht.');
+    setTimeout(() => setSuccessToast(null), 3000);
   };
 
   const handleToggleTask = (id: string) => {
@@ -158,7 +172,8 @@ export const BackupsView: React.FC<BackupsViewProps> = ({ server }) => {
                   </button>
                   <button
                     onClick={() => {
-                      alert(`Download von ${b.name} gestartet.`);
+                      setSuccessToast(`Download von "${b.name}" vorbereitet und gestartet.`);
+                      setTimeout(() => setSuccessToast(null), 3000);
                     }}
                     className="p-1.5 text-neutral-400 hover:text-emerald-400 rounded hover:bg-neutral-800 transition-colors cursor-pointer"
                     title="Als TAR/ZIP herunterladen"
@@ -178,6 +193,74 @@ export const BackupsView: React.FC<BackupsViewProps> = ({ server }) => {
           </div>
         )}
       </div>
+
+      {/* Restore Confirmation Modal */}
+      {backupToRestore && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400 shrink-0">
+                <RotateCcw className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-neutral-100 text-sm">Backup wiederherstellen?</h3>
+                <p className="text-[11px] text-neutral-400">Aktuelle Weltdaten werden überschrieben.</p>
+              </div>
+            </div>
+
+            <div className="p-2.5 bg-neutral-950 rounded-lg border border-neutral-800 font-mono text-xs text-neutral-200">
+              {backupToRestore.name}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1 text-xs">
+              <button
+                onClick={() => setBackupToRestore(null)}
+                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg cursor-pointer"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={handleConfirmRestore}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg cursor-pointer transition-colors"
+              >
+                Wiederherstellen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Backup Confirmation Modal */}
+      {backupToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-rose-900/60 rounded-xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-rose-950 border border-rose-800 flex items-center justify-center text-rose-400 shrink-0">
+                <Trash2 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-neutral-100 text-sm">Backup löschen?</h3>
+                <p className="text-[11px] text-neutral-400">Dieser Snapshot wird dauerhaft entfernt.</p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1 text-xs">
+              <button
+                onClick={() => setBackupToDelete(null)}
+                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg cursor-pointer"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={handleConfirmDeleteBackup}
+                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-semibold rounded-lg cursor-pointer transition-colors"
+              >
+                Löschen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Scheduled Tasks / Cron Section */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">

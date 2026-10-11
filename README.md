@@ -12,18 +12,24 @@
    - [100+ Steam Games](#100-steam-games)
    - [Minecraft aller Arten & Versionen (bis 26.3)](#minecraft-aller-arten--versionen)
 4. [Mod- & Plugin-Browser (Echte APIs)](#-mod---plugin-browser-echte-apis)
-5. [Kundenmanagementsystem (CRM) & Prepaid-Billing](#-kundenmanagementsystem-crm--prepaid-billing)
+5. [Erweiterte Instanzverwaltung & Operations](#-erweiterte-instanzverwaltung--operations)
+   - [Update- & Versions-Zentrum](#update---versions-zentrum)
+   - [Audit-Log & Ereignisprotokoll](#audit-log--ereignisprotokoll)
+   - [Discord & Webhook-Integration](#discord--webhook-integration)
+   - [Massenaktionen & Server-Klonen](#massenaktionen--server-klonen)
+   - [Sicheres Instanz-Löschverfahren](#sicheres-instanz-löschverfahren)
+6. [Kundenmanagementsystem (CRM) & Prepaid-Billing](#-kundenmanagementsystem-crm--prepaid-billing)
    - [Prepaid-Philosophie & Guthabensystem](#prepaid-philosophie--guthabensystem)
    - [Automatisches Warn- & Ablaufsystem](#automatisches-warn---ablaufsystem)
    - [Zahlungsschnittstellen & Rechnungsstellung](#zahlungsschnittstellen--rechnungsstellung)
    - [Support-Ticket-System](#support-ticket-system)
-6. [Benutzer- & Admin-Control (RBAC)](#-benutzer---admin-control-rbac)
-7. [Admin Settings & Steam-Offline-Bypass](#-admin-settings--steam-offline-bypass)
-8. [Erweiterbarkeit — Neue Spiele & Modloader hinzufügen](#-erweiterbarkeit--neue-spiele-hinzufügen)
-9. [Installation & Schnellstart (Node.js 24)](#-installation--schnellstart-nodejs-24)
-10. [Konfiguration & Umgebungsvariablen](#-konfiguration--umgebungsvariablen)
-11. [Projektstruktur](#-projektstruktur)
-12. [Lizenz & Support](#-lizenz--support)
+7. [Benutzer- & Admin-Control (RBAC)](#-benutzer---admin-control-rbac)
+8. [Admin Settings & Steam-Offline-Bypass](#-admin-settings--steam-offline-bypass)
+9. [Erweiterbarkeit — Neue Spiele & Modloader hinzufügen](#-erweiterbarkeit--neue-spiele-hinzufügen)
+10. [Installation & Schnellstart (Node.js 24)](#-installation--schnellstart-nodejs-24)
+11. [Konfiguration & Umgebungsvariablen](#-konfiguration--umgebungsvariablen)
+12. [Projektstruktur](#-projektstruktur)
+13. [Lizenz & Support](#-lizenz--support)
 
 ---
 
@@ -31,6 +37,15 @@
 
 ApexHost ist als All-in-One-Lösung für Hosting-Provider, Gaming-Communities und Server-Administratoren konzipiert. Die Anwendung kombiniert ein intuitives Frontend mit einer leistungsfähigen Node.js-Backend-Architektur.
 
+- 📁 **Interaktiver Web-Dateimanager:** Verzeichnisbaum, In-Browser-Syntax-Editor, 1-Klick-EULA-Zustimmung und SFTP-Zugangsdaten (FileZilla / WinSCP).
+- 🔄 **Update- & Versions-Zentrum:** Minecraft Multi-Engine-Wechsler (Paper, Purpur, Fabric, NeoForge, Forge, Bedrock) mit Versionen bis 26.3, plus SteamCMD Branch-Umschaltung (public, beta, experimental) inklusive Prüfsummenvalidierung (`+app_update validate`).
+- 🛡️ **Audit-Log & Ereignisprotokoll:** Lückenloses Nachverfolgen aller Server-Befehle, Start-/Stopp-Aktionen, Config-Edits und Portänderungen mit JSON-Export.
+- 🔔 **Discord & Webhook-Integration:** Automatische Benachrichtigungen bei Boot, Herunterfahren, Absturz/Watchdog-Restart, Backups oder Überlastung (>90% Last) direkt in deinen Discord-Server.
+- 📋 **Massenaktionen & Server-Klonen:** Server-Listenfilter, Multi-Select Checkboxen (Massen-Start, Massen-Stopp) und 1-Klick-Duplizierung mit automatischer Portberechnung.
+- 🗑️ **Sichere Instanz-Löschung:** Zweistufiger Sicherheitsdialog mit Namenseingabe-Bestätigung und optionalem Backup-Erhalt gegen versehentlichen Datenverlust.
+- 📈 **Live-Performance & Telemetrie-Graphen:** Echtzeit vCPU-Flächendiagramm, RAM-/Heap-Verteilung, 20.0 TPS-Stabilitätsanzeige, Bandbreiten-Stream und Prozess-Inspektor.
+- 🌐 **Netzwerk- & Port-Manager:** Dynamische Port-Reservierung (Voice-Chat, Dynmap), kostenlose Subdomains (`.apexhost.me`) und DNS-SRV-Record-Generator.
+- 💻 **Interaktive RCON-Konsole:** Befehlshistorie (Pfeiltasten ↑ / ↓), Log-Filter (INFO, WARN, ERROR, SUCCESS), Textsuche und Log-Export.
 - 🚀 **Node.js 24 & Full-Stack Architektur:** Express-Backend mit integriertem Vite-Middleware-Proxying, React 19, TypeScript und Tailwind CSS.
 - 🕹️ **100+ Steam Dedicated Server:** Fertig vorkonfiguriert mit SteamCMD-Parametern, Startskripten und Portzuweisungen.
 - ⛏️ **Minecraft Komplett-Suite:** Vanilla, Paper, Purpur, Spigot, Forge, Fabric, NeoForge, Bedrock, BungeeCord und Velocity — inklusive moderner Snapshot- & Release-Auswahl bis **Version 26.3**.
@@ -116,6 +131,52 @@ Der integrierte Mod- und Plugin-Browser ermöglicht die direkte Suche nach Erwei
 - Abfrage des Steam Workshop über die Steam Web API (`ISteamRemoteStorage/GetPublishedFileDetails`).
 - Suchabfrage über `/api/live/steam/workshop`.
 - Automatischer Fallback auf kuratierte Workshop-Items bei fehlendem Steam-Schlüssel.
+
+---
+
+## 🛠️ Erweiterte Instanzverwaltung & Operations
+
+ApexHost bietet umfassende Administrations- und Automatisierungswerkzeuge für den täglichen Serverbetrieb:
+
+### Update- & Versions-Zentrum
+- **Minecraft Multi-Engine Wechsler:** Direkter Wechsel zwischen **PaperMC**, **Purpur**, **Fabric**, **Forge**, **NeoForge**, **Vanilla** und **Bedrock Dedicated**.
+- **Versionen & Snapshots:** Umfassende Versionsmatrix von Version **26.3** (aktuellster Snapshot) bis zurück zu Klassikern wie **1.7.10** und **1.12.2**.
+- **Java-Matrix:** Automatische Konfiguration der passenden Java-Laufzeitumgebung (**Java 21**, **Java 17**, **Java 11**, **Java 8**) inklusive optimierter Aikar's Garbage-Collection-Flags (`-XX:+UseG1GC`).
+- **SteamCMD Branch-Manager:** Umschalten zwischen Release-Zweigen (`public`, `beta`, `experimental`, `staging`), Eingabe von Beta-Passwörtern und Datei-Integritätsprüfung (`+app_update <app_id> validate`).
+- **Live-Update Konsole:** Visualisierter Fortschrittsbalken und terminalbasierte Ausgabe für Download-, Verifizierungs- und Installationsschritte.
+
+### Audit-Log & Ereignisprotokoll
+- **Vollständige Transparenz:** Protokollierung aller Aktionen auf der Serverinstanz:
+  - Start, Stopp, sanfter Neustart und Force-Kill (SIGKILL)
+  - Mod- und Plugin-Installationen sowie Deinstallationen
+  - Änderungen an Konfigurationsdateien (z. B. `server.properties`, `PalWorldSettings.ini`)
+  - Snapshot-Erstellungen und Backup-Wiederherstellungen
+  - Ausgeführte RCON- und Spielbefehle
+  - Port- und Domain-Reservierungen
+- **Filter & Export:** Filterung nach Schweregrad (`Info`, `Warnung`, `Erfolg`), Freitextsuche und 1-Klick-Export des gesamten Logs im JSON-Format.
+
+### Discord & Webhook-Integration
+- **Echtzeit-Discord-Embeds:** Direkte Benachrichtigungen in einen konfigurierten Discord-Kanal über Standard-Webhooks.
+- **Konfigurierbare Trigger:**
+  - 🟢 Server erfolgreich gestartet (inkl. Port- und Adressdaten)
+  - 🔴 Server heruntergefahren
+  - 🚨 Kritischer Serverabsturz & automatischer Watchdog-Neustart
+  - 💾 Backup-Sicherung abgeschlossen
+  - ⚡ Hohe Hardwareauslastung (>90% CPU oder RAM)
+  - 👥 Spieler beigetreten oder verlassen
+- **Live-Vorschau:** Interaktive Vorschau des generierten Discord-Nachrichten-Embeds direkt im Panel und Überprüfung der Webhook-Verbindung per Test-Payload (HTTP 204 No Content).
+
+### Massenaktionen & Server-Klonen
+- **Massenverwaltung (Bulk Actions):** Markieren mehrerer oder aller Serverinstanzen mit Checkboxen:
+  - Gleichzeitiges Starten ausgewählter Instanzen
+  - Gleichzeitiges Stoppen oder Neustarten
+- **Server Klonen (1-Klick):** Dupliziert eine bestehende Serverinstanz mit identischer Konfiguration, RAM-Zuweisung und installierten Mods unter automatischer Zuweisung des nächsten freien Netzwerk-Ports.
+- **Schnellfilter & Volltextsuche:** Filtern nach Online-/Offline-Status, Spielkategorie (Minecraft, Survival, FPS) oder Suche nach Port, Name und Zielsystem.
+
+### Sicheres Instanz-Löschverfahren
+- **Schutz vor Fehlbedienung:** Um versehentlichen Datenverlust zu verhindern, öffnet sich beim Löschen ein expliziter Bestätigungsdialog (`DeleteServerModal`).
+- **Verifikationsschritt:** Der Benutzer muss den Namen des Gameservers eintippen, um die Löschung freizuschalten.
+- **Sicherheits-Snapshot:** Optionale Checkbox zum Behalten existierender Backups vor Löschung der Live-Dateien.
 
 ---
 

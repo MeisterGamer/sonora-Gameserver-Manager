@@ -15,7 +15,8 @@ import {
   Zap, 
   RotateCcw, 
   Building2, 
-  Calendar 
+  Calendar,
+  Trash2 
 } from 'lucide-react';
 import { 
   CustomerContract, 
@@ -42,6 +43,7 @@ interface CRMViewProps {
   onFastForwardTime: (days: number) => void;
   onCreateTicket: (subject: string, serverName: string, text: string) => void;
   onReplyTicket: (ticketId: string, text: string) => void;
+  onDeleteServer?: (serverId: string) => void;
 }
 
 export const CRMView: React.FC<CRMViewProps> = ({
@@ -57,7 +59,8 @@ export const CRMView: React.FC<CRMViewProps> = ({
   onTopUpBalance,
   onFastForwardTime,
   onCreateTicket,
-  onReplyTicket
+  onReplyTicket,
+  onDeleteServer
 }) => {
   const [activeTab, setActiveTab] = useState<'contracts' | 'payment' | 'customers' | 'invoices' | 'tickets'>('contracts');
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -279,6 +282,16 @@ export const CRMView: React.FC<CRMViewProps> = ({
                       >
                         +90 Tage
                       </button>
+
+                      {onDeleteServer && (
+                        <button
+                          onClick={() => onDeleteServer(c.serverId)}
+                          className="p-1.5 text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer"
+                          title="Server & Vertrag vorzeitig auflösen / löschen"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

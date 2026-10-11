@@ -1,10 +1,13 @@
 # Current release
 
+Current fix: Update 05 corrects systemd WorkingDirectory parsing. See [Linux Update 05](LINUX-UPDATE05.md). The installation remains in the existing directory.
+
+
 See [Linux Update 04](LINUX-UPDATE04.md) and [English changelog](CHANGELOG-UPDATE04-EN-2026-10-11.md).
 
 # Sonora Gameserver Manager
 
-Local repair release 0.1.2 / Update 04, 2026-10-11.
+Local repair release 0.1.3 / Update 05, 2026-10-11.
 
 Update 04 supersedes the earlier /opt deployment instructions. Install in place with `sudo bash install.sh`; the manager stays stopped. Application data, Node, SteamCMD, JDKs and installation backups remain inside this checkout. See [Linux Update 04](LINUX-UPDATE04.md).
 Baseline: 63b986a2caa03c54486824c4821c470e80f28bb5.

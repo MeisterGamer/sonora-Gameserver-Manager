@@ -77,6 +77,7 @@ try {
   check('Default installation does not start manager', installer.includes('START=false') && installer.includes('if $START; then'));
   check('Old data copied without overwriting local dataset', installer.includes('cp -a "$PREVIOUS_DATA/." "$DATA_ROOT/"') && installer.includes('Local data retained'));
   check('Service launcher stays in installation directory', installer.includes('ExecStart="$SOURCE_DIR/start-manager.sh"'));
+  check('Manager unit uses an unquoted WorkingDirectory value', installer.includes('\nWorkingDirectory=$SOURCE_DIR\n'));
   check('Installer provisions full JDK 25', installer.includes('ensureJdk(process.cwd()+"/.runtime/jdks",25)'));
   check('Node archive checksum is mandatory', installer.includes('sha256sum --check node-check.txt'));
   console.log(checks.length + ' installer regression checks passed. No live services/game processes started.');

@@ -38,7 +38,7 @@ try {
 }
 
 const STATE_DIR = path.resolve(DATA_DIR, '..', 'manager');
-app.get('/api/health', (_req, res) => res.json({ success: true, version: '0.1.2', update: '04' }));
+app.get('/api/health', (_req, res) => res.json({ success: true, version: '0.1.3', update: '05' }));
 configureAuth(app, STATE_DIR);
 app.param('id', (req, res, next, value) => {
   try { instancePath(DATA_DIR, value); next(); }

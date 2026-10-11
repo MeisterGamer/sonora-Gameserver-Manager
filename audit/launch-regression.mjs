@@ -19,6 +19,7 @@ check('Server name cannot inject shell commands',!scripts.linuxSh.includes(base.
 check('EULA is required before exported Linux start',scripts.linuxSh.includes('eula') && scripts.linuxSh.includes('Accept the Minecraft EULA'));
 check('Fractional RAM is represented in MiB',minecraftLaunch({...base,allocatedRamGb:1.5}).args.includes('-Xmx1536M'));
 check('Standalone service uses real installation folder',scripts.linuxSystemd.includes(base.installationRoot+'/data/servers/'+base.id) && !scripts.linuxSystemd.includes('/opt/'));
+check('Generated game WorkingDirectory is an unquoted absolute path',scripts.linuxSystemd.split('\n').find(line=>line.startsWith('WorkingDirectory=')).slice('WorkingDirectory='.length)==='/root/sonora-Gameserver-Manager/data/servers/srv_test');
 check('Unknown installation path never generates a false unit',generateOSScripts({...base,installationRoot:undefined}).linuxSystemd.includes('not known'));
 for(const javaVersion of ['Java 21','Java 27','Zulu 21+']) {assert.throws(()=>minecraftLaunch({...base,javaVersion}));checks.push('Incompatible runtime rejected '+javaVersion);}
 const native=generateOSScripts({...base,category:'survival',gameId:'valheim',linuxStartArgs:'-port 2456 -name "two words"'});

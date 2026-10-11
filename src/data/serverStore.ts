@@ -242,7 +242,7 @@ export function generateOSScripts(server: ServerInstance) {
   const root = server.installationRoot;
   const user = server.installationUser && /^[a-zA-Z0-9_-]+$/.test(server.installationUser) ? server.installationUser : undefined;
   const linuxSystemd = root && user && !/[\r\n%"\\]/.test(root) && /^[a-zA-Z0-9_-]+$/.test(server.id)
-    ? '[Unit]\nDescription=Sonora game instance\nAfter=network.target\n[Service]\nType=simple\nUser=' + user + '\nWorkingDirectory="' + root + '/data/servers/' + server.id + '"\nExecStart=/usr/bin/env bash "' + root + '/data/servers/' + server.id + '/start.sh"\nRestart=on-failure\nRestartSec=10\n# Configure User= for the owner of this installation before registering this standalone unit.\n# Do not start the same instance simultaneously through the manager.\n[Install]\nWantedBy=multi-user.target\n'
+    ? '[Unit]\nDescription=Sonora game instance\nAfter=network.target\n[Service]\nType=simple\nUser=' + user + '\nWorkingDirectory=' + root + '/data/servers/' + server.id + '\nExecStart=/usr/bin/env bash "' + root + '/data/servers/' + server.id + '/start.sh"\nRestart=on-failure\nRestartSec=10\n# Configure User= for the owner of this installation before registering this standalone unit.\n# Do not start the same instance simultaneously through the manager.\n[Install]\nWantedBy=multi-user.target\n'
     : '# Installation directory is not known. Refresh the instance from the backend before exporting a unit.\n';
   const dockerfile = '# Docker deployment is not implemented for this installation.\n# No unverified Java image or runtime is generated.\n';
   return { linuxSh, windowsBat, windowsPs1, macCommand, linuxSystemd, dockerfile };

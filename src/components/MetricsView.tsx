@@ -15,7 +15,8 @@ import {
   Flame,
   Globe,
   Terminal,
-  Sparkles
+  Sparkles,
+  Coffee
 } from 'lucide-react';
 import { ServerInstance } from '../types/game';
 
@@ -23,12 +24,14 @@ interface MetricsViewProps {
   server: ServerInstance;
   onSendCommand?: (cmd: string) => void;
   onNotify?: (msg: string) => void;
+  onOpenJavaModal?: () => void;
 }
 
 export const MetricsView: React.FC<MetricsViewProps> = ({
   server,
   onSendCommand,
-  onNotify
+  onNotify,
+  onOpenJavaModal
 }) => {
   // Simulated dynamic realtime telemetry history
   const [cpuHistory, setCpuHistory] = useState<number[]>([12, 18, 15, 24, 28, 22, 19, 31, 26, 20, 25, 22]);
@@ -321,8 +324,23 @@ export const MetricsView: React.FC<MetricsViewProps> = ({
               <span className="font-mono text-neutral-200">#49102 (Isolated Cgroup)</span>
             </div>
             <div className="flex items-center justify-between p-2 rounded-lg bg-neutral-950 border border-neutral-800/80">
-              <span className="text-neutral-400">Java / Laufzeitumgebung</span>
-              <span className="font-mono text-neutral-200">{server.javaVersion || 'OpenJDK 21.0.3 (GraalVM / Aikar Flags)'}</span>
+              <div className="flex items-center gap-1.5">
+                <Coffee className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-neutral-400">Java / Laufzeitumgebung</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-neutral-200">
+                  {server.javaVersion || 'Java 21 (LTS Standard)'}
+                </span>
+                {server.category === 'minecraft' && onOpenJavaModal && (
+                  <button
+                    onClick={onOpenJavaModal}
+                    className="px-2 py-0.5 rounded text-[10px] bg-neutral-800 hover:bg-neutral-700 text-amber-300 font-semibold border border-neutral-700 transition-colors cursor-pointer"
+                  >
+                    Verwalten
+                  </button>
+                )}
+              </div>
             </div>
             <div className="flex items-center justify-between p-2 rounded-lg bg-neutral-950 border border-neutral-800/80">
               <span className="text-neutral-400">Aktive OS-Threads</span>

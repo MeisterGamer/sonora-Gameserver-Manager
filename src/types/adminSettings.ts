@@ -1,3 +1,5 @@
+import { JavaVersion } from './game';
+
 export type SteamOperationMode = 'anonymous' | 'offline_disabled' | 'mock_emulated' | 'authenticated';
 
 export interface AdminSettings {
@@ -18,7 +20,7 @@ export interface AdminSettings {
   // Server & Resource Defaults
   defaultRamAllocationGb: number;
   maxRamPerServerGb: number;
-  defaultJavaVersion: 'Java 21' | 'Java 17' | 'Java 11' | 'Java 8';
+  defaultJavaVersion: JavaVersion;
   defaultMinecraftVersion: string;
   portRangeStart: number;
   portRangeEnd: number;

@@ -1,4 +1,4 @@
-import { GameDefinition } from '../types/game';
+import { GameDefinition, JavaVersion } from '../types/game';
 
 export interface MinecraftTypeInfo {
   typeId: string;
@@ -9,7 +9,7 @@ export interface MinecraftTypeInfo {
   protocol: 'TCP' | 'UDP';
   supportsPlugins: boolean;
   supportsMods: boolean;
-  supportedJava: ('Java 21' | 'Java 17' | 'Java 11' | 'Java 8')[];
+  supportedJava: JavaVersion[];
   versions: string[];
   bannerColor: string;
   defaultJarName: string;
@@ -17,6 +17,122 @@ export interface MinecraftTypeInfo {
   description: string;
   icon: string;
 }
+
+export interface JavaVersionOption {
+  id: JavaVersion;
+  name: string;
+  tag: string;
+  description: string;
+  isModern21Plus: boolean;
+  recommendedFor: string;
+}
+
+export const JAVA_VERSIONS: JavaVersionOption[] = [
+  {
+    id: 'Java 26',
+    name: 'Java 26 (JDK 26 / Early Access 2026)',
+    tag: 'Bleeding Edge EA',
+    description: 'Experimentelle Early-Access Laufzeit mit neuesten Project Loom & Valhalla Optimierungen für modulare Server-Architekturen.',
+    isModern21Plus: true,
+    recommendedFor: 'Entwickler & experimentelle Test-Cluster'
+  },
+  {
+    id: 'Java 25',
+    name: 'Java 25 (LTS / Next-Gen 2025/2026)',
+    tag: 'Next-Gen LTS',
+    description: 'Neueste Long-Term-Support Laufzeitumgebung. Voraussetzung für Minecraft 26.x Snapshots und zukunftssichere Deployments.',
+    isModern21Plus: true,
+    recommendedFor: 'Minecraft 26.x Snapshots & Next-Gen'
+  },
+  {
+    id: 'Java 24',
+    name: 'Java 24 (JDK 24 / Latest Release)',
+    tag: 'Feature Release',
+    description: 'Neueste JDK 24 Features mit Compact Object Headers (JEP 450) für 20-30% reduzierten RAM-Footprint.',
+    isModern21Plus: true,
+    recommendedFor: 'Minecraft 1.21.4 & 26.x mit minimalem RAM-Verbrauch'
+  },
+  {
+    id: 'Java 23',
+    name: 'Java 23 (JDK 23)',
+    tag: 'Feature Release',
+    description: 'Enthält Generational ZGC standardmäßig für Mikrosekunden-Latenzen bei großen Servern mit über 100 Spielern.',
+    isModern21Plus: true,
+    recommendedFor: 'Große Servernetzwerke mit Generational ZGC'
+  },
+  {
+    id: 'Java 22',
+    name: 'Java 22 (JDK 22)',
+    tag: 'Feature Release',
+    description: 'Stabile Feature-Laufzeit mit Vector API und nativer FFM-Speicherverwaltung (Foreign Function & Memory).',
+    isModern21Plus: true,
+    recommendedFor: 'Minecraft 1.20.6 bis 1.21.x'
+  },
+  {
+    id: 'Java 21',
+    name: 'Java 21 (LTS - Offizieller Standard)',
+    tag: 'LTS Standard',
+    description: 'Der offizielle LTS-Standard für Minecraft 1.20.5 bis 1.21.4 (Paper, Purpur, Fabric, NeoForge, Spigot).',
+    isModern21Plus: true,
+    recommendedFor: 'Minecraft 1.20.5 bis 1.21.4 (Produktionsstandard)'
+  },
+  {
+    id: 'GraalVM 21+',
+    name: 'GraalVM Enterprise / CE 21+ (Ultra High-Perf)',
+    tag: 'High Performance JIT',
+    description: 'Hochoptimierte JIT-Compiler-Laufzeit. Bietet bis zu 25% stabilere Server-Tickrates bei hoher Mob- und Chunk-Dichte.',
+    isModern21Plus: true,
+    recommendedFor: 'Leistungshungrige Modpacks & High-Entity Server'
+  },
+  {
+    id: 'Temurin 21+',
+    name: 'Eclipse Temurin 21+ (Adoptium Enterprise LTS)',
+    tag: 'Enterprise OpenJDK',
+    description: 'Streng QA-geprüftes OpenJDK von der Eclipse Foundation für maximale Stabilität und Zuverlässigkeit im 24/7-Betrieb.',
+    isModern21Plus: true,
+    recommendedFor: 'Unternehmens- & Community-Server mit Fokus auf Zuverlässigkeit'
+  },
+  {
+    id: 'Corretto 21+',
+    name: 'Amazon Corretto 21+ (Cloud & Container LTS)',
+    tag: 'Cloud Optimized',
+    description: 'Multiplattform-fähiges OpenJDK von Amazon Web Services mit integrierten Performance-Fixes für niedrige Latenzen.',
+    isModern21Plus: true,
+    recommendedFor: 'Cloud-Hosting & Docker/Cgroup Umgebungen'
+  },
+  {
+    id: 'Zulu 21+',
+    name: 'Azul Zulu 21+ (CRaC Instant-Checkpointing)',
+    tag: 'Low Latency & CRaC',
+    description: 'Azul Zulu mit Coordinated Restore at Checkpoint (CRaC) Unterstützung für Serverstarts in unter 500 Millisekunden.',
+    isModern21Plus: true,
+    recommendedFor: 'Minigame-Netzwerke mit dynamischem Instanz-Scaling'
+  },
+  {
+    id: 'Java 17',
+    name: 'Java 17 (LTS)',
+    tag: 'LTS Classic',
+    description: 'Erforderlich für Minecraft Versionen 1.18 bis 1.20.4.',
+    isModern21Plus: false,
+    recommendedFor: 'Minecraft 1.18 bis 1.20.4'
+  },
+  {
+    id: 'Java 11',
+    name: 'Java 11 (Legacy LTS)',
+    tag: 'Legacy',
+    description: 'Für ältere Server der Versionen 1.16 bis 1.17.',
+    isModern21Plus: false,
+    recommendedFor: 'Minecraft 1.16.x bis 1.17.x'
+  },
+  {
+    id: 'Java 8',
+    name: 'Java 8 (Legacy 1.8)',
+    tag: 'Legacy',
+    description: 'Klassische Java-Version für historische Modpacks (1.12.2, 1.7.10, 1.8.9).',
+    isModern21Plus: false,
+    recommendedFor: 'Minecraft 1.12.2, 1.7.10 und älter'
+  }
+];
 
 export const MINECRAFT_VERSIONS = [
   '26.3',
@@ -37,6 +153,36 @@ export const MINECRAFT_VERSIONS = [
   '1.7.10'
 ];
 
+export const ALL_JAVA_RUNTIMES: JavaVersion[] = [
+  'Java 26',
+  'Java 25',
+  'Java 24',
+  'Java 23',
+  'Java 22',
+  'Java 21',
+  'GraalVM 21+',
+  'Temurin 21+',
+  'Corretto 21+',
+  'Zulu 21+',
+  'Java 17',
+  'Java 11',
+  'Java 8'
+];
+
+export const MODERN_JAVA_RUNTIMES: JavaVersion[] = [
+  'Java 26',
+  'Java 25',
+  'Java 24',
+  'Java 23',
+  'Java 22',
+  'Java 21',
+  'GraalVM 21+',
+  'Temurin 21+',
+  'Corretto 21+',
+  'Zulu 21+',
+  'Java 17'
+];
+
 export const AIKARS_FLAGS = 
   '-XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4 -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90 -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32 -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1 -Dusing.aikars.flags=https://mcflags.emc.gs -Daikars.new.flags=true';
 
@@ -50,7 +196,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: true,
     supportsMods: false,
-    supportedJava: ['Java 21', 'Java 17'],
+    supportedJava: MODERN_JAVA_RUNTIMES,
     versions: MINECRAFT_VERSIONS,
     bannerColor: '#22c55e',
     defaultJarName: 'paper.jar',
@@ -67,7 +213,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: true,
     supportsMods: false,
-    supportedJava: ['Java 21', 'Java 17'],
+    supportedJava: MODERN_JAVA_RUNTIMES,
     versions: MINECRAFT_VERSIONS,
     bannerColor: '#a855f7',
     defaultJarName: 'purpur.jar',
@@ -84,7 +230,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: true,
     supportsMods: false,
-    supportedJava: ['Java 21', 'Java 17', 'Java 11', 'Java 8'],
+    supportedJava: ALL_JAVA_RUNTIMES,
     versions: MINECRAFT_VERSIONS,
     bannerColor: '#f97316',
     defaultJarName: 'spigot.jar',
@@ -101,7 +247,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: false,
     supportsMods: true,
-    supportedJava: ['Java 21', 'Java 17'],
+    supportedJava: MODERN_JAVA_RUNTIMES,
     versions: MINECRAFT_VERSIONS,
     bannerColor: '#38bdf8',
     defaultJarName: 'fabric-server-launch.jar',
@@ -118,7 +264,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: false,
     supportsMods: true,
-    supportedJava: ['Java 21', 'Java 17'],
+    supportedJava: MODERN_JAVA_RUNTIMES,
     versions: ['1.21.4', '1.21.1', '1.20.6', '1.20.4'],
     bannerColor: '#ec4899',
     defaultJarName: 'neoforge-server.jar',
@@ -135,7 +281,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: false,
     supportsMods: true,
-    supportedJava: ['Java 21', 'Java 17', 'Java 11', 'Java 8'],
+    supportedJava: ALL_JAVA_RUNTIMES,
     versions: MINECRAFT_VERSIONS,
     bannerColor: '#eab308',
     defaultJarName: 'forge-server.jar',
@@ -152,7 +298,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: false,
     supportsMods: true,
-    supportedJava: ['Java 21', 'Java 17'],
+    supportedJava: MODERN_JAVA_RUNTIMES,
     versions: ['1.21.4', '1.21.1', '1.20.4', '1.19.4'],
     bannerColor: '#8b5cf6',
     defaultJarName: 'quilt-server-launch.jar',
@@ -169,7 +315,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: false,
     supportsMods: false,
-    supportedJava: ['Java 21', 'Java 17', 'Java 8'],
+    supportedJava: ALL_JAVA_RUNTIMES,
     versions: MINECRAFT_VERSIONS,
     bannerColor: '#10b981',
     defaultJarName: 'server.jar',
@@ -203,7 +349,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'UDP',
     supportsPlugins: false,
     supportsMods: false,
-    supportedJava: ['Java 21', 'Java 17'],
+    supportedJava: MODERN_JAVA_RUNTIMES,
     versions: ['Latest Standalone'],
     bannerColor: '#06b6d4',
     defaultJarName: 'Geyser.jar',
@@ -220,7 +366,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: true,
     supportsMods: false,
-    supportedJava: ['Java 21', 'Java 17'],
+    supportedJava: MODERN_JAVA_RUNTIMES,
     versions: ['3.3.0', '3.2.0', '3.1.2'],
     bannerColor: '#6366f1',
     defaultJarName: 'velocity.jar',
@@ -237,7 +383,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: true,
     supportsMods: false,
-    supportedJava: ['Java 21', 'Java 17', 'Java 8'],
+    supportedJava: ALL_JAVA_RUNTIMES,
     versions: ['Latest'],
     bannerColor: '#f43f5e',
     defaultJarName: 'BungeeCord.jar',
@@ -254,7 +400,7 @@ export const MINECRAFT_TYPES: MinecraftTypeInfo[] = [
     protocol: 'TCP',
     supportsPlugins: false,
     supportsMods: true,
-    supportedJava: ['Java 21', 'Java 17', 'Java 8'],
+    supportedJava: ALL_JAVA_RUNTIMES,
     versions: ['ATM 9', 'RLCraft 2.9', 'Better MC v24', 'Cobblemon 1.5', 'Vault Hunters 3'],
     bannerColor: '#f59e0b',
     defaultJarName: 'start.jar',

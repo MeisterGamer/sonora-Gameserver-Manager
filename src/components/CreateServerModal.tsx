@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Server, Layers, Cpu, HardDrive, Check, Sparkles, ShieldCheck } from 'lucide-react';
-import { GameDefinition, ServerInstance, PlatformOS } from '../types/game';
+import { GameDefinition, ServerInstance, PlatformOS, JavaVersion } from '../types/game';
 import { MINECRAFT_TYPES, MINECRAFT_VERSIONS, MINECRAFT_SERVER_PROPERTIES_DEFAULT } from '../data/minecraftTypes';
 import { AdminSettings } from '../types/adminSettings';
 import { getStoredAdminSettings } from '../data/adminSettingsStore';
@@ -34,7 +34,22 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
 
   // Minecraft specific
   const [mcVersion, setMcVersion] = useState<string>(currentSettings.defaultMinecraftVersion || '26.3');
-  const [mcJava, setMcJava] = useState<'Java 21' | 'Java 17' | 'Java 11' | 'Java 8'>(currentSettings.defaultJavaVersion || 'Java 21');
+  const [mcJava, setMcJava] = useState<JavaVersion>(currentSettings.defaultJavaVersion || 'Java 25');
+
+  const handleMcVersionChange = (newVer: string) => {
+    setMcVersion(newVer);
+    if (newVer.startsWith('26.')) {
+      setMcJava('Java 25');
+    } else if (newVer.startsWith('1.21') || newVer.startsWith('1.20.6') || newVer.startsWith('1.20.5')) {
+      setMcJava('Java 21');
+    } else if (newVer.startsWith('1.20') || newVer.startsWith('1.19') || newVer.startsWith('1.18')) {
+      setMcJava('Java 17');
+    } else if (newVer.startsWith('1.16') || newVer.startsWith('1.17')) {
+      setMcJava('Java 11');
+    } else {
+      setMcJava('Java 8');
+    }
+  };
 
   useEffect(() => {
     if (preselectedGame) {
@@ -168,26 +183,44 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
                 <label className="block text-neutral-300 font-medium mb-1">Minecraft Version</label>
                 <select
                   value={mcVersion}
-                  onChange={(e) => setMcVersion(e.target.value)}
+                  onChange={(e) => handleMcVersionChange(e.target.value)}
                   className="w-full px-2.5 py-1.5 bg-neutral-900 border border-neutral-800 rounded text-neutral-200 focus:outline-none focus:border-emerald-500 font-mono"
                 >
                   {MINECRAFT_VERSIONS.map(v => (
-                    <option key={v} value={v}>{v}</option>
+                    <option key={v} value={v}>
+                      {v} {v === '26.3' ? '(Neuester Snapshot)' : ''}
+                    </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-neutral-300 font-medium mb-1">Java Runtime Umgebung</label>
+                <label className="block text-neutral-300 font-medium mb-1 flex items-center justify-between">
+                  <span>Java Runtime Umgebung</span>
+                  <span className="text-[10px] text-emerald-400 font-mono">Modern (21+)</span>
+                </label>
                 <select
                   value={mcJava}
-                  onChange={(e) => setMcJava(e.target.value as any)}
-                  className="w-full px-2.5 py-1.5 bg-neutral-900 border border-neutral-800 rounded text-neutral-200 focus:outline-none focus:border-emerald-500 font-mono"
+                  onChange={(e) => setMcJava(e.target.value as JavaVersion)}
+                  className="w-full px-2.5 py-1.5 bg-neutral-900 border border-neutral-800 rounded text-neutral-200 focus:outline-none focus:border-emerald-500 font-mono text-xs"
                 >
-                  <option value="Java 21">Java 21 (Empfohlen für 1.20.5+)</option>
-                  <option value="Java 17">Java 17 (Für 1.18 - 1.20.4)</option>
-                  <option value="Java 11">Java 11 (Legacy)</option>
-                  <option value="Java 8">Java 8 (Für 1.12.2 und älter)</option>
+                  <optgroup label="Modernes Java (21+ für 1.20.5+, 1.21.x & 26.x Snapshots)">
+                    <option value="Java 25">Java 25 (LTS Next-Gen · Erforderlich für 26.x)</option>
+                    <option value="Java 24">Java 24 (JDK 24 · Compact Object Headers)</option>
+                    <option value="Java 23">Java 23 (JDK 23 · Generational ZGC)</option>
+                    <option value="Java 22">Java 22 (JDK 22 · Vector API & FFM)</option>
+                    <option value="Java 21">Java 21 (LTS · Produktions-Standard)</option>
+                    <option value="GraalVM 21+">GraalVM 21+ (Ultra High-Performance JIT)</option>
+                    <option value="Temurin 21+">Eclipse Temurin 21+ (Adoptium Enterprise LTS)</option>
+                    <option value="Corretto 21+">Amazon Corretto 21+ (Cloud & Container LTS)</option>
+                    <option value="Zulu 21+">Azul Zulu 21+ (CRaC Instant-Checkpoint)</option>
+                    <option value="Java 26">Java 26 (JDK 26 Early Access)</option>
+                  </optgroup>
+                  <optgroup label="Ältere Versionen (LTS & Legacy)">
+                    <option value="Java 17">Java 17 (LTS · Für 1.18 bis 1.20.4)</option>
+                    <option value="Java 11">Java 11 (Legacy LTS für 1.16/1.17)</option>
+                    <option value="Java 8">Java 8 (Legacy für 1.12.2 und älter)</option>
+                  </optgroup>
                 </select>
               </div>
             </div>

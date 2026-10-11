@@ -22,9 +22,10 @@ import {
   Sparkles,
   DownloadCloud,
   ShieldAlert,
-  Bell
+  Bell,
+  Coffee
 } from 'lucide-react';
-import { ServerInstance, LogMessage, ModItem } from '../types/game';
+import { ServerInstance, LogMessage, ModItem, JavaVersion } from '../types/game';
 import { ConsoleView } from './ConsoleView';
 import { ModPluginBrowser } from './ModPluginBrowser';
 import { ConfigFileEditor } from './ConfigFileEditor';
@@ -37,6 +38,7 @@ import { NetworkPortsView } from './NetworkPortsView';
 import { UpdateManagerView } from './UpdateManagerView';
 import { AuditLogView } from './AuditLogView';
 import { WebhooksView } from './WebhooksView';
+import { JavaRuntimeModal } from './JavaRuntimeModal';
 
 interface ServerDetailProps {
   server: ServerInstance;
@@ -48,12 +50,14 @@ interface ServerDetailProps {
   onSendCommand: (id: string, cmd: string) => void;
   logs: LogMessage[];
   onClearLogs: () => void;
-  onInstallMod: (serverId: string, mod: ModItem) => void;
+  onInstallMod: (serverId: string, mod: ModItem, restartServer?: boolean) => void;
   onUninstallMod: (serverId: string, installedModId: string) => void;
   onToggleMod: (serverId: string, installedModId: string, enabled: boolean) => void;
   onSaveConfigFile: (serverId: string, filename: string, content: string) => void;
-  onUpdateVersion?: (serverId: string, newVersion: string, notes?: string) => void;
+  onUpdateVersion?: (serverId: string, newVersion: string, notes?: string, javaVersion?: JavaVersion) => void;
+  onUpdateJavaVersion?: (serverId: string, javaVersion: JavaVersion, restart?: boolean) => void;
   onDeleteServer?: (id: string) => void;
+  allServers?: ServerInstance[];
   onNotify?: (msg: string) => void;
 }
 
@@ -72,12 +76,15 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   onToggleMod,
   onSaveConfigFile,
   onUpdateVersion,
+  onUpdateJavaVersion,
   onDeleteServer,
+  allServers,
   onNotify
 }) => {
   const [activeTab, setActiveTab] = useState<
     'console' | 'metrics' | 'files' | 'mods' | 'config' | 'network' | 'players' | 'backups' | 'updates' | 'audit' | 'webhooks' | 'crossplatform'
   >('console');
+  const [isJavaModalOpen, setIsJavaModalOpen] = useState(false);
 
   const formatUptime = (seconds: number) => {
     if (seconds <= 0) return 'Offline';
@@ -124,6 +131,21 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <span className="capitalize">{server.targetOS}</span>
                 <span>·</span>
                 <span>Uptime: {formatUptime(server.uptimeSeconds)}</span>
+                {server.category === 'minecraft' && (
+                  <>
+                    <span>·</span>
+                    <button
+                      type="button"
+                      onClick={() => setIsJavaModalOpen(true)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-mono transition-colors cursor-pointer group"
+                      title="Java 21+ Laufzeit & JVM-Flags konfigurieren"
+                    >
+                      <Coffee className="w-3 h-3 text-amber-400 group-hover:rotate-12 transition-transform" />
+                      <span>{server.javaVersion || 'Java 21'}</span>
+                      <span className="text-[10px] text-amber-400/80 underline ml-0.5 font-sans">Ändern</span>
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -417,6 +439,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           server={server}
           onSendCommand={(cmd) => onSendCommand(server.id, cmd)}
           onNotify={onNotify}
+          onOpenJavaModal={() => setIsJavaModalOpen(true)}
         />
       )}
 
@@ -438,9 +461,10 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
       {activeTab === 'mods' && (
         <ModPluginBrowser
           server={server}
-          onInstallMod={(mod) => onInstallMod(server.id, mod)}
+          onInstallMod={(mod, restart) => onInstallMod(server.id, mod, restart)}
           onUninstallMod={(id) => onUninstallMod(server.id, id)}
           onToggleMod={(id, en) => onToggleMod(server.id, id, en)}
+          allServers={allServers}
         />
       )}
 
@@ -448,6 +472,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         <ConfigFileEditor
           server={server}
           onSaveConfigFile={(fn, c) => onSaveConfigFile(server.id, fn, c)}
+          onOpenJavaModal={() => setIsJavaModalOpen(true)}
         />
       )}
 
@@ -467,7 +492,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
       {activeTab === 'updates' && (
         <UpdateManagerView
           server={server}
-          onUpdateVersion={(newVer, notes) => onUpdateVersion?.(server.id, newVer, notes)}
+          onUpdateVersion={(newVer, notes, javaVer) => onUpdateVersion?.(server.id, newVer, notes, javaVer)}
           onNotify={onNotify}
         />
       )}
@@ -482,6 +507,21 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
 
       {activeTab === 'crossplatform' && (
         <CrossPlatformView selectedServer={server} />
+      )}
+
+      {/* Java 21+ Runtime & JVM Tuning Modal */}
+      {server.category === 'minecraft' && (
+        <JavaRuntimeModal
+          server={server}
+          isOpen={isJavaModalOpen}
+          onClose={() => setIsJavaModalOpen(false)}
+          onSaveJava={(sId, newJava, restart) => {
+            onUpdateJavaVersion?.(sId, newJava, restart);
+            if (restart) {
+              onRestartServer(sId);
+            }
+          }}
+        />
       )}
     </div>
   );

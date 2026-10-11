@@ -19,7 +19,8 @@ import {
   ArrowUpDown,
   Layers,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  Sliders
 } from 'lucide-react';
 import { ModItem, InstalledMod, ServerInstance } from '../types/game';
 import { searchUnifiedMods, ModProviderSource } from '../services/liveModService';
@@ -28,19 +29,22 @@ import { ModDetailModal } from './ModDetailModal';
 import { CustomModUploadModal } from './CustomModUploadModal';
 import { ModBundlesView } from './ModBundlesView';
 import { ModDependencyBanner } from './ModDependencyBanner';
+import { ModInstallModal } from './ModInstallModal';
 
 interface ModPluginBrowserProps {
   server: ServerInstance;
-  onInstallMod: (mod: ModItem) => void;
+  onInstallMod: (mod: ModItem, restartServer?: boolean) => void;
   onUninstallMod: (installedModId: string) => void;
   onToggleMod: (installedModId: string, enabled: boolean) => void;
+  allServers?: ServerInstance[];
 }
 
 export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
   server,
   onInstallMod,
   onUninstallMod,
-  onToggleMod
+  onToggleMod,
+  allServers = []
 }) => {
   const [activeTab, setActiveTab] = useState<'browse' | 'bundles' | 'installed'>('browse');
   const [searchQuery, setSearchQuery] = useState('');
@@ -48,6 +52,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedLoader, setSelectedLoader] = useState<string>('all');
   const [selectedVersion, setSelectedVersion] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'uninstalled' | 'installed'>('all');
   const [sortBy, setSortBy] = useState<'downloads' | 'name' | 'newest'>('downloads');
   const [filterGameScope, setFilterGameScope] = useState<'server-only' | 'all'>('server-only');
 
@@ -56,11 +61,18 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
   const [sourceLabel, setSourceLabel] = useState<string>('Katalog');
   const [isLiveApi, setIsLiveApi] = useState(false);
 
-  // Mod detail modal state
+  // Direct 1-Click Installing state tracker
+  const [installingModId, setInstallingModId] = useState<string | null>(null);
+
+  // Mod detail & Install modal state
   const [selectedModForDetail, setSelectedModForDetail] = useState<ModItem | null>(null);
+  const [selectedModForInstall, setSelectedModForInstall] = useState<ModItem | null>(null);
 
   // Upload modal state
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+
+  // Installed tab filter
+  const [installedSearchQuery, setInstalledSearchQuery] = useState('');
 
   // Updates simulation state
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
@@ -90,7 +102,10 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
     { id: 'all', label: 'Alle Versionen' },
     { id: '26.3', label: 'v26.3 (Snapshot)' },
     { id: '1.21.4', label: 'v1.21.4 (Latest)' },
+    { id: '1.21.1', label: 'v1.21.1 (LTS)' },
+    { id: '1.20.6', label: 'v1.20.6' },
     { id: '1.20.4', label: 'v1.20.4' },
+    { id: '1.19.4', label: 'v1.19.4' },
     { id: '1.16.5', label: 'v1.16.5' },
     { id: '1.12.2', label: 'v1.12.2' }
   ];
@@ -140,6 +155,13 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
             });
           }
 
+          // 3b. Filter by Install status
+          if (statusFilter === 'uninstalled') {
+            list = list.filter(m => !isModInstalled(m));
+          } else if (statusFilter === 'installed') {
+            list = list.filter(m => isModInstalled(m));
+          }
+
           // 4. Sort
           if (sortBy === 'name') {
             list.sort((a, b) => a.name.localeCompare(b.name));
@@ -172,10 +194,33 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [searchQuery, selectedProvider, selectedCategory, selectedLoader, selectedVersion, sortBy, filterGameScope, server]);
+  }, [searchQuery, selectedProvider, selectedCategory, selectedLoader, selectedVersion, statusFilter, sortBy, filterGameScope, server.id, server.category, server.minecraftType]);
 
-  const isModInstalled = (modId: string) => {
-    return server.installedMods.some(m => m.modId === modId);
+  const isModInstalled = (mod: ModItem) => {
+    const modIdClean = mod.id.toLowerCase().trim().replace(/^(mr_|spiget_|cf_)/, '');
+    const modNameClean = mod.name.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    return (server.installedMods || []).some(m => {
+      const instModId = m.modId.toLowerCase().trim().replace(/^(mr_|spiget_|cf_)/, '');
+      const instModName = m.name.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      return instModId === modIdClean ||
+             instModName === modNameClean ||
+             (instModId.length > 3 && modIdClean.includes(instModId)) ||
+             (instModName.length > 4 && (modNameClean.includes(instModName) || instModName.includes(modNameClean)));
+    });
+  };
+
+  // Direct 1-Click Install handler
+  const handleDirectInstall = (mod: ModItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setInstallingModId(mod.id);
+    onInstallMod(mod);
+    const isMod = mod.tags?.some(t => ['fabric', 'forge', 'neoforge'].includes(t.toLowerCase())) || 
+                  mod.loaders?.some(l => ['fabric', 'forge', 'neoforge'].includes(l.toLowerCase()));
+    const targetFolder = isMod ? '/mods/' : '/plugins/';
+    showToast(`"${mod.name}" v${mod.version || '1.0.0'} erfolgreich in ${targetFolder} installiert!`);
+    setTimeout(() => {
+      setInstallingModId(null);
+    }, 450);
   };
 
   // Check for updates simulation
@@ -204,21 +249,53 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
   };
 
   const handleUpdateSingleMod = (installedId: string) => {
+    const target = server.installedMods.find(m => m.id === installedId);
     const newVer = updatesAvailableMap[installedId];
-    if (newVer) {
+    if (target && newVer) {
+      onInstallMod({
+        id: target.modId,
+        name: target.name,
+        gameId: server.category === 'minecraft' ? 'minecraft' : server.gameId,
+        category: 'Utility',
+        author: 'Update Manager',
+        downloads: 'Auto',
+        version: newVer,
+        description: `Aktualisiert auf Version ${newVer}`,
+        source: (target.source as any) || 'Modrinth',
+        fileSize: target.fileSize || '2.4 MB',
+        tags: []
+      });
       setUpdatesAvailableMap(prev => {
         const copy = { ...prev };
         delete copy[installedId];
         return copy;
       });
-      showToast(`Mod erfolgreich auf Version ${newVer} aktualisiert!`);
+      showToast(`"${target.name}" erfolgreich auf v${newVer} aktualisiert!`);
     }
   };
 
   const handleUpdateAllMods = () => {
-    const count = Object.keys(updatesAvailableMap).length;
+    const entries = Object.entries(updatesAvailableMap);
+    entries.forEach(([id, newVer]) => {
+      const target = server.installedMods.find(m => m.id === id);
+      if (target) {
+        onInstallMod({
+          id: target.modId,
+          name: target.name,
+          gameId: server.category === 'minecraft' ? 'minecraft' : server.gameId,
+          category: 'Utility',
+          author: 'Update Manager',
+          downloads: 'Auto',
+          version: newVer,
+          description: `Aktualisiert auf Version ${newVer}`,
+          source: (target.source as any) || 'Modrinth',
+          fileSize: target.fileSize || '2.4 MB',
+          tags: []
+        });
+      }
+    });
     setUpdatesAvailableMap({});
-    showToast(`Alle ${count} Erweiterungen wurden erfolgreich aktualisiert!`);
+    showToast(`Alle ${entries.length} Erweiterungen wurden erfolgreich aktualisiert!`);
   };
 
   return (
@@ -342,6 +419,17 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
                 ))}
               </select>
 
+              {/* Status Filter Dropdown */}
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+                className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-neutral-300 focus:outline-none focus:border-emerald-500 cursor-pointer"
+              >
+                <option value="all">📦 Alle Status</option>
+                <option value="uninstalled">✨ Noch nicht installiert</option>
+                <option value="installed">✓ Bereits installiert</option>
+              </select>
+
               {/* Sort By Dropdown */}
               <select
                 value={sortBy}
@@ -400,7 +488,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {displayItems.map((mod) => {
-                const installed = isModInstalled(mod.id);
+                const installed = isModInstalled(mod);
                 return (
                   <div
                     key={mod.id}
@@ -460,21 +548,69 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
                       </button>
 
                       {installed ? (
-                        <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Installiert</span>
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex items-center gap-1 text-xs text-emerald-400 font-semibold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Installiert</span>
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const target = server.installedMods.find(m => 
+                                m.modId.toLowerCase().trim() === mod.id.toLowerCase().trim() ||
+                                m.name.toLowerCase().trim() === mod.name.toLowerCase().trim()
+                              );
+                              if (target) {
+                                onUninstallMod(target.id);
+                                showToast(`"${mod.name}" wurde deinstalliert.`);
+                              }
+                            }}
+                            className="p-1 text-neutral-400 hover:text-rose-400 rounded hover:bg-neutral-800 transition-colors cursor-pointer"
+                            title="Erweiterung deinstallieren"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedModForInstall(mod);
+                            }}
+                            className="text-[10px] text-neutral-400 hover:text-neutral-200 underline cursor-pointer px-1"
+                            title="Erweiterte Installations-Optionen"
+                          >
+                            Neu
+                          </button>
+                        </div>
                       ) : (
-                        <button
-                          onClick={() => {
-                            onInstallMod(mod);
-                            showToast(`"${mod.name}" wurde installiert!`);
-                          }}
-                          className="flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold transition-colors cursor-pointer shadow-sm shadow-emerald-600/20"
-                        >
-                          <Download className="w-3 h-3" />
-                          <span>1-Click Install</span>
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={(e) => handleDirectInstall(mod, e)}
+                            disabled={installingModId === mod.id}
+                            className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-700 text-white rounded text-xs font-bold transition-all cursor-pointer shadow-sm shadow-emerald-600/30 active:scale-95"
+                          >
+                            {installingModId === mod.id ? (
+                              <>
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                <span>Installiere...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download className="w-3 h-3" />
+                                <span>1-Click Install</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedModForInstall(mod);
+                            }}
+                            className="p-1 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 rounded transition-colors cursor-pointer"
+                            title="Erweiterte Installationsoptionen öffnen"
+                          >
+                            <Sliders className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -535,6 +671,21 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
               </div>
             </div>
 
+            {server.installedMods.length > 2 && (
+              <div className="p-3 bg-neutral-950/60 border-b border-neutral-800">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={installedSearchQuery}
+                    onChange={(e) => setInstalledSearchQuery(e.target.value)}
+                    placeholder="Installierte Erweiterungen durchsuchen..."
+                    className="w-full pl-9 pr-3 py-1.5 bg-neutral-900 border border-neutral-800 rounded-lg text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-emerald-500 font-medium"
+                  />
+                </div>
+              </div>
+            )}
+
             {server.installedMods.length === 0 ? (
               <div className="p-12 text-center text-neutral-500 text-xs space-y-2">
                 <Package className="w-8 h-8 mx-auto text-neutral-600" />
@@ -548,7 +699,13 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
               </div>
             ) : (
               <div className="divide-y divide-neutral-800/80">
-                {server.installedMods.map((item) => {
+                {server.installedMods
+                  .filter(m => 
+                    !installedSearchQuery ||
+                    m.name.toLowerCase().includes(installedSearchQuery.toLowerCase()) ||
+                    m.modId.toLowerCase().includes(installedSearchQuery.toLowerCase())
+                  )
+                  .map((item) => {
                   const hasUpdate = updatesAvailableMap[item.id];
 
                   return (
@@ -631,11 +788,26 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
           mod={selectedModForDetail}
           server={server}
           onInstallMod={(m) => {
-            onInstallMod(m);
-            showToast(`"${m.name}" wurde installiert!`);
+            setSelectedModForDetail(null);
+            setSelectedModForInstall(m);
           }}
           onUninstallMod={(id) => onUninstallMod(id)}
-          isInstalled={isModInstalled(selectedModForDetail.id)}
+          isInstalled={isModInstalled(selectedModForDetail)}
+        />
+      )}
+
+      {/* 1-Click Interactive Mod Install Modal */}
+      {selectedModForInstall && (
+        <ModInstallModal
+          isOpen={!!selectedModForInstall}
+          onClose={() => setSelectedModForInstall(null)}
+          mod={selectedModForInstall}
+          server={server}
+          allServers={allServers}
+          onConfirmInstall={(srvId, modToInstall, restart) => {
+            onInstallMod(modToInstall, restart);
+            showToast(`"${modToInstall.name}" wurde auf ${server.name} installiert!`);
+          }}
         />
       )}
 

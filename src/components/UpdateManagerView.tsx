@@ -12,12 +12,12 @@ import {
   Coffee,
   HardDrive
 } from 'lucide-react';
-import { ServerInstance } from '../types/game';
+import { ServerInstance, JavaVersion } from '../types/game';
 import { MINECRAFT_VERSIONS } from '../data/minecraftTypes';
 
 interface UpdateManagerViewProps {
   server: ServerInstance;
-  onUpdateVersion?: (newVersion: string, notes?: string) => void;
+  onUpdateVersion?: (newVersion: string, notes?: string, javaVersion?: JavaVersion) => void;
   onNotify?: (msg: string) => void;
 }
 
@@ -31,8 +31,8 @@ export const UpdateManagerView: React.FC<UpdateManagerViewProps> = ({
   // Minecraft specific state
   const [selectedEngine, setSelectedEngine] = useState<string>(server.minecraftType || 'paper');
   const [selectedVersion, setSelectedVersion] = useState<string>(server.version || '26.3');
-  const [selectedJava, setSelectedJava] = useState<'Java 21' | 'Java 17' | 'Java 11' | 'Java 8'>(
-    server.javaVersion || 'Java 21'
+  const [selectedJava, setSelectedJava] = useState<JavaVersion>(
+    server.javaVersion || 'Java 25'
   );
 
   // Steam specific state
@@ -110,8 +110,8 @@ export const UpdateManagerView: React.FC<UpdateManagerViewProps> = ({
         setUpdateProgress(100);
         pushLog(`[Erfolg] Update auf ${selectedEngine.toUpperCase()} ${selectedVersion} (${selectedJava}) erfolgreich!`);
         setIsUpdating(false);
-        onUpdateVersion?.(selectedVersion, `${selectedEngine} ${selectedVersion}`);
-        onNotify?.(`Server erfolgreich auf ${selectedEngine.toUpperCase()} ${selectedVersion} aktualisiert!`);
+        onUpdateVersion?.(selectedVersion, `${selectedEngine} ${selectedVersion}`, selectedJava);
+        onNotify?.(`Server erfolgreich auf ${selectedEngine.toUpperCase()} ${selectedVersion} mit ${selectedJava} aktualisiert!`);
       }, 3100);
 
     } else {
@@ -249,10 +249,14 @@ export const UpdateManagerView: React.FC<UpdateManagerViewProps> = ({
                       const ver = e.target.value;
                       setSelectedVersion(ver);
                       // Auto pick suitable Java version
-                      if (ver === '26.3' || ver.startsWith('1.21') || ver.startsWith('1.20.6')) {
+                      if (ver.startsWith('26.')) {
+                        setSelectedJava('Java 25');
+                      } else if (ver.startsWith('1.21') || ver.startsWith('1.20.6') || ver.startsWith('1.20.5')) {
                         setSelectedJava('Java 21');
                       } else if (ver.startsWith('1.20') || ver.startsWith('1.19') || ver.startsWith('1.18')) {
                         setSelectedJava('Java 17');
+                      } else if (ver.startsWith('1.16') || ver.startsWith('1.17')) {
+                        setSelectedJava('Java 11');
                       } else {
                         setSelectedJava('Java 8');
                       }
@@ -284,20 +288,33 @@ export const UpdateManagerView: React.FC<UpdateManagerViewProps> = ({
                 <div>
                   <label className="block text-xs font-medium text-neutral-300 mb-1.5 flex items-center justify-between">
                     <span>Java Laufzeitumgebung</span>
-                    <Coffee className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-[10px] text-emerald-400 font-mono">Modern (21+)</span>
                   </label>
                   <select
                     value={selectedJava}
-                    onChange={(e) => setSelectedJava(e.target.value as any)}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500"
+                    onChange={(e) => setSelectedJava(e.target.value as JavaVersion)}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500 font-mono"
                   >
-                    <option value="Java 21">Java 21 (LTS - Erforderlich für MC 1.20.5+ & 26.3)</option>
-                    <option value="Java 17">Java 17 (LTS - Standard für MC 1.18 bis 1.20.4)</option>
-                    <option value="Java 11">Java 11 (LTS - Für MC 1.16 bis 1.17)</option>
-                    <option value="Java 8">Java 8 (Legacy - Erforderlich für MC 1.12.2 & 1.7.10)</option>
+                    <optgroup label="Modernes Java (21+ für 1.20.5+, 1.21.x & 26.x Snapshots)">
+                      <option value="Java 25">Java 25 (LTS Next-Gen · Voraussetzung für 26.x)</option>
+                      <option value="Java 24">Java 24 (JDK 24 · Compact Object Headers JEP 450)</option>
+                      <option value="Java 23">Java 23 (JDK 23 · Generational ZGC)</option>
+                      <option value="Java 22">Java 22 (JDK 22 · FFM & Vector API)</option>
+                      <option value="Java 21">Java 21 (LTS · Offizieller Produktions-Standard)</option>
+                      <option value="GraalVM 21+">GraalVM 21+ (Ultra High-Performance JIT)</option>
+                      <option value="Temurin 21+">Eclipse Temurin 21+ (Adoptium Enterprise LTS)</option>
+                      <option value="Corretto 21+">Amazon Corretto 21+ (Cloud & Container LTS)</option>
+                      <option value="Zulu 21+">Azul Zulu 21+ (CRaC Instant-Checkpoint)</option>
+                      <option value="Java 26">Java 26 (JDK 26 Early Access)</option>
+                    </optgroup>
+                    <optgroup label="Ältere Versionen (LTS & Legacy)">
+                      <option value="Java 17">Java 17 (LTS · Für 1.18 bis 1.20.4)</option>
+                      <option value="Java 11">Java 11 (Legacy LTS für 1.16/1.17)</option>
+                      <option value="Java 8">Java 8 (Legacy für 1.12.2 und älter)</option>
+                    </optgroup>
                   </select>
                   <p className="text-[11px] text-neutral-500 mt-1">
-                    Wird automatisch konfiguriert für optimale Garbage-Collection (Aikar's Flags).
+                    Wird automatisch konfiguriert für optimale Garbage-Collection (Aikar's Flags oder ZGC).
                   </p>
                 </div>
               </div>

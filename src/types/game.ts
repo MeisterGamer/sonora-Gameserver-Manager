@@ -60,6 +60,21 @@ export interface GameDefinition {
 
 export type ServerStatus = 'offline' | 'starting' | 'running' | 'stopping' | 'updating';
 
+export type JavaVersion = 
+  | 'Java 26'
+  | 'Java 25'
+  | 'Java 24'
+  | 'Java 23'
+  | 'Java 22'
+  | 'Java 21'
+  | 'GraalVM 21+'
+  | 'Temurin 21+'
+  | 'Corretto 21+'
+  | 'Zulu 21+'
+  | 'Java 17'
+  | 'Java 11'
+  | 'Java 8';
+
 export interface ServerInstance {
   id: string;
   name: string;
@@ -74,7 +89,7 @@ export interface ServerInstance {
   targetOS: PlatformOS;
   autoRestart: boolean;
   version: string;
-  javaVersion?: 'Java 21' | 'Java 17' | 'Java 11' | 'Java 8';
+  javaVersion?: JavaVersion;
   minecraftType?: string;
   uptimeSeconds: number;
   cpuUsagePercent: number;

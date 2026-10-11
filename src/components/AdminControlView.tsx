@@ -637,10 +637,23 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
                   onChange={(e) => setSettingsForm({ ...settingsForm, defaultJavaVersion: e.target.value as any })}
                   className="w-full px-2.5 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-neutral-100 font-mono text-xs focus:border-rose-500 focus:outline-none"
                 >
-                  <option value="Java 21">Java 21 (LTS - Empfohlen für 26.3)</option>
-                  <option value="Java 17">Java 17 (LTS)</option>
-                  <option value="Java 11">Java 11</option>
-                  <option value="Java 8">Java 8 (Legacy 1.8 / 1.7.10)</option>
+                  <optgroup label="Modernes Java (21+ für 1.20.5+, 1.21.x & 26.x Snapshots)">
+                    <option value="Java 25">Java 25 (LTS Next-Gen · Standard für 26.x)</option>
+                    <option value="Java 24">Java 24 (JDK 24 · Compact Object Headers)</option>
+                    <option value="Java 23">Java 23 (JDK 23 · Generational ZGC)</option>
+                    <option value="Java 22">Java 22 (JDK 22 · Vector API & FFM)</option>
+                    <option value="Java 21">Java 21 (LTS · Offizieller Standard)</option>
+                    <option value="GraalVM 21+">GraalVM 21+ (Ultra High-Performance JIT)</option>
+                    <option value="Temurin 21+">Eclipse Temurin 21+ (Adoptium Enterprise LTS)</option>
+                    <option value="Corretto 21+">Amazon Corretto 21+ (Cloud Optimized)</option>
+                    <option value="Zulu 21+">Azul Zulu 21+ (CRaC Instant-Checkpoint)</option>
+                    <option value="Java 26">Java 26 (JDK 26 Early Access)</option>
+                  </optgroup>
+                  <optgroup label="Ältere Versionen (LTS & Legacy)">
+                    <option value="Java 17">Java 17 (LTS · Für 1.18 bis 1.20.4)</option>
+                    <option value="Java 11">Java 11 (Legacy LTS für 1.16/1.17)</option>
+                    <option value="Java 8">Java 8 (Legacy für 1.12.2 und älter)</option>
+                  </optgroup>
                 </select>
               </div>
 

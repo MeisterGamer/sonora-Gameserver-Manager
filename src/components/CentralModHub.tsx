@@ -12,7 +12,9 @@ import {
   ExternalLink,
   Upload,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Sliders,
+  Trash2
 } from 'lucide-react';
 import { ModItem, ServerInstance } from '../types/game';
 import { searchUnifiedMods, ModProviderSource } from '../services/liveModService';
@@ -20,6 +22,7 @@ import { MODS_AND_PLUGINS_DATABASE } from '../data/modsAndPlugins';
 import { ModDetailModal } from './ModDetailModal';
 import { CustomModUploadModal } from './CustomModUploadModal';
 import { ModBundlesView } from './ModBundlesView';
+import { ModInstallModal } from './ModInstallModal';
 
 interface CentralModHubProps {
   servers: ServerInstance[];
@@ -44,6 +47,13 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
   const [installedNotification, setInstalledNotification] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Auto-sync targetServerId if servers change or was initially empty
+  useEffect(() => {
+    if ((!targetServerId || !servers.some(s => s.id === targetServerId)) && servers.length > 0) {
+      setTargetServerId(servers[0].id);
+    }
+  }, [servers, targetServerId]);
+
   // Live search state
   const [isLoading, setIsLoading] = useState(false);
   const [displayItems, setDisplayItems] = useState<ModItem[]>(MODS_AND_PLUGINS_DATABASE);
@@ -51,8 +61,10 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
   const [isLiveApi, setIsLiveApi] = useState(false);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Mod detail & Upload modal
+  // Mod detail, Install & Upload modals
   const [selectedModForDetail, setSelectedModForDetail] = useState<ModItem | null>(null);
+  const [selectedModForInstall, setSelectedModForInstall] = useState<ModItem | null>(null);
+  const [installingModId, setInstallingModId] = useState<string | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
   const categories = [
@@ -158,6 +170,20 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
     onInstallModToServer(targetServerId, mod);
     setInstalledNotification(`"${mod.name}" wurde erfolgreich auf "${target?.name || targetServerId}" installiert!`);
     setTimeout(() => setInstalledNotification(null), 3000);
+  };
+
+  const handleDirectInstall = (mod: ModItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!targetServerId) {
+      setErrorMessage('Bitte wähle zuerst einen Ziel-Server aus der Auswahlliste oben aus!');
+      setTimeout(() => setErrorMessage(null), 4000);
+      return;
+    }
+    setInstallingModId(mod.id);
+    handleInstall(mod);
+    setTimeout(() => {
+      setInstallingModId(null);
+    }, 450);
   };
 
   const currentTargetServer = servers.find(s => s.id === targetServerId);
@@ -393,8 +419,14 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {displayItems.map((mod) => (
-                <div
+              {displayItems.map((mod) => {
+                const isInstalledOnCurrent = currentTargetServer?.installedMods.some(inst => 
+                  inst.modId.toLowerCase() === mod.id.toLowerCase() ||
+                  inst.name.toLowerCase().trim() === mod.name.toLowerCase().trim()
+                );
+
+                return (
+                <div 
                   key={mod.id}
                   onClick={() => setSelectedModForDetail(mod)}
                   className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col justify-between hover:border-neutral-700 transition-all cursor-pointer group hover:bg-neutral-850/60"
@@ -447,16 +479,54 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
                       <span>Details</span>
                     </button>
 
-                    <button
-                      onClick={() => handleInstall(mod)}
-                      className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold cursor-pointer transition-colors shadow-sm"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>1-Click Install</span>
-                    </button>
+                    {isInstalledOnCurrent ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="flex items-center gap-1 text-xs text-emerald-400 font-semibold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Installiert</span>
+                        </span>
+                        <button
+                          onClick={() => setSelectedModForInstall(mod)}
+                          className="text-[10px] text-neutral-400 hover:text-neutral-200 underline cursor-pointer"
+                        >
+                          Neu
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={(e) => handleDirectInstall(mod, e)}
+                          disabled={installingModId === mod.id}
+                          className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-700 text-white rounded text-xs font-bold cursor-pointer transition-all shadow-sm shadow-emerald-600/30 active:scale-95"
+                        >
+                          {installingModId === mod.id ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <span>Installiere...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download className="w-3 h-3" />
+                              <span>1-Click Install</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedModForInstall(mod);
+                          }}
+                          className="p-1 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 rounded transition-colors cursor-pointer"
+                          title="Erweiterte Installationsoptionen"
+                        >
+                          <Sliders className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </div>
@@ -469,8 +539,31 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
           onClose={() => setSelectedModForDetail(null)}
           mod={selectedModForDetail}
           server={currentTargetServer}
-          onInstallMod={(m) => handleInstall(m)}
-          isInstalled={currentTargetServer?.installedMods.some(inst => inst.modId === selectedModForDetail.id) || false}
+          onInstallMod={(m) => {
+            setSelectedModForDetail(null);
+            setSelectedModForInstall(m);
+          }}
+          isInstalled={currentTargetServer?.installedMods.some(inst => 
+            inst.modId.toLowerCase() === selectedModForDetail.id.toLowerCase() ||
+            inst.name.toLowerCase().trim() === selectedModForDetail.name.toLowerCase().trim()
+          ) || false}
+        />
+      )}
+
+      {/* 1-Click Interactive Mod Install Modal */}
+      {selectedModForInstall && (
+        <ModInstallModal
+          isOpen={!!selectedModForInstall}
+          onClose={() => setSelectedModForInstall(null)}
+          mod={selectedModForInstall}
+          server={currentTargetServer || null}
+          allServers={servers}
+          onConfirmInstall={(srvId, modToInstall, restart) => {
+            onInstallModToServer(srvId, modToInstall);
+            const srv = servers.find(s => s.id === srvId);
+            setInstalledNotification(`"${modToInstall.name}" wurde erfolgreich auf "${srv?.name || srvId}" installiert!`);
+            setTimeout(() => setInstalledNotification(null), 3500);
+          }}
         />
       )}
 

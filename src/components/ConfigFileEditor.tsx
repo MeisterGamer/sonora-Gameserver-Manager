@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
-import { FileText, Save, RotateCcw, Check, Sliders, Code2, Copy } from 'lucide-react';
+import { FileText, Save, RotateCcw, Check, Sliders, Code2, Copy, Coffee } from 'lucide-react';
 import { ServerInstance } from '../types/game';
 
 interface ConfigFileEditorProps {
   server: ServerInstance;
   onSaveConfigFile: (filename: string, content: string) => void;
+  onOpenJavaModal?: () => void;
 }
 
 export const ConfigFileEditor: React.FC<ConfigFileEditorProps> = ({
   server,
-  onSaveConfigFile
+  onSaveConfigFile,
+  onOpenJavaModal
 }) => {
   const fileNames = Object.keys(server.configFiles);
   const [selectedFile, setSelectedFile] = useState<string>(fileNames[0] || 'server.properties');
@@ -75,8 +77,24 @@ export const ConfigFileEditor: React.FC<ConfigFileEditorProps> = ({
           </div>
         </div>
 
-        <div className="pt-3 border-t border-neutral-900 text-[11px] text-neutral-500 px-2">
-          Dateien werden in Echtzeit im Server-Root synchronisiert.
+        <div className="pt-3 border-t border-neutral-900 px-2 space-y-2">
+          {server.category === 'minecraft' && onOpenJavaModal && (
+            <button
+              onClick={onOpenJavaModal}
+              className="w-full flex items-center justify-between p-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-1.5 font-medium">
+                <Coffee className="w-3.5 h-3.5 text-amber-400" />
+                <span>Java 21+ & Flags</span>
+              </div>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-700/50">
+                {server.javaVersion || 'Java 21'}
+              </span>
+            </button>
+          )}
+          <div className="text-[11px] text-neutral-500">
+            Dateien werden in Echtzeit im Server-Root synchronisiert.
+          </div>
         </div>
       </div>
 

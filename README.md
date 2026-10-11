@@ -149,7 +149,8 @@ ApexHost bietet umfassende Administrations- und Automatisierungswerkzeuge für d
 ### Update- & Versions-Zentrum
 - **Minecraft Multi-Engine Wechsler:** Direkter Wechsel zwischen **PaperMC**, **Purpur**, **Fabric**, **Forge**, **NeoForge**, **Vanilla** und **Bedrock Dedicated**.
 - **Versionen & Snapshots:** Umfassende Versionsmatrix von Version **26.3** (aktuellster Snapshot) bis zurück zu Klassikern wie **1.7.10** und **1.12.2**.
-- **Java-Matrix:** Automatische Konfiguration der passenden Java-Laufzeitumgebung (**Java 21**, **Java 17**, **Java 11**, **Java 8**) inklusive optimierter Aikar's Garbage-Collection-Flags (`-XX:+UseG1GC`).
+- **Moderne Java 21+ Matrix:** Vollständige Unterstützung moderner JDKs (**Java 26 EA**, **Java 25 LTS**, **Java 24**, **Java 23**, **Java 21 LTS**, **GraalVM 21+**, **Eclipse Temurin 21+**, **Amazon Corretto 21+**, **Azul Zulu 21+**) sowie Legacy-Versionen (Java 17, 11, 8).
+- **Interaktiver Java & JVM-Flags Manager:** Dediziertes Management-Modal zur Auswahl von Garbage Collectorn (Aikar's G1GC Flags, Generational ZGC, Shenandoah GC), Heap-Allokation (`-Xms`/`-Xmx`), Compact Object Headers (`-XX:+UseCompactObjectHeaders`), Vector API und sofortiger Server-Neustart.
 - **SteamCMD Branch-Manager:** Umschalten zwischen Release-Zweigen (`public`, `beta`, `experimental`, `staging`), Eingabe von Beta-Passwörtern und Datei-Integritätsprüfung (`+app_update <app_id> validate`).
 - **Live-Update Konsole:** Visualisierter Fortschrittsbalken und terminalbasierte Ausgabe für Download-, Verifizierungs- und Installationsschritte.
 

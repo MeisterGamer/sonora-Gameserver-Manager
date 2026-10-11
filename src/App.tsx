@@ -9,7 +9,8 @@ import {
   GameDefinition, 
   PlatformOS, 
   LogMessage, 
-  ModItem 
+  ModItem,
+  JavaVersion
 } from './types/game';
 import { 
   UserAccount, 
@@ -194,7 +195,7 @@ export default function App() {
       return;
     }
 
-    setServers(servers.map(s => s.id === id ? { ...s, status: 'starting' } : s));
+    setServers(prev => prev.map(s => s.id === id ? { ...s, status: 'starting' } : s));
     const now = new Date().toTimeString().slice(0, 8);
     const target = servers.find(s => s.id === id);
 
@@ -228,7 +229,7 @@ export default function App() {
   };
 
   const handleStopServer = (id: string) => {
-    setServers(servers.map(s => s.id === id ? { ...s, status: 'stopping' } : s));
+    setServers(prev => prev.map(s => s.id === id ? { ...s, status: 'stopping' } : s));
     const now = new Date().toTimeString().slice(0, 8);
     setLogsMap(prev => ({
       ...prev,
@@ -265,7 +266,7 @@ export default function App() {
   };
 
   const handleKillServer = (id: string) => {
-    setServers(servers.map(s => s.id === id ? {
+    setServers(prev => prev.map(s => s.id === id ? {
       ...s,
       status: 'offline',
       uptimeSeconds: 0,
@@ -316,13 +317,27 @@ export default function App() {
     showToast(`Server "${targetName}" wurde erfolgreich und unwiderruflich gelöscht.`);
   };
 
-  const handleUpdateVersion = (serverId: string, newVersion: string, notes?: string) => {
+  const handleUpdateVersion = (serverId: string, newVersion: string, notes?: string, javaVersion?: JavaVersion) => {
     setServers(prev => prev.map(s => {
       if (s.id === serverId) {
-        return { ...s, version: newVersion };
+        return { 
+          ...s, 
+          version: newVersion,
+          ...(javaVersion ? { javaVersion } : {})
+        };
       }
       return s;
     }));
+  };
+
+  const handleUpdateJavaVersion = (serverId: string, javaVersion: JavaVersion, restart?: boolean) => {
+    setServers(prev => prev.map(s => {
+      if (s.id === serverId) {
+        return { ...s, javaVersion };
+      }
+      return s;
+    }));
+    showToast(`Java-Laufzeitumgebung auf ${javaVersion} aktualisiert${restart ? ' und Server wird neu gestartet...' : '.'}`);
   };
 
   const handleCloneServer = (serverId: string) => {
@@ -410,26 +425,86 @@ export default function App() {
   };
 
   // Mod management
-  const handleInstallMod = (serverId: string, mod: ModItem) => {
-    setServers(servers.map(s => {
+  const handleInstallMod = (serverId: string, mod: ModItem, restartServer?: boolean) => {
+    const newInstId = `inst_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+
+    setServers(prev => prev.map(s => {
       if (s.id !== serverId) return s;
-      const already = s.installedMods.find(m => m.modId === mod.id);
-      if (already) return s;
+
+      const modNameClean = mod.name.toLowerCase().trim();
+      const modIdClean = mod.id.toLowerCase().trim();
+
+      const existingIndex = s.installedMods.findIndex(m => 
+        m.modId.toLowerCase().trim() === modIdClean ||
+        m.name.toLowerCase().trim() === modNameClean
+      );
+
+      if (existingIndex >= 0) {
+        // Update existing installed mod
+        const updatedMods = [...s.installedMods];
+        updatedMods[existingIndex] = {
+          ...updatedMods[existingIndex],
+          version: mod.version || updatedMods[existingIndex].version,
+          enabled: true,
+          fileSize: mod.fileSize || updatedMods[existingIndex].fileSize,
+          source: mod.source || updatedMods[existingIndex].source
+        };
+        return {
+          ...s,
+          installedMods: updatedMods
+        };
+      }
+
+      // Add new installed mod
       return {
         ...s,
         installedMods: [
           ...s.installedMods,
           {
-            id: `inst_${Date.now()}`,
+            id: newInstId,
             modId: mod.id,
             name: mod.name,
-            version: mod.version,
+            version: mod.version || '1.0.0',
             enabled: true,
             installedAt: new Date().toISOString().slice(0, 10),
-            source: mod.source,
-            fileSize: mod.fileSize
+            source: mod.source || 'Modrinth',
+            fileSize: mod.fileSize || '2.4 MB'
           }
         ]
+      };
+    }));
+
+    const now = new Date().toTimeString().slice(0, 8);
+    const isMod = mod.tags?.some(t => ['fabric', 'forge', 'neoforge'].includes(t.toLowerCase()));
+    const targetFolder = isMod ? '/mods/' : '/plugins/';
+    const cleanFileName = `${mod.name.replace(/[^\w-]/g, '')}.jar`;
+
+    setLogsMap(prev => ({
+      ...prev,
+      [serverId]: [
+        ...(prev[serverId] || []),
+        { id: `mod_${Date.now()}_1`, timestamp: now, level: 'INFO', message: `[Installer] Lade ${mod.name} v${mod.version || '1.0.0'} (${mod.source}) herunter...` },
+        { id: `mod_${Date.now()}_2`, timestamp: now, level: 'SUCCESS', message: `[Installer] Datei abgelegt unter ${targetFolder}${cleanFileName} (${mod.fileSize || '2.4 MB'}). Erweiterung aktiviert.` }
+      ]
+    }));
+
+    showToast(`"${mod.name}" wurde erfolgreich installiert.`);
+
+    if (restartServer) {
+      handleRestartServer(serverId);
+    }
+  };
+
+  const handleUninstallMod = (serverId: string, installedModId: string) => {
+    let uninstalledName = 'Erweiterung';
+
+    setServers(prev => prev.map(s => {
+      if (s.id !== serverId) return s;
+      const target = s.installedMods.find(m => m.id === installedModId || m.modId === installedModId);
+      if (target) uninstalledName = target.name;
+      return {
+        ...s,
+        installedMods: s.installedMods.filter(m => m.id !== installedModId && m.modId !== installedModId)
       };
     }));
 
@@ -438,35 +513,35 @@ export default function App() {
       ...prev,
       [serverId]: [
         ...(prev[serverId] || []),
-        { id: `mod_${Date.now()}`, timestamp: now, level: 'SUCCESS', message: `Mod/Plugin "${mod.name}" v${mod.version} erfolgreich installiert.` }
+        { id: `mod_${Date.now()}`, timestamp: now, level: 'WARN', message: `[Installer] "${uninstalledName}" deinstalliert und JAR aus Dateisystem entfernt.` }
       ]
     }));
-    showToast(`"${mod.name}" wurde auf dem Server installiert.`);
-  };
-
-  const handleUninstallMod = (serverId: string, installedModId: string) => {
-    setServers(servers.map(s => {
-      if (s.id !== serverId) return s;
-      return {
-        ...s,
-        installedMods: s.installedMods.filter(m => m.id !== installedModId)
-      };
-    }));
-    showToast('Erweiterung deinstalliert.');
+    showToast(`"${uninstalledName}" wurde deinstalliert.`);
   };
 
   const handleToggleMod = (serverId: string, installedModId: string, enabled: boolean) => {
-    setServers(servers.map(s => {
+    setServers(prev => prev.map(s => {
       if (s.id !== serverId) return s;
       return {
         ...s,
-        installedMods: s.installedMods.map(m => m.id === installedModId ? { ...m, enabled } : m)
+        installedMods: s.installedMods.map(m => 
+          (m.id === installedModId || m.modId === installedModId) ? { ...m, enabled } : m
+        )
       };
+    }));
+
+    const now = new Date().toTimeString().slice(0, 8);
+    setLogsMap(prev => ({
+      ...prev,
+      [serverId]: [
+        ...(prev[serverId] || []),
+        { id: `mod_${Date.now()}`, timestamp: now, level: 'INFO', message: `[Installer] Erweiterungsstatus geändert: ${enabled ? 'Aktiviert' : 'Deaktiviert'}` }
+      ]
     }));
   };
 
   const handleSaveConfigFile = (serverId: string, filename: string, content: string) => {
-    setServers(servers.map(s => {
+    setServers(prev => prev.map(s => {
       if (s.id !== serverId) return s;
       return {
         ...s,
@@ -1091,7 +1166,9 @@ export default function App() {
               onToggleMod={handleToggleMod}
               onSaveConfigFile={handleSaveConfigFile}
               onUpdateVersion={handleUpdateVersion}
+              onUpdateJavaVersion={handleUpdateJavaVersion}
               onDeleteServer={handleDeleteServer}
+              allServers={servers}
               onNotify={showToast}
             />
           ) : (

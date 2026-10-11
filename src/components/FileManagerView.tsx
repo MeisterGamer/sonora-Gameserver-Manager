@@ -40,13 +40,31 @@ function getInitialFiles(server: ServerInstance): ServerFileItem[] {
   const now = '2026-10-10 14:30';
 
   if (isMc) {
+    const isFabricOrForge = server.minecraftType === 'fabric' || server.minecraftType === 'forge' || server.minecraftType === 'neoforge';
+    const mainDir = isFabricOrForge ? '/mods' : '/plugins';
+
+    const modFiles: ServerFileItem[] = (server.installedMods || []).map(m => {
+      const cleanName = `${m.name.replace(/[^\w-]/g, '')}.jar`;
+      return {
+        name: cleanName,
+        path: `${mainDir}/${cleanName}`,
+        type: 'file',
+        sizeBytes: 3200000,
+        lastModified: m.installedAt || now,
+        isEditable: false,
+        content: `# Java Binary Archive: ${m.name} v${m.version}\n# Engine: ${server.minecraftType || 'paper'}\n# Status: ${m.enabled ? 'Aktiviert' : 'Deaktiviert'}\n# Quelle: ${m.source}\n# Installiert am: ${m.installedAt}`
+      };
+    });
+
     return [
       { name: 'world', path: '/world', type: 'directory', sizeBytes: 1845000000, lastModified: now },
       { name: 'world_nether', path: '/world_nether', type: 'directory', sizeBytes: 420000000, lastModified: now },
       { name: 'world_the_end', path: '/world_the_end', type: 'directory', sizeBytes: 190000000, lastModified: now },
       { name: 'plugins', path: '/plugins', type: 'directory', sizeBytes: 85000000, lastModified: now },
+      { name: 'mods', path: '/mods', type: 'directory', sizeBytes: 65000000, lastModified: now },
       { name: 'config', path: '/config', type: 'directory', sizeBytes: 12000000, lastModified: now },
       { name: 'logs', path: '/logs', type: 'directory', sizeBytes: 4500000, lastModified: now },
+      ...modFiles,
       { 
         name: 'server.properties', 
         path: '/server.properties', 
@@ -112,10 +130,30 @@ function getInitialFiles(server: ServerInstance): ServerFileItem[] {
     ];
   } else {
     // Steam / Dedicated game server
+    const isRust = server.gameId === 'rust';
+    const modDir = isRust ? '/oxide/plugins' : '/Mods';
+
+    const steamModFiles: ServerFileItem[] = (server.installedMods || []).map(m => {
+      const ext = isRust ? '.cs' : '.pak';
+      const cleanName = `${m.name.replace(/[^\w-]/g, '')}${ext}${m.enabled ? '' : '.disabled'}`;
+      return {
+        name: cleanName,
+        path: `${modDir}/${cleanName}`,
+        type: 'file',
+        sizeBytes: 120000,
+        lastModified: m.installedAt || now,
+        isEditable: isRust,
+        content: `// Plugin: ${m.name} v${m.version}\n// Status: ${m.enabled ? 'Enabled' : 'Disabled'}\n`
+      };
+    });
+
     return [
       { name: 'Saved', path: '/Saved', type: 'directory', sizeBytes: 950000000, lastModified: now },
       { name: 'Config', path: '/Config', type: 'directory', sizeBytes: 1500000, lastModified: now },
       { name: 'Logs', path: '/Logs', type: 'directory', sizeBytes: 6200000, lastModified: now },
+      ...(isRust ? [{ name: 'oxide', path: '/oxide', type: 'directory' as const, sizeBytes: 45000000, lastModified: now }] : []),
+      { name: isRust ? 'plugins' : 'Mods', path: modDir, type: 'directory', sizeBytes: 25000000, lastModified: now },
+      ...steamModFiles,
       { 
         name: 'server.cfg', 
         path: '/server.cfg', 
@@ -155,6 +193,11 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
   const [files, setFiles] = useState<ServerFileItem[]>(() => getInitialFiles(server));
   const [currentPath, setCurrentPath] = useState<string>('/');
   const [selectedFile, setSelectedFile] = useState<ServerFileItem | null>(null);
+
+  // Sync files if installed mods change
+  React.useEffect(() => {
+    setFiles(getInitialFiles(server));
+  }, [server.installedMods]);
   const [editorContent, setEditorContent] = useState<string>('');
   const [searchFilter, setSearchFilter] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);

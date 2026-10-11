@@ -78,6 +78,7 @@ import { LoginModal } from './components/LoginModal';
 import { CRMView } from './components/CRMView';
 import { ExpiryWarningBanner } from './components/ExpiryWarningBanner';
 import { DeleteServerModal } from './components/DeleteServerModal';
+import { SetupWizardModal, SetupWizardResult } from './components/SetupWizardModal';
 
 export default function App() {
   const [servers, setServers] = useState<ServerInstance[]>(getStoredServers);
@@ -105,6 +106,7 @@ export default function App() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCustomGameModalOpen, setIsCustomGameModalOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isSetupWizardOpen, setIsSetupWizardOpen] = useState(false);
   const [serverToDelete, setServerToDelete] = useState<ServerInstance | null>(null);
   const [preselectedGame, setPreselectedGame] = useState<GameDefinition | null>(null);
 
@@ -551,6 +553,72 @@ export default function App() {
         }
       };
     }));
+  };
+
+  // Setup Wizard Completion Handler
+  const handleCompleteSetupWizard = (result: SetupWizardResult, createdServer?: ServerInstance) => {
+    // 1. Update admin settings with wizard choices
+    setAdminSettings(prev => ({
+      ...prev,
+      defaultJavaVersion: result.defaultJava,
+      steamMode: result.steamMode,
+      discordWebhookUrl: result.discordWebhook || prev.discordWebhookUrl
+    }));
+
+    // 2. If admin user/password updated
+    if (result.adminUsername || result.adminEmail) {
+      const updatedUser: UserAccount = {
+        ...currentUser,
+        username: result.adminUsername || currentUser.username,
+        email: result.adminEmail || currentUser.email,
+        role: 'admin'
+      };
+      setCurrentUser(updatedUser);
+      setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+    }
+
+    // 3. Set host OS if changed
+    if (result.targetOS) {
+      setSelectedOS(result.targetOS);
+    }
+
+    // 4. If a first server was created
+    if (createdServer) {
+      setServers(prev => [createdServer, ...prev]);
+      setLogsMap(prev => ({
+        ...prev,
+        [createdServer.id]: [
+          { id: 'l_init_1', timestamp: new Date().toTimeString().slice(0, 8), level: 'INFO', message: `[SetupWizard] Host-Knoten "${result.nodeName}" initialisiert. Gameserver "${createdServer.name}" eingerichtet.` },
+          { id: 'l_init_2', timestamp: new Date().toTimeString().slice(0, 8), level: 'SUCCESS', message: `[SetupWizard] Java Runtime ${createdServer.javaVersion} verifiziert. EULA akzeptiert. Port ${createdServer.port} gebunden.` },
+          { id: 'l_init_3', timestamp: new Date().toTimeString().slice(0, 8), level: 'INFO', message: `Dienste online und bereit für Verbindungen.` }
+        ]
+      }));
+
+      // Create initial contract for first server
+      const newContract: CustomerContract = {
+        id: `cnt_${Date.now().toString(36)}`,
+        customerId: currentUser.id,
+        customerName: currentUser.username,
+        serverId: createdServer.id,
+        serverName: createdServer.name,
+        gameName: createdServer.gameName,
+        planName: 'Initial-Setup Server',
+        monthlyPrice: 0.00,
+        startDate: new Date().toISOString().slice(0, 10),
+        expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10),
+        daysRemaining: 30,
+        autoRenew: true,
+        status: 'active',
+        location: 'Frankfurt am Main (DE)',
+        ipAddress: `${result.hostIp || '185.244.195.42'}:${createdServer.port}`
+      };
+      setContracts(prev => [newContract, ...prev]);
+
+      setSelectedServerId(createdServer.id);
+      setCurrentNavTab('servers');
+    }
+
+    showToast(`ApexHost Manager & Node "${result.nodeName}" erfolgreich eingerichtet!`);
   };
 
   // Manual server creation
@@ -1139,6 +1207,7 @@ export default function App() {
           setIsCreateModalOpen(true);
         }}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
+        onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
         activeServerCount={servers.length}
         expiringCount={expiringContractsCount}
         selectedOS={selectedOS}
@@ -1184,6 +1253,7 @@ export default function App() {
                 setPreselectedGame(null);
                 setIsCreateModalOpen(true);
               }}
+              onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
             />
           )
         )}
@@ -1246,6 +1316,7 @@ export default function App() {
             onUpdateUserRole={handleUpdateUserRole}
             onAdjustUserBalance={handleAdjustUserBalance}
             onToggleUserStatus={handleToggleUserStatus}
+            onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
           />
         )}
 
@@ -1313,6 +1384,15 @@ export default function App() {
         server={serverToDelete}
         onClose={() => setServerToDelete(null)}
         onConfirmDelete={handleConfirmDeleteServer}
+      />
+
+      <SetupWizardModal
+        isOpen={isSetupWizardOpen}
+        onClose={() => setIsSetupWizardOpen(false)}
+        currentSettings={adminSettings}
+        currentOS={selectedOS}
+        currentUser={currentUser}
+        onCompleteSetup={handleCompleteSetupWizard}
       />
     </div>
   );

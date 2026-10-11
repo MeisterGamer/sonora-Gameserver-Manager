@@ -17,7 +17,8 @@ import {
   Copy,
   Filter,
   CheckCircle2,
-  HardDrive
+  HardDrive,
+  Sparkles
 } from 'lucide-react';
 import { ServerInstance } from '../types/game';
 
@@ -30,6 +31,7 @@ interface ServerListProps {
   onDeleteServer: (id: string) => void;
   onCloneServer?: (id: string) => void;
   onOpenCreateModal: () => void;
+  onOpenSetupWizard?: () => void;
 }
 
 export const ServerList: React.FC<ServerListProps> = ({
@@ -40,7 +42,8 @@ export const ServerList: React.FC<ServerListProps> = ({
   onRestartServer,
   onDeleteServer,
   onCloneServer,
-  onOpenCreateModal
+  onOpenCreateModal,
+  onOpenSetupWizard
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'offline'>('all');
@@ -216,6 +219,17 @@ export const ServerList: React.FC<ServerListProps> = ({
             <option value="fps">FPS / Shooter</option>
             <option value="simulation">Simulation</option>
           </select>
+
+          {onOpenSetupWizard && (
+            <button
+              onClick={onOpenSetupWizard}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-950 hover:bg-neutral-850 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-semibold cursor-pointer transition-colors shrink-0 shadow-sm"
+              title="Installations- und Einrichtungsassistent starten"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Setup-Assistent</span>
+            </button>
+          )}
 
           <button
             onClick={onOpenCreateModal}

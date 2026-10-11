@@ -40,6 +40,7 @@ interface AdminControlViewProps {
   onUpdateUserRole: (userId: string, newRole: 'admin' | 'user') => void;
   onAdjustUserBalance: (userId: string, newBalance: number) => void;
   onToggleUserStatus: (userId: string) => void;
+  onOpenSetupWizard?: () => void;
 }
 
 export const AdminControlView: React.FC<AdminControlViewProps> = ({
@@ -49,7 +50,8 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
   onUpdateAdminSettings,
   onUpdateUserRole,
   onAdjustUserBalance,
-  onToggleUserStatus
+  onToggleUserStatus,
+  onOpenSetupWizard
 }) => {
   const [activeTab, setActiveTab] = useState<'settings' | 'nodes' | 'users' | 'audit'>('settings');
   const [nodes, setNodes] = useState<NodeInfo[]>(INITIAL_NODES);
@@ -130,10 +132,23 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-neutral-400 bg-neutral-950 p-2.5 rounded-lg border border-neutral-800">
-          <span>Angemeldet als: <strong className="text-neutral-200">{currentUser.username}</strong></span>
-          <span>·</span>
-          <span className="font-mono text-rose-400 uppercase font-semibold">Rolle: {currentUser.role}</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          {onOpenSetupWizard && (
+            <button
+              onClick={onOpenSetupWizard}
+              className="flex items-center gap-1.5 px-3 py-2 bg-neutral-900 hover:bg-neutral-850 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-sm"
+              title="Installations-Assistent starten"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Installations-Assistent</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-3 text-xs text-neutral-400 bg-neutral-950 p-2.5 rounded-lg border border-neutral-800">
+            <span>Angemeldet als: <strong className="text-neutral-200">{currentUser.username}</strong></span>
+            <span>·</span>
+            <span className="font-mono text-rose-400 uppercase font-semibold">Rolle: {currentUser.role}</span>
+          </div>
         </div>
       </div>
 

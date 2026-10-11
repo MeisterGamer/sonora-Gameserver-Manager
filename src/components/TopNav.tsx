@@ -1,5 +1,5 @@
 import React from 'react';
-import { Server, Plus, ShoppingCart, Shield, User, Users, Key, LogIn, Building2, Clock, AlertTriangle, Settings } from 'lucide-react';
+import { Server, Plus, ShoppingCart, Shield, User, Users, Key, LogIn, Building2, Clock, AlertTriangle, Settings, Sparkles } from 'lucide-react';
 import { PlatformOS } from '../types/game';
 import { UserAccount } from '../types/auth';
 import { SteamOperationMode } from '../types/adminSettings';
@@ -9,6 +9,7 @@ interface TopNavProps {
   onTabChange: (tab: 'servers' | 'catalog' | 'mods' | 'shop' | 'crm' | 'admincontrol' | 'usercontrol' | 'crossplatform') => void;
   onOpenCreateModal: () => void;
   onOpenLoginModal: () => void;
+  onOpenSetupWizard?: () => void;
   activeServerCount: number;
   expiringCount?: number;
   selectedOS: PlatformOS;
@@ -22,6 +23,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   onTabChange,
   onOpenCreateModal,
   onOpenLoginModal,
+  onOpenSetupWizard,
   activeServerCount,
   expiringCount = 0,
   selectedOS,
@@ -208,6 +210,18 @@ export const TopNav: React.FC<TopNavProps> = ({
             </div>
           </div>
         </button>
+
+        {/* Setup Wizard Button */}
+        {onOpenSetupWizard && (
+          <button
+            onClick={onOpenSetupWizard}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/40 hover:border-emerald-500 text-xs text-emerald-300 hover:text-white transition-all cursor-pointer shadow-sm shadow-emerald-950"
+            title="Installations-Assistent starten (Manager & Daemon einrichten)"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            <span className="hidden md:inline font-semibold">Setup-Assistent</span>
+          </button>
+        )}
 
         {/* Create Server CTA */}
         <button

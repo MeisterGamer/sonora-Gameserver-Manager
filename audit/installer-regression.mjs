@@ -72,12 +72,13 @@ try {
     assert.throws(() => steamProfile({ ...server, steamAppId: 1 }), /AppID/); checks.push('Wrong dedicated AppID rejected for ' + gameId);
   }
   const installer = fs.readFileSync('install.sh', 'utf8');
-  check('Linux deployment exports clean shared runtime path', installer.includes('export PATH="$NODE_ROOT/bin:') && !installer.includes('$(which npx)'));
-  check('Linux service deploys committed immutable source', installer.includes('git -C "$SOURCE_DIR" archive HEAD') && installer.includes('WorkingDirectory=$RELEASE_DIR'));
-  check('Default deployment does not start manager', installer.includes('START=false') && installer.includes('if $START; then'));
-  check('Repair override is replaced and persistent data path pinned', installer.includes('"$UNIT.d/paths.conf"') && installer.includes('Environment=APEXHOST_DATA_DIR=$DATA_ROOT/servers'));
-  check('Service user preflight runs before unit replacement', installer.indexOf('"$RELEASE_DIR/scripts/check-runtime.mjs"') < installer.indexOf('cat > "$UNIT"'));
-  check('Node and fallback Java archives require SHA256 verification', (installer.match(/sha256sum --check/g) || []).length === 2);
+  check('All application paths stay in source installation', installer.includes('DATA_ROOT="$SOURCE_DIR/data"') && installer.includes('RUNTIME_ROOT="$SOURCE_DIR/.runtime"'));
+  check('Installer does not create an opt release', !installer.includes('RELEASE_DIR=') && !installer.includes('RUNTIME_ROOT=/opt'));
+  check('Default installation does not start manager', installer.includes('START=false') && installer.includes('if $START; then'));
+  check('Old data copied without overwriting local dataset', installer.includes('cp -a "$PREVIOUS_DATA/." "$DATA_ROOT/"') && installer.includes('Local data retained'));
+  check('Service launcher stays in installation directory', installer.includes('ExecStart="$SOURCE_DIR/start-manager.sh"'));
+  check('Installer provisions full JDK 25', installer.includes('ensureJdk(process.cwd()+"/.runtime/jdks",25)'));
+  check('Node archive checksum is mandatory', installer.includes('sha256sum --check node-check.txt'));
   console.log(checks.length + ' installer regression checks passed. No live services/game processes started.');
   fs.writeFileSync('audit/installer-regression.json', JSON.stringify({ checks, servicesStarted: false, networkUsed: false }, null, 2));
 } finally { fs.rmSync(root, { recursive: true, force: true }); }

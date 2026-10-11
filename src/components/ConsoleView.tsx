@@ -371,7 +371,7 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
                 <p className="text-[11px] text-neutral-400 leading-tight">
                   {hostDiag?.java?.installed 
                     ? `Java ist betriebsbereit. Version: ${hostDiag.java.version}` 
-                    : 'Minecraft benötigt Java 21, um auf deinem Linux-Server zu starten.'}
+                    : 'Die Instanz verwendet ihr separat gewähltes JDK; Host-Java ist nur eine Diagnose.'}
                 </p>
               </div>
 

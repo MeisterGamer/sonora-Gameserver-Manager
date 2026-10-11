@@ -48,7 +48,7 @@ export const CrossPlatformView: React.FC<CrossPlatformViewProps> = ({ selectedSe
       title: 'Linux (Ubuntu / Debian / CentOS / Arch)',
       filename: 'start.sh',
       content: scripts.linuxSh,
-      desc: 'POSIX-konformes Shell-Skript mit Speichergrenzen und nativer Signalweiterleitung (SIGTERM/SIGINT).'
+      desc: 'Bash-Startskript für den Instanzordner mit passender Engine, Speichergrenze und ausgewähltem JDK.'
     },
     windows: {
       title: 'Windows (Command Prompt & PowerShell)',
@@ -66,13 +66,13 @@ export const CrossPlatformView: React.FC<CrossPlatformViewProps> = ({ selectedSe
       title: 'Linux Systemd Service (Autostart 24/7)',
       filename: `${demoServer.id}.service`,
       content: scripts.linuxSystemd,
-      desc: 'Produktionsreifer systemd-Daemon zur automatischen Hintergrundausführung und Wiederbelebung nach Server-Reboots.'
+      desc: 'Separate Unit mit dem tatsächlichen Installationspfad. Nur verwenden, wenn die Instanz nicht vom Manager gestartet wird.'
     },
     docker: {
       title: 'Universal Dockerfile (Containerisiert)',
       filename: 'Dockerfile',
       content: scripts.dockerfile,
-      desc: 'Plattformunabhängiger Container-Build für Docker, Kubernetes und Podman.'
+      desc: 'Docker-Bereitstellung ist noch nicht implementiert.'
     }
   };
 
@@ -105,7 +105,7 @@ export const CrossPlatformView: React.FC<CrossPlatformViewProps> = ({ selectedSe
               <span>Multi-Plattform & Node.js 24 Architektur</span>
             </h2>
             <p className="text-xs text-neutral-400 mt-1">
-              ApexHost abstrahiert Betriebssystemunterschiede (Dateipfade, Prozesssignale, Binaries) und läuft nahtlos unter Windows, Linux und macOS.
+              Verifizierte Linux-Adapter und Startskripte für die ausgewählte Instanz. Minecraft-Skripte für Windows und macOS benötigen ein separat installiertes natives JDK.
             </p>
           </div>
 
@@ -139,7 +139,7 @@ export const CrossPlatformView: React.FC<CrossPlatformViewProps> = ({ selectedSe
               <span>Linux (Debian, Ubuntu, RHEL, Arch)</span>
             </div>
             <p className="text-neutral-400 leading-relaxed">
-              Native ELF-64 Binaries, systemd Dämonen, Wine/Proton Emulationsschicht für Windows-exklusive Steam-Games und Docker-Container.
+              Native Linux-Adapter für die aktivierten Spiele. Wine, Proton und Docker sind noch nicht implementiert.
             </p>
           </div>
 

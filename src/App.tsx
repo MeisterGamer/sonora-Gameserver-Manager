@@ -223,7 +223,10 @@ export default function App() {
     }));
   };
 
-  const handleUpdateJavaVersion = () => showToast('Separate Java-Laufzeitwahl ist noch nicht implementiert; der Host verwendet sein installiertes Java.');
+  const handleUpdateJavaVersion = (id: string, javaVersion: JavaVersion) => {
+    setServers(prev => prev.map(server => server.id === id ? { ...server, javaVersion } : server));
+    showToast(javaVersion + ' installiert und gespeichert. Der Server bleibt gestoppt.');
+  };
 
   const handleCloneServer = () => showToast('Instanzklonen ist noch nicht implementiert; es wurde keine Kopie angelegt.');
 

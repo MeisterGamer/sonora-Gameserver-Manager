@@ -56,6 +56,8 @@ const imports = {
     const net = new EventEmitter(); net.listen = () => setImmediate(() => net.emit('listening')); net.close = () => {}; return net;
   } } },
 };
+const javaModule = await import('../backend/java.ts');
+imports['./backend/java.ts'] = { ...javaModule, ensureJdk: async (root, major) => path.join(root, 'jdk-' + major, 'bin', 'java') };
 const password = 'Regression-Fixture-Password-Only';
 const previous = Object.fromEntries(['SONORA_ADMIN_PASSWORD', 'SONORA_ADMIN_USERNAME', 'SONORA_PUBLIC_ORIGIN'].map(key => [key, process.env[key]]));
 process.env.SONORA_ADMIN_PASSWORD = password;
@@ -67,7 +69,7 @@ const module = new vm.SourceTextModule(stripTypeScriptTypes(fs.readFileSync('ser
 });
 await module.link(async name => {
   let values = imports[name];
-  if (!values && name.startsWith('./backend/')) values = await import(pathToFileURL(path.join(repo, name)).href);
+  if (!values && (name.startsWith('./backend/') || name.startsWith('./src/data/'))) values = await import(pathToFileURL(path.join(repo, name)).href);
   assert.ok(values, 'Unexpected import ' + name);
   return new vm.SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); }, { context });
 });
@@ -148,6 +150,13 @@ const first = call('POST', '/api/servers/:id/power', 'fixture', { action: 'start
 check('Concurrent power action blocked', (await call('POST', '/api/servers/:id/power', 'fixture', { action: 'start' })).statusCode === 409);
 await first;
 await call('POST', '/api/servers/:id/power', 'fixture', { action: 'kill' });
+check('JDK 26 selection is installed and persisted', (await call('POST', '/api/servers/:id/java', 'fixture', {javaVersion:'Java 26'})).body.javaVersion === 'Java 26');
+check('Too-old JDK cannot replace selected runtime', (await call('POST', '/api/servers/:id/java', 'fixture', {javaVersion:'Java 8'})).statusCode === 400);
+await call('POST', '/api/servers/:id/power', 'fixture', {action:'start'});
+check('Actual launch uses selected absolute JDK path', spawns.at(-1).executable.endsWith(path.join('.runtime','jdks','jdk-26','bin','java')));
+check('JAVA_HOME matches selected executable', spawns.at(-1).options.env.JAVA_HOME.endsWith(path.join('.runtime','jdks','jdk-26')));
+check('Running instance rejects JDK replacement', (await call('POST', '/api/servers/:id/java', 'fixture', {javaVersion:'Java 25'})).statusCode === 409);
+await call('POST', '/api/servers/:id/power', 'fixture', {action:'kill'});
 const nativeDefinition = { ...definition, id: 'native', category: 'survival', gameId: 'valheim', port: 25573, steamAppId: 896660, linuxExecutable: 'valheim_server.x86_64', linuxStartArgs: '--name "two words"' };
 await call('POST', '/api/servers/create', null, { server: nativeDefinition });
 fs.writeFileSync(path.join(dataDir, 'native', 'valheim_server.x86_64'), 'FIXTURE ONLY');

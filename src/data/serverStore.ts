@@ -1,5 +1,7 @@
-import { ServerInstance, LogMessage, PlatformOS } from '../types/game';
-import { MINECRAFT_SERVER_PROPERTIES_DEFAULT } from './minecraftTypes';
+import type { ServerInstance, LogMessage, PlatformOS } from '../types/game';
+import { minecraftLaunch, splitLaunchArguments } from './launchPlan.ts';
+import { STEAM_INSTALLERS } from './installerSupport.ts';
+import { MINECRAFT_SERVER_PROPERTIES_DEFAULT } from './minecraftTypes.ts';
 
 const SERVERS_STORAGE_KEY = 'apexhost_servers_data';
 
@@ -194,101 +196,54 @@ export function saveStoredServers(servers: ServerInstance[]): void {
   localStorage.setItem(SERVERS_STORAGE_KEY, JSON.stringify(servers));
 }
 
-// OS Script Generator for Windows, Linux, and macOS
+// Exported launchers are saved inside data/servers/<id>/ and use the same MC plan as the backend.
 export function generateOSScripts(server: ServerInstance) {
-  const isMc = server.category === 'minecraft';
-  const ramG = server.allocatedRamGb;
-  
-  // Windows: .bat & PowerShell
-  const windowsBat = isMc
-    ? `@echo off
-TITLE ${server.name} - ApexHost
-echo [ApexHost] Starting ${server.name} on Windows (NodeJS 24 Managed)...
-echo [Java] Using ${server.javaVersion || 'Java 21'} with ${ramG}GB RAM allocation
-java -Xms${Math.floor(ramG/2)}G -Xmx${ramG}G -XX:+UseG1GC -jar server.jar --nogui
-echo [ApexHost] Server stopped.
-pause`
-    : `@echo off
-TITLE ${server.name} - ApexHost
-echo [ApexHost] Starting Steam Dedicated Server for ${server.gameName}...
-${server.gameId}.exe -port=${server.port} -players=${server.maxPlayers} -batchmode
-pause`;
-
-  const windowsPs1 = isMc
-    ? `# ApexHost PowerShell Startup Script for Windows
-Write-Host ">>> Initializing ${server.name} with NodeJS 24 Runner" -ForegroundColor Cyan
-& java -Xms${Math.floor(ramG/2)}G -Xmx${ramG}G -jar server.jar --nogui`
-    : `# ApexHost PowerShell Startup Script for Windows
-Write-Host ">>> Starting ${server.gameName} Dedicated Server" -ForegroundColor Green
-Start-Process -FilePath ".\\${server.gameId}.exe" -ArgumentList "-port=${server.port}" -NoNewWindow -Wait`;
-
-  // Linux: bash script & systemd unit
-  const linuxSh = isMc
-    ? `#!/usr/bin/env bash
-# ApexHost Game Server Runner (Linux / POSIX)
-# Node.js 24 Runtime Environment
-set -euo pipefail
-echo "==> Starting ${server.name} (Port: ${server.port}, RAM: ${ramG}G) <=="
-exec java -Xms${Math.floor(ramG/2)}G -Xmx${ramG}G \\
-  -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 \\
-  -jar server.jar --nogui`
-    : `#!/usr/bin/env bash
-# ApexHost Steam Dedicated Server Launcher
-set -euo pipefail
-echo "==> Starting ${server.gameName} Dedicated Server on Linux <=="
-export LD_LIBRARY_PATH=".:\${LD_LIBRARY_PATH:-}"
-exec ./${server.gameId}_server -port=${server.port} -maxplayers=${server.maxPlayers}`;
-
-  const linuxSystemd = `[Unit]
-Description=ApexHost Dedicated Server - ${server.name}
-After=network.target
-
-[Service]
-Type=simple
-User=gameserver
-WorkingDirectory=/opt/apexhost/servers/${server.id}
-ExecStart=/opt/apexhost/servers/${server.id}/start.sh
-Restart=on-failure
-RestartSec=10s
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target`;
-
-  // macOS: .command terminal script
-  const macCommand = isMc
-    ? `#!/bin/zsh
-# ApexHost macOS Darwin Launcher (Apple Silicon / Intel)
-echo "[ApexHost] Launching ${server.name} on macOS..."
-cd "$(dirname "$0")"
-java -Xms${Math.floor(ramG/2)}G -Xmx${ramG}G -jar server.jar --nogui`
-    : `#!/bin/zsh
-# ApexHost macOS Dedicated Launcher
-echo "[ApexHost] Launching ${server.gameName} on macOS..."
-cd "$(dirname "$0")"
-./start.sh`;
-
-  // Dockerfile
-  const dockerfile = isMc
-    ? `FROM eclipse-temurin:21-jre-alpine
-LABEL maintainer="ApexHost Manager"
-WORKDIR /data
-EXPOSE ${server.port} ${server.rconPort || 25575}
-COPY . /data
-CMD ["java", "-Xms${Math.floor(ramG/2)}G", "-Xmx${ramG}G", "-XX:+UseG1GC", "-jar", "server.jar", "--nogui"]`
-    : `FROM cm2network/steamcmd:root
-LABEL maintainer="ApexHost Steam Server"
-WORKDIR /server
-EXPOSE ${server.port} ${server.queryPort}
-COPY . /server
-CMD ["./start.sh"]`;
-
-  return {
-    windowsBat,
-    windowsPs1,
-    linuxSh,
-    linuxSystemd,
-    macCommand,
-    dockerfile
-  };
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+  const unavailable = '# No verified launcher for this engine/platform. Use the supported Linux adapter.\n';
+  let linuxSh = '#!/usr/bin/env bash\n' + unavailable + 'exit 1\n';
+  let windowsBat = '@echo off\r\necho No verified native Windows adapter.\r\nexit /b 1\r\n';
+  let windowsPs1 = "throw 'No verified native Windows adapter.'\n";
+  let macCommand = '#!/bin/sh\n' + unavailable + 'exit 1\n';
+  const base = '#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname -- "${BASH_SOURCE[0]}")"\n';
+  try {
+    if (server.category === 'minecraft') {
+      const plan = minecraftLaunch(server), args = plan.args.map(quote).join(' ');
+      linuxSh = base + '# Install this JDK through the manager before running this exported script.\n' +
+        'ROOT="$(cd ../../.. && pwd -P)"\nexport JAVA_HOME="$ROOT/.runtime/jdks/jdk-' + plan.major + '"\n' +
+        'export PATH="$JAVA_HOME/bin:$PATH"\n' +
+        '[ -x "$JAVA_HOME/bin/java" ] || { echo "Selected JDK is not installed" >&2; exit 1; }\n' +
+        '[ -s ' + quote(plan.jar) + ' ] || { echo "Server JAR is missing" >&2; exit 1; }\n' +
+        'grep -Eq "^[[:space:]]*eula[[:space:]]*=[[:space:]]*true[[:space:]]*$" eula.txt || { echo "Accept the Minecraft EULA first" >&2; exit 1; }\n' +
+        'exec "$JAVA_HOME/bin/java" ' + args + '\n';
+      // JAVA_HOME must point at the selected, separately installed native Windows/macOS JDK.
+      windowsBat = '@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\n' +
+        'if not defined JAVA_HOME (echo Set JAVA_HOME to JDK ' + plan.major + ' & exit /b 1)\r\n' +
+        'if not exist "%JAVA_HOME%\\bin\\java.exe" exit /b 1\r\n' +
+        'if not exist "' + plan.jar + '" exit /b 1\r\n' +
+        'findstr /r /x "eula=true" eula.txt >nul || exit /b 1\r\n' +
+        '"%JAVA_HOME%\\bin\\java.exe" ' + plan.args.map(arg => '"' + arg + '"').join(' ') + '\r\nexit /b %errorlevel%\r\n';
+      windowsPs1 = "Set-Location -LiteralPath $PSScriptRoot\nif (-not $env:JAVA_HOME) { throw 'Set JAVA_HOME to JDK " + plan.major + "' }\n" +
+        "if (-not (Select-String -LiteralPath 'eula.txt' -Pattern '^eula=true$' -Quiet)) { throw 'Accept EULA first' }\n" +
+        "& (Join-Path $env:JAVA_HOME 'bin/java.exe') " + plan.args.map(arg => "'" + arg + "'").join(' ') + "\nexit $LASTEXITCODE\n";
+      macCommand = '#!/bin/sh\nset -eu\ncd -- "$(dirname -- "$0")"\n' +
+        ': "${JAVA_HOME:?Set JAVA_HOME to JDK ' + plan.major + '}"\n' +
+        'grep -Eq "^eula=true$" eula.txt || exit 1\nexec "$JAVA_HOME/bin/java" ' + args + '\n';
+    } else if (STEAM_INSTALLERS[server.gameId] && server.linuxStartArgs) {
+      const profile = STEAM_INSTALLERS[server.gameId];
+      const args = splitLaunchArguments(server.linuxStartArgs).map(quote).join(' ');
+      linuxSh = base + '[ -s ' + quote(profile.executable) + ' ] || { echo "Dedicated server files missing" >&2; exit 1; }\n';
+      if (server.gameId === 'valheim') linuxSh += 'export SteamAppId=892970\nexport LD_LIBRARY_PATH="$PWD/linux64:${LD_LIBRARY_PATH:-}"\n';
+      linuxSh += 'exec ' + quote('./' + profile.executable) + ' ' + args + (server.gameId === 'valheim' ? ' -savedir "$PWD/saves"' : '') + '\n';
+    }
+  } catch (error: any) {
+    linuxSh = base + 'echo ' + quote(error.message) + ' >&2\nexit 1\n';
+  }
+  // No invented deployment path or Linux user. The caller supplies the real installation root.
+  const root = server.installationRoot;
+  const user = server.installationUser && /^[a-zA-Z0-9_-]+$/.test(server.installationUser) ? server.installationUser : undefined;
+  const linuxSystemd = root && user && !/[\r\n%"\\]/.test(root) && /^[a-zA-Z0-9_-]+$/.test(server.id)
+    ? '[Unit]\nDescription=Sonora game instance\nAfter=network.target\n[Service]\nType=simple\nUser=' + user + '\nWorkingDirectory="' + root + '/data/servers/' + server.id + '"\nExecStart=/usr/bin/env bash "' + root + '/data/servers/' + server.id + '/start.sh"\nRestart=on-failure\nRestartSec=10\n# Configure User= for the owner of this installation before registering this standalone unit.\n# Do not start the same instance simultaneously through the manager.\n[Install]\nWantedBy=multi-user.target\n'
+    : '# Installation directory is not known. Refresh the instance from the backend before exporting a unit.\n';
+  const dockerfile = '# Docker deployment is not implemented for this installation.\n# No unverified Java image or runtime is generated.\n';
+  return { linuxSh, windowsBat, windowsPs1, macCommand, linuxSystemd, dockerfile };
 }

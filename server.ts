@@ -11,6 +11,8 @@ import { configureFiles } from './backend/files.ts';
 import { configureBackups } from './backend/backups.ts';
 import { configureMods } from './backend/mods.ts';
 import { confinedPath, instancePath, serverId as validateId, parseArguments, readFileTail } from './backend/paths.ts';
+import { minecraftLaunch } from './src/data/launchPlan.ts';
+import { JDK_VERSIONS, jdkPackage, jdkHome, ensureJdk, selectedJava } from './backend/java.ts';
 import { paperVersions, paperJavaVersion } from './backend/paper.ts';
 import { installedSteamExecutable, steamProfile, normalizeSteamDefinition } from './backend/gameInstaller.ts';
 import { downloadMinecraft, minecraftVersions, MINECRAFT_JARS } from './backend/minecraft.ts';
@@ -36,7 +38,7 @@ try {
 }
 
 const STATE_DIR = path.resolve(DATA_DIR, '..', 'manager');
-app.get('/api/health', (_req, res) => res.json({ success: true, version: '0.1.1', update: '03' }));
+app.get('/api/health', (_req, res) => res.json({ success: true, version: '0.1.2', update: '04' }));
 configureAuth(app, STATE_DIR);
 app.param('id', (req, res, next, value) => {
   try { instancePath(DATA_DIR, value); next(); }
@@ -459,7 +461,7 @@ function validateDefinition(server: any) {
   if (server.targetOS && server.targetOS !== hostOS) throw new Error('Dieser lokale Manager führt ausschließlich auf ' + hostOS + ' aus');
   if (server.category === 'minecraft' && !MINECRAFT_JARS[server.minecraftType || 'paper']) throw new Error('Für diese Minecraft-Engine fehlt ein eigener Installer');
   if (server.category !== 'minecraft' && process.platform !== 'linux') throw new Error('Native Steam-Spieladapter sind derzeit nur auf Linux implementiert');
-  if (server.category === 'minecraft') paperJavaVersion(server.version);
+  if (server.category === 'minecraft') selectedJava(server.javaVersion, server.requiredJava || paperJavaVersion(server.version));
   else steamProfile(server);
   if (server.linuxExecutable) confinedPath(instancePath(DATA_DIR, server.id), server.linuxExecutable.replace(/^\.\//, ''));
   if (server.linuxStartArgs) parseArguments(server.linuxStartArgs);
@@ -500,15 +502,17 @@ async function startRegistered(id: string) {
   let executable: string, args: string[];
   if (server.category === 'minecraft') {
     if (await checkPortInUse(server.port)) throw Object.assign(new Error('TCP-Port ist belegt'), { status: 409 });
-    const java = await detectJava();
     const requiredJava = server.requiredJava || paperJavaVersion(server.version);
-    if (!java.installed || Number(java.version.split('.')[0]) < requiredJava) throw new Error('Für diese Minecraft-Version ist Java ' + requiredJava + ' oder neuer erforderlich');
+    const major = selectedJava(server.javaVersion, requiredJava);
     const eula = confinedPath(dir, 'eula.txt');
     if (!fs.existsSync(eula) || !/^eula\s*=\s*true\s*$/m.test(fs.readFileSync(eula, 'utf8'))) throw new Error('Minecraft-EULA noch nicht ausdrücklich akzeptiert');
-    const jar = MINECRAFT_JARS[server.minecraftType || 'paper'];
+    const plan = minecraftLaunch(server);
+    const jar = plan.jar;
     if (!fs.existsSync(confinedPath(dir, jar))) throw new Error('Server-JAR fehlt; zuerst installieren');
-    executable = 'java';
-    args = ['-Xmx' + Math.floor(server.allocatedRamGb * 1024) + 'M', '-Xms1G', '-XX:+UseG1GC', '-jar', jar, 'nogui'];
+    appendLog(id, 'INFO', 'Prüfe/installiere JDK ' + major);
+    executable = await ensureJdk(path.join(__dirname, '.runtime', 'jdks'), major);
+    registry[id].javaVersion = 'Java ' + major; saveRegistry();
+    args = plan.args;
   } else {
     const foundExecutable = installedSteamExecutable(dir, server);
     if (!foundExecutable) throw new Error('Server-Executable fehlt; zuerst installieren');
@@ -519,6 +523,10 @@ async function startRegistered(id: string) {
   appendLog(id, 'INFO', 'Starte Prozess für ' + server.name);
   if (shuttingDown) throw Object.assign(new Error('Manager wird beendet'), { status: 503 });
   const childEnv = { ...process.env };
+  if (server.category === 'minecraft') {
+    childEnv.JAVA_HOME = path.dirname(path.dirname(executable));
+    childEnv.PATH = path.dirname(executable) + path.delimiter + (childEnv.PATH || '');
+  }
   if (server.gameId === 'valheim') {
     args.push('-savedir', confinedPath(dir, 'saves'));
     childEnv.SteamAppId = '892970';
@@ -571,7 +579,7 @@ async function stopRegistered(id: string, force = false) {
 }
 app.get('/api/servers', (_req, res) => res.json({ success: true, servers: Object.values(registry).map((server: any) => {
   const info = activeProcesses.get(server.id);
-  return { ...server, status: info?.state || (runtime[server.id] && mayBeAlive(runtime[server.id].pid) ? 'unknown' : 'offline'),
+  return { ...server, installationRoot: __dirname, installationUser: os.userInfo().username, status: info?.state || (runtime[server.id] && mayBeAlive(runtime[server.id].pid) ? 'unknown' : 'offline'),
     uptimeSeconds: info ? Math.floor((Date.now() - info.startTime) / 1000) : 0,
     cpuUsagePercent: 0, ramUsageMb: 0, networkInKb: 0, networkOutKb: 0, currentPlayers: 0, tps: 0 };
 }) }));
@@ -589,6 +597,24 @@ app.post('/api/servers/:id/power', async (req, res) => {
   });
   res.json(result);
 });
+app.get('/api/java/versions', async (_req, res) => {
+  const root = path.join(__dirname, '.runtime', 'jdks');
+  const versions = await Promise.all(JDK_VERSIONS.map(async major => {
+    try { const metadata = await jdkPackage(major); return { major, available: true, version: metadata.version, installed: fs.existsSync(jdkHome(root, major)) }; }
+    catch (error: any) { return { major, available: false, installed: fs.existsSync(jdkHome(root, major)), error: error.message }; }
+  }));
+  res.json({ success: true, versions });
+});
+app.post('/api/servers/:id/java', async (req, res) => res.json(await exclusive(req.params.id, async () => {
+  const server = registered(req.params.id); assertStopped(req.params.id);
+  if (server.category !== 'minecraft') throw new Error('JDK-Auswahl gilt nur für Minecraft');
+  const major = selectedJava(req.body.javaVersion, server.requiredJava || paperJavaVersion(server.version));
+  appendLog(server.id, 'INFO', 'Installiere JDK ' + major);
+  await ensureJdk(path.join(__dirname, '.runtime', 'jdks'), major);
+  registry[server.id].javaVersion = 'Java ' + major; saveRegistry();
+  res.status(200);
+  return { success: true, javaVersion: 'Java ' + major };
+})));
 app.get('/api/installers/paper/versions', async (_req, res) => res.json({ success: true, versions: await paperVersions(fetch) }));
 app.get('/api/installers/:engine/versions', async (req, res) => res.json({ success: true, versions: await minecraftVersions(req.params.engine, fetch) }));
 async function installWithState(id: string, version?: string, allowExperimental = false) {

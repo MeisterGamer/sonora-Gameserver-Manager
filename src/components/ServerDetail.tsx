@@ -140,12 +140,12 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                     <span>·</span>
                     <button
                       type="button"
-                      onClick={() => onNotify?.('Verwendet wird das Java des Hosts. Separate Laufzeitwahl ist noch nicht implementiert.')}
+                      onClick={() => setIsJavaModalOpen(true)}
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-mono transition-colors cursor-pointer group"
                       title="Java 21+ Laufzeit & JVM-Flags konfigurieren"
                     >
                       <Coffee className="w-3 h-3 text-amber-400 group-hover:rotate-12 transition-transform" />
-                      <span>{'Host-Java'}</span>
+                      <span>{server.javaVersion || ('JDK ' + (server.requiredJava || 'Auto'))}</span>
                       <span className="text-[10px] text-amber-400/80 underline ml-0.5 font-sans">Ändern</span>
                     </button>
                   </>

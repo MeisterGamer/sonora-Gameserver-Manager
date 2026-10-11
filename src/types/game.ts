@@ -74,7 +74,8 @@ export type JavaVersion =
   | 'Java 17'
   | 'Java 16'
   | 'Java 11'
-  | 'Java 8';
+  | 'Java 8'
+  | 'Java 7' | 'Java 9' | 'Java 10' | 'Java 12' | 'Java 13' | 'Java 14' | 'Java 15' | 'Java 18' | 'Java 19' | 'Java 20';
 
 export interface ServerInstance {
   id: string;
@@ -98,6 +99,8 @@ export interface ServerInstance {
   installedBuild?: number;
   allowExperimental?: boolean;
   paperChannel?: string;
+  installationRoot?: string;
+  installationUser?: string;
   requiredJava?: number;
   javaVersion?: JavaVersion;
   minecraftType?: string;

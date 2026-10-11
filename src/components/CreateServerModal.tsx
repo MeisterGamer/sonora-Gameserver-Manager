@@ -224,11 +224,10 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
                 </label>
                 <select
                   value={mcJava}
-                  disabled
                   onChange={(e) => setMcJava(e.target.value as JavaVersion)}
                   className="w-full px-2.5 py-1.5 bg-neutral-900 border border-neutral-800 rounded text-neutral-200 focus:outline-none focus:border-emerald-500 font-mono text-xs"
                 >
-                  <option value={mcJava}>{mcJava} – Host-Laufzeit wird beim Start geprüft</option>
+                  {Array.from({ length: 20 }, (_, i) => i + 7).map(major => <option key={major} value={'Java ' + major} disabled={major < requiredPaperJava(mcVersion)}>JDK {major}</option>)}
                 </select>
               </div>
             </div>

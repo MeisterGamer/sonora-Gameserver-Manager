@@ -11,7 +11,17 @@ import {
   Search,
   Filter,
   SlidersHorizontal,
-  Sparkles
+  Sparkles,
+  ShieldAlert,
+  CheckCircle2,
+  AlertTriangle,
+  Server,
+  Coffee,
+  Copy,
+  Check,
+  Folder,
+  FileText,
+  Activity
 } from 'lucide-react';
 import { ServerInstance, LogMessage } from '../types/game';
 
@@ -39,11 +49,64 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
   const [logSearch, setLogSearch] = useState('');
   const [filterLevel, setFilterLevel] = useState<'ALL' | 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS'>('ALL');
   
+  // Host Diagnostics & Real File State
+  const [showDiag, setShowDiag] = useState(false);
+  const [hostDiag, setHostDiag] = useState<any>(null);
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
+  const [isDownloadingPaper, setIsDownloadingPaper] = useState(false);
+  const [paperDownloadSuccess, setPaperDownloadSuccess] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
   // Command History (Up / Down arrow key cycling)
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
 
   const logContainerRef = useRef<HTMLDivElement>(null);
+
+  // Fetch host diagnostics on load or toggle
+  const fetchDiagnostics = async () => {
+    setIsDiagnosing(true);
+    try {
+      const res = await fetch('/api/system/diagnostics');
+      if (res.ok) {
+        const data = await res.json();
+        setHostDiag(data);
+      }
+    } catch {
+      // preview environment
+    } finally {
+      setIsDiagnosing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDiagnostics();
+  }, [server.id]);
+
+  const handleCopy = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  };
+
+  const handleDownloadPaper = async () => {
+    setIsDownloadingPaper(true);
+    setPaperDownloadSuccess(null);
+    try {
+      const res = await fetch(`/api/servers/${server.id}/install-paper`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPaperDownloadSuccess(`PaperMC 1.21.4 Build #${data.build} (${data.fileSizeMb} MB) erfolgreich installiert! EULA akzeptiert.`);
+        fetchDiagnostics();
+      } else {
+        alert(data.error || 'Download fehlgeschlagen.');
+      }
+    } catch (e: any) {
+      alert(`Fehler beim Download: ${e.message}`);
+    } finally {
+      setIsDownloadingPaper(false);
+    }
+  };
 
   useEffect(() => {
     if (autoScroll && logContainerRef.current) {
@@ -150,6 +213,29 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
 
           <div className="h-4 w-px bg-neutral-800 mx-1" />
 
+          {/* Host Diagnostics Toggle */}
+          <button
+            onClick={() => setShowDiag(!showDiag)}
+            className={`px-2 py-1 rounded text-xs transition-colors flex items-center gap-1.5 cursor-pointer font-medium ${
+              showDiag 
+                ? 'bg-amber-950/80 text-amber-300 border border-amber-800' 
+                : hostDiag?.java?.installed === false
+                ? 'bg-rose-950 text-rose-300 border border-rose-800 animate-pulse'
+                : 'bg-neutral-800 text-neutral-300 hover:text-white'
+            }`}
+            title="Dedicated Host-Diagnose & Problembehebung"
+          >
+            {hostDiag?.java?.installed === false ? (
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+            ) : (
+              <Activity className="w-3.5 h-3.5 text-emerald-400" />
+            )}
+            <span>Server-Diagnose</span>
+            {hostDiag?.java?.installed === false && (
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+            )}
+          </button>
+
           <button
             onClick={() => setAutoScroll(!autoScroll)}
             className={`px-2 py-1 rounded text-xs transition-colors flex items-center gap-1 cursor-pointer ${
@@ -212,6 +298,152 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
           />
         </div>
       </div>
+
+      {/* Host Diagnostics & Problembehebung Panel */}
+      {(showDiag || hostDiag?.java?.installed === false) && (
+        <div className="p-3.5 bg-neutral-900/95 border-b border-neutral-800 space-y-3 text-xs animate-in fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-neutral-100">
+              <Server className="w-4 h-4 text-emerald-400" />
+              <span>Dedicated Server Diagnose & Verbindungshilfe</span>
+              {hostDiag && (
+                <span className="text-[10px] font-mono text-neutral-400 bg-neutral-950 px-2 py-0.5 rounded border border-neutral-800">
+                  Host: {hostDiag.hostName} ({hostDiag.platform})
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => setShowDiag(false)}
+              className="text-neutral-500 hover:text-neutral-300 text-xs cursor-pointer"
+            >
+              Schließen ✕
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            {/* Java Check Card */}
+            <div className={`p-2.5 rounded-lg border flex flex-col justify-between ${
+              hostDiag?.java?.installed === false 
+                ? 'bg-rose-950/40 border-rose-800/80 text-rose-200' 
+                : 'bg-neutral-950/70 border-neutral-800 text-neutral-300'
+            }`}>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold flex items-center gap-1.5 text-xs">
+                    <Coffee className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Java Runtime auf Ubuntu Host</span>
+                  </span>
+                  {hostDiag?.java?.installed ? (
+                    <span className="text-[10px] font-mono bg-emerald-950 text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-800">
+                      ✓ Installiert ({hostDiag.java.version})
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono bg-rose-950 text-rose-300 px-1.5 py-0.2 rounded border border-rose-800 font-bold">
+                      ✗ Nicht installiert!
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-neutral-400 leading-tight">
+                  {hostDiag?.java?.installed 
+                    ? `Java ist betriebsbereit. Version: ${hostDiag.java.version}` 
+                    : 'Minecraft benötigt Java 21, um auf deinem Linux-Server zu starten.'}
+                </p>
+              </div>
+
+              {hostDiag?.java?.installed === false && (
+                <div className="mt-2 flex items-center justify-between gap-2 p-1.5 bg-neutral-900 rounded border border-neutral-800 text-[11px] font-mono">
+                  <span className="text-neutral-200 truncate">sudo apt install -y openjdk-21-jre-headless</span>
+                  <button
+                    onClick={() => handleCopy('sudo apt update && sudo apt install -y openjdk-21-jre-headless', 'java')}
+                    className="p-1 hover:bg-neutral-800 rounded text-neutral-400 hover:text-white shrink-0 cursor-pointer"
+                    title="Befehl kopieren"
+                  >
+                    {copiedKey === 'java' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Port & Firewall Check Card */}
+            <div className="p-2.5 rounded-lg border bg-neutral-950/70 border-neutral-800 text-neutral-300 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold flex items-center gap-1.5 text-xs">
+                    <ShieldAlert className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Firewall Port 25565 (Minecraft)</span>
+                  </span>
+                  <span className="text-[10px] font-mono bg-neutral-900 text-neutral-300 px-1.5 py-0.2 rounded border border-neutral-700">
+                    Port {server.port || 25565}
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-400 leading-tight">
+                  Auf Ubuntu blockiert UFW oft Ports. Gib Port 25565 per SSH frei:
+                </p>
+              </div>
+
+              <div className="mt-2 flex items-center justify-between gap-2 p-1.5 bg-neutral-900 rounded border border-neutral-800 text-[11px] font-mono">
+                <span className="text-neutral-200 truncate">sudo ufw allow {server.port || 25565}/tcp</span>
+                <button
+                  onClick={() => handleCopy(`sudo ufw allow ${server.port || 25565}/tcp && sudo ufw reload`, 'ufw')}
+                  className="p-1 hover:bg-neutral-800 rounded text-neutral-400 hover:text-white shrink-0 cursor-pointer"
+                  title="Befehl kopieren"
+                >
+                  {copiedKey === 'ufw' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Server JAR & Log File Paths Card */}
+          <div className="p-2.5 bg-neutral-950/80 rounded-lg border border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div>
+              <span className="font-semibold text-neutral-200 block text-xs flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-amber-400" />
+                <span>Log-Dateien auf dem Server & JAR-Setup</span>
+              </span>
+              <span className="text-[11px] text-neutral-400 block mt-0.5">
+                Speicherort der Logs: <code className="text-emerald-400 font-mono">data/servers/{server.id}/logs/latest.log</code>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => handleCopy(`tail -f data/servers/${server.id}/logs/latest.log`, 'logtail')}
+                className="flex items-center gap-1 px-2.5 py-1 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded text-[11px] border border-neutral-700 cursor-pointer"
+                title="SSH-Befehl kopieren, um Logs live im Terminal mitzulesen"
+              >
+                {copiedKey === 'logtail' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>tail -f Befehl</span>
+              </button>
+
+              <button
+                onClick={handleDownloadPaper}
+                disabled={isDownloadingPaper}
+                className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white rounded text-[11px] font-bold cursor-pointer transition-colors shadow-sm"
+              >
+                {isDownloadingPaper ? (
+                  <>
+                    <RotateCw className="w-3 h-3 animate-spin" />
+                    <span>Lade PaperMC...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-3 h-3" />
+                    <span>PaperMC JAR & EULA bereitstellen</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {paperDownloadSuccess && (
+            <div className="p-2 rounded bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-[11px] flex items-center gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>{paperDownloadSuccess}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Terminal Output Area */}
       <div 

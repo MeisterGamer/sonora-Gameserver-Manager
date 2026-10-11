@@ -185,10 +185,44 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // Poll real server logs from disk / daemon if server is selected
+  useEffect(() => {
+    if (!selectedServerId) return;
+
+    const fetchServerLogs = async () => {
+      try {
+        const res = await fetch(`/api/servers/${selectedServerId}/logs`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.logs) && data.logs.length > 0) {
+            setLogsMap(prev => {
+              const currentLogs = prev[selectedServerId] || [];
+              const currentIds = new Set(currentLogs.map(l => l.id));
+              const fresh = data.logs.filter((l: any) => !currentIds.has(l.id));
+              if (fresh.length > 0) {
+                return {
+                  ...prev,
+                  [selectedServerId]: [...currentLogs, ...fresh].slice(-500)
+                };
+              }
+              return prev;
+            });
+          }
+        }
+      } catch {
+        // ignore preview environment
+      }
+    };
+
+    fetchServerLogs();
+    const interval = setInterval(fetchServerLogs, 2500);
+    return () => clearInterval(interval);
+  }, [selectedServerId]);
+
   const selectedServer = servers.find(s => s.id === selectedServerId);
 
   // Server power handlers
-  const handleStartServer = (id: string) => {
+  const handleStartServer = async (id: string) => {
     // Check if contract is expired or in grace period
     const contract = contracts.find(c => c.serverId === id);
     if (contract && contract.status === 'grace_period') {
@@ -205,10 +239,34 @@ export default function App() {
       ...prev,
       [id]: [
         ...(prev[id] || []),
-        { id: `log_${Date.now()}_1`, timestamp: now, level: 'INFO', message: `Initializing process on ${target?.targetOS || 'linux'} (NodeJS 24 Managed)...` },
-        { id: `log_${Date.now()}_2`, timestamp: now, level: 'INFO', message: `Allocating ${target?.allocatedRamGb || 4} GB RAM with optimal GC flags.` }
+        { id: `log_${Date.now()}_1`, timestamp: now, level: 'INFO', message: `Initializing process on ${target?.targetOS || 'linux'} (Port ${target?.port || 25565}, RAM: ${target?.allocatedRamGb || 4} GB)...` }
       ]
     }));
+
+    try {
+      const res = await fetch(`/api/servers/${id}/power`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'start', ramGb: target?.allocatedRamGb || 4, port: target?.port || 25565 })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setServers(prev => prev.map(s => s.id === id ? { ...s, status: 'offline' } : s));
+        const errTime = new Date().toTimeString().slice(0, 8);
+        setLogsMap(prev => ({
+          ...prev,
+          [id]: [
+            ...(prev[id] || []),
+            { id: `err_${Date.now()}_1`, timestamp: errTime, level: 'ERROR', message: `[START FEHLGESCHLAGEN] ${data.error || 'Server konnte nicht gestartet werden'}` },
+            ...(data.solution ? [{ id: `err_${Date.now()}_2`, timestamp: errTime, level: 'WARN' as const, message: `Lösung auf Ubuntu Host: ${data.solution}` }] : [])
+          ]
+        }));
+        showToast(data.error || 'Start fehlgeschlagen - Siehe Konsole');
+        return;
+      }
+    } catch {
+      // preview environment simulation fallback
+    }
 
     setTimeout(() => {
       setServers(prev => prev.map(s => s.id === id ? {
@@ -224,13 +282,13 @@ export default function App() {
         ...prev,
         [id]: [
           ...(prev[id] || []),
-          { id: `log_${Date.now()}_3`, timestamp: doneTime, level: 'SUCCESS', message: `Server started successfully and listening on 0.0.0.0:${target?.port || 25565}` }
+          { id: `log_${Date.now()}_3`, timestamp: doneTime, level: 'SUCCESS', message: `Server gestartet und bindet Port 0.0.0.0:${target?.port || 25565}. Logs werden in data/servers/${id}/logs/latest.log abgelegt.` }
         ]
       }));
     }, 1800);
   };
 
-  const handleStopServer = (id: string) => {
+  const handleStopServer = async (id: string) => {
     setServers(prev => prev.map(s => s.id === id ? { ...s, status: 'stopping' } : s));
     const now = new Date().toTimeString().slice(0, 8);
     setLogsMap(prev => ({
@@ -240,6 +298,16 @@ export default function App() {
         { id: `log_${Date.now()}_1`, timestamp: now, level: 'WARN', message: 'Sending SIGTERM: Gracefully saving world state...' }
       ]
     }));
+
+    try {
+      await fetch(`/api/servers/${id}/power`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'stop' })
+      });
+    } catch {
+      // preview fallback
+    }
 
     setTimeout(() => {
       setServers(prev => prev.map(s => s.id === id ? {
@@ -414,6 +482,16 @@ export default function App() {
       return;
     } else {
       responseText = `Befehl ausgeführt: "${cmd}"`;
+    }
+
+    try {
+      fetch(`/api/servers/${id}/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd })
+      }).catch(() => {});
+    } catch {
+      // preview fallback
     }
 
     setLogsMap(prev => ({

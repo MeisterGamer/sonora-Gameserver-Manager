@@ -297,36 +297,57 @@ Nach dem Hinzufügen zum Array `GAMES_CATALOG` steht das Spiel sofort im Server-
 
 ---
 
-## 🚀 Installation & Schnellstart (Node.js 24)
+## 🚀 Installation & Schnellstart
 
-### Voraussetzungen
-- **Node.js:** Version 24.x LTS (oder Node.js >= 20.x)
+### ⚡ 1-Klick All-in-One Installation (Ubuntu & Debian)
+Führe auf deinem Dedicated Server einfach folgenden Befehl aus – das Skript installiert automatisch **Java 21 LTS**, **Node.js 22 LTS**, konfiguriert die **Firewall (UFW)**, richtet den **systemd-Hintergrunddienst** ein und startet das Panel:
+
+```bash
+# Direkt per Einzeiler installieren:
+curl -sSL https://raw.githubusercontent.com/MeisterGamer/sonora-Gameserver-Manager/main/install.sh | sudo bash
+```
+
+Oder falls du das Repository bereits geklont hast:
+```bash
+git clone https://github.com/MeisterGamer/sonora-Gameserver-Manager.git
+cd sonora-Gameserver-Manager
+sudo bash install.sh
+```
+
+---
+
+### Manuelle Installation (Schritt für Schritt)
+
+#### Voraussetzungen
+- **Betriebssystem:** Ubuntu 22.04 / 24.04 LTS oder Debian 11/12
+- **Java:** OpenJDK 21 LTS (`sudo apt install -y openjdk-21-jre-headless`)
+- **Node.js:** Version 20.x, 22.x oder 24.x LTS
 - **Paketmanager:** npm, yarn, pnpm oder bun
 
-### 1. Repository klonen oder herunterladen
+#### 1. Repository klonen
 ```bash
-git clone https://github.com/example/gameserver-manager.git
-cd gameserver-manager
+git clone https://github.com/MeisterGamer/sonora-Gameserver-Manager.git
+cd sonora-Gameserver-Manager
 ```
 
-### 2. Abhängigkeiten installieren
+#### 2. Abhängigkeiten installieren
 ```bash
-npm install
+npm install --legacy-peer-deps
 ```
 
-### 3. Umgebungsvariablen einrichten (Optional)
+#### 3. Umgebungsvariablen einrichten (Optional)
 ```bash
 cp .env.example .env
 ```
 *(Die API-Keys für CurseForge und Steam können alternativ jederzeit direkt im Admin-Interface eingegeben werden!)*
 
-### 4. Entwicklungsserver starten
+#### 4. Entwicklungsserver starten
 ```bash
 npm run dev
 ```
 Der Server startet standardmäßig auf Port **3000** (`http://localhost:3000`).
 
-### 5. Für Produktion kompilieren und starten
+#### 5. Für Produktion kompilieren und starten
 ```bash
 npm run build
 npm start

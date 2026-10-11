@@ -91,6 +91,28 @@ export interface ServerInstance {
   createdAt: string;
 }
 
+export interface ModVersionItem {
+  versionNumber: string;
+  gameVersions: string[];
+  loaders: string[];
+  releaseDate: string;
+  changelog?: string;
+  fileSize: string;
+}
+
+export interface ModBundlePreset {
+  id: string;
+  name: string;
+  description: string;
+  gameId: string;
+  gameName: string;
+  loader: string;
+  targetVersion: string;
+  modIds: string[];
+  tags: string[];
+  bannerColor: string;
+}
+
 export interface ModItem {
   id: string;
   name: string;
@@ -100,9 +122,18 @@ export interface ModItem {
   downloads: string;
   version: string;
   description: string;
+  longDescription?: string;
   source: 'SpigotMC' | 'Modrinth' | 'CurseForge' | 'Steam Workshop' | 'uMod' | 'Thunderstore' | 'GitHub';
   fileSize: string;
   tags: string[];
+  iconUrl?: string;
+  loaders?: string[];
+  supportedVersions?: string[];
+  dependencies?: string[];
+  incompatibilities?: string[];
+  versionsList?: ModVersionItem[];
+  sourceUrl?: string;
+  license?: string;
 }
 
 export interface InstalledMod {
@@ -110,10 +141,13 @@ export interface InstalledMod {
   modId: string;
   name: string;
   version: string;
+  latestVersion?: string;
+  hasUpdate?: boolean;
   enabled: boolean;
   installedAt: string;
   source: string;
   fileSize: string;
+  dependencies?: string[];
 }
 
 export interface PlayerInfo {

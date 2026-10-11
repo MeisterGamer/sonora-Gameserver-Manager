@@ -132,6 +132,14 @@ Der integrierte Mod- und Plugin-Browser ermöglicht die direkte Suche nach Erwei
 - Suchabfrage über `/api/live/steam/workshop`.
 - Automatischer Fallback auf kuratierte Workshop-Items bei fehlendem Steam-Schlüssel.
 
+### 5. Erweiterte Browser-Features & Mod-Management
+- 📦 **Kuratierte Modpacks & Bundles (1-Klick Installation):** Fertige Paket-Zusammenstellungen (z. B. *Paper SMP Community Suite*, *Fabric Ultra FPS Boost*, *Server Security & Anti-Grief*, *Palworld QoL Pack*, *Rust Vanilla+ Pack*) lassen sich mit allen enthaltenen Komponenten simultan bereitstellen.
+- 🔍 **Mod-Detail-Modal:** Ausführliche Projekt-Ansicht mit vollständiger Beschreibung, Changelog, Lizenz-Angaben, Download-Metriken und gezielter Versionierung.
+- ⚙️ **Loader- & Versions-Filterung:** Gezieltes Filtern nach Modloadern (Fabric, Forge, NeoForge, Paper, Spigot, Purpur) sowie Spielversionen (v26.3, v1.21.4, v1.20.4, v1.16.5 etc.) und Sortierung nach Downloads oder Name.
+- ⚠️ **Intelligenter Abhängigkeits-Checker (Dependency Resolver):** Erkennt automatisch fehlende Voraussetzungen (z. B. fehlendes `Vault` für `EssentialsX` oder fehlendes `Fabric API` für Fabric-Mods) und bietet eine 1-Klick-Installation der benötigten Abhängigkeit.
+- 🚀 **Automatischer Update-Checker:** Prüft installierte Mods und Plugins auf neuere Releases und ermöglicht sowohl Einzel- als auch Massen-Updates (*Alle Updates installieren*).
+- 📤 **Manuelle Mod-Upload-Funktion:** Drag-and-Drop Schnittstelle für eigene `.jar`-, `.zip`-, `.dll`- oder `.pak`-Dateien mit Zielverzeichnis-Auswahl (`/mods/` oder `/plugins/`), SHA-256 Integritätsprüfung und Sicherheits-Scan.
+
 ---
 
 ## 🛠️ Erweiterte Instanzverwaltung & Operations

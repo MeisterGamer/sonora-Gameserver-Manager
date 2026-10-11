@@ -4,14 +4,16 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
-import { exec, spawn, ChildProcess } from 'child_process';
-import { createHash } from 'node:crypto';
+import { exec, execFile, spawn, ChildProcess } from 'child_process';
 import net from 'net';
 import { configureAuth } from './backend/auth.ts';
 import { configureFiles } from './backend/files.ts';
 import { configureBackups } from './backend/backups.ts';
 import { configureMods } from './backend/mods.ts';
 import { confinedPath, instancePath, serverId as validateId, parseArguments, readFileTail } from './backend/paths.ts';
+import { paperVersions, paperJavaVersion } from './backend/paper.ts';
+import { installedSteamExecutable, steamProfile, normalizeSteamDefinition } from './backend/gameInstaller.ts';
+import { downloadMinecraft, minecraftVersions, MINECRAFT_JARS } from './backend/minecraft.ts';
 
 dotenv.config();
 
@@ -34,6 +36,7 @@ try {
 }
 
 const STATE_DIR = path.resolve(DATA_DIR, '..', 'manager');
+app.get('/api/health', (_req, res) => res.json({ success: true, version: '0.1.1', update: '03' }));
 configureAuth(app, STATE_DIR);
 app.param('id', (req, res, next, value) => {
   try { instancePath(DATA_DIR, value); next(); }
@@ -53,6 +56,8 @@ function saveRegistry() {
   fs.renameSync(temp, registryFile);
 }
 const operations = new Set<string>();
+let steamQueue: Promise<unknown> = Promise.resolve();
+const installingProcesses = new Set<ChildProcess>();
 let shuttingDown = false;
 async function exclusive<T>(id: string, operation: () => Promise<T>): Promise<T> {
   if (operations.has(id)) throw Object.assign(new Error('Für diese Instanz läuft bereits eine Aktion'), { status: 409 });
@@ -163,12 +168,12 @@ function detectSteamCmd(): string | null {
 // Helper: Ensure SteamCMD is available, downloading portable version if needed
 async function ensureSteamCmd(serverId?: string): Promise<string> {
   if (process.platform !== 'linux') throw new Error('SteamCMD-Adapter ist derzeit nur auf Linux implementiert');
-  const existing = detectSteamCmd();
-  if (existing) return existing;
-
-  const targetDir = path.resolve(process.cwd(), 'steamcmd');
+  const targetDir = path.resolve(DATA_DIR, '..', 'steamcmd');
   const targetScript = path.join(targetDir, 'steamcmd.sh');
-  if (fs.existsSync(targetScript)) return targetScript;
+  if (fs.existsSync(targetScript)) {
+    fs.accessSync(targetScript, fs.constants.R_OK | fs.constants.X_OK);
+    return targetScript;
+  }
 
   if (serverId) {
     appendLog(serverId, 'INFO', '[STEAMCMD] SteamCMD nicht auf dem Host installiert. Lade offizielles Valve SteamCMD Portable herunter...');
@@ -179,56 +184,34 @@ async function ensureSteamCmd(serverId?: string): Promise<string> {
   }
 
   const archiveUrl = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz';
-  const res = await fetch(archiveUrl);
+  const res = await fetch(archiveUrl, { redirect: 'error', signal: AbortSignal.timeout(120000) });
   if (!res.ok) throw new Error(`Download von SteamCMD fehlgeschlagen (Status ${res.status})`);
-  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!res.body) throw new Error('SteamCMD-Download enthält keine Daten');
+  const chunks: Buffer[] = []; let total = 0;
+  for await (const chunk of res.body as any) {
+    total += chunk.length;
+    if (total > 32 * 1024 * 1024) throw new Error('SteamCMD-Archiv zu groß');
+    chunks.push(Buffer.from(chunk));
+  }
+  const buffer = Buffer.concat(chunks);
   const archivePath = path.join(targetDir, 'steamcmd_linux.tar.gz');
   fs.writeFileSync(archivePath, buffer);
 
   // Extract archive
   await new Promise<void>((resolve, reject) => {
-    exec(`tar -xzf "${archivePath}" -C "${targetDir}"`, (err) => {
+    execFile('tar', ['-xzf', archivePath, '-C', targetDir], (err) => {
       if (err) reject(err);
       else resolve();
     });
   });
 
-  try {
-    if (fs.existsSync(targetScript)) {
-      fs.chmodSync(targetScript, 0o755);
-    }
-  } catch {}
+  if (!fs.existsSync(targetScript) || !fs.statSync(targetScript).isFile()) throw new Error('SteamCMD-Archiv enthält keinen Launcher');
+  fs.chmodSync(targetScript, 0o755);
 
   if (serverId) {
     appendLog(serverId, 'SUCCESS', '[STEAMCMD] SteamCMD Portable erfolgreich eingerichtet.');
   }
   return targetScript;
-}
-
-// Helper: Install Minecraft Paper Server JAR
-
-async function installMinecraftServer(serverId: string, srvDir: string, version?: string) {
-  if (!version || !/^\d+\.\d+(?:\.\d+)?$/.test(version)) throw new Error('Eine konkrete Paper-Version ist erforderlich');
-  const headers = { 'User-Agent': 'Sonora-Manager/0.1 (https://github.com/MeisterGamer/sonora-Gameserver-Manager)' };
-  const api = 'https://fill.papermc.io/v3/projects/paper/versions/' + version + '/builds';
-  const response = await fetch(api, { headers, signal: AbortSignal.timeout(30000) });
-  if (!response.ok) throw new Error('Paper-Version nicht verfügbar (HTTP ' + response.status + '); kein Versionswechsel');
-  const data: any = await response.json();
-  const build = Array.isArray(data) ? data.find(entry => entry.channel === 'STABLE') : undefined;
-  const application = build?.downloads?.['server:default'];
-  if (!application?.url || !application.checksums?.sha256) throw new Error('Kein verifizierbarer stabiler Paper-Build verfügbar');
-  const downloadUrl = new URL(application.url);
-  if (downloadUrl.protocol !== 'https:' || downloadUrl.hostname !== 'fill-data.papermc.io' || downloadUrl.port || downloadUrl.username || downloadUrl.password) throw new Error('Paper-Downloadhost ungültig');
-  const download = await fetch(downloadUrl, { headers, redirect: 'error', signal: AbortSignal.timeout(120000) });
-  if (!download.ok) throw new Error('Paper-Download fehlgeschlagen');
-  const buffer = Buffer.from(await download.arrayBuffer());
-  if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b || createHash('sha256').update(buffer).digest('hex') !== application.checksums.sha256) throw new Error('Paper-Datei oder SHA-256 ungültig');
-  const jarPath = confinedPath(srvDir, 'paper.jar');
-  const temporary = confinedPath(srvDir, 'paper.jar.download');
-  fs.writeFileSync(temporary, buffer);
-  fs.renameSync(temporary, jarPath);
-  appendLog(serverId, 'SUCCESS', 'Paper ' + version + ' Build ' + build.id + ' verifiziert und installiert');
-  return { success: true, version, build: build.id, fileSizeMb: (buffer.length / 1048576).toFixed(1), jarPath };
 }
 
 // Helper: Install Steam Dedicated Server via SteamCMD
@@ -252,14 +235,19 @@ async function installSteamGameServer(serverId: string, srvDir: string, steamApp
     const child = spawn(steamCmdBin, [
       '+force_install_dir', srvDir,
       '+login', 'anonymous',
-      '+app_update', String(steamAppId), 'validate',
+      '+app_update', String(steamAppId), '-beta', 'public', 'validate',
       '+quit'
     ], {
       cwd: srvDir,
       env: { ...process.env }
     });
 
+    installingProcesses.add(child);
+    let output = '', successSeen = false;
+    const timeout = setTimeout(() => { appendLog(serverId, 'ERROR', 'SteamCMD-Zeitlimit erreicht'); child.kill('SIGTERM'); }, 2 * 60 * 60 * 1000);
     child.stdout.on('data', (d) => {
+      output = (output + d.toString()).slice(-16384);
+      successSeen ||= output.includes("Success! App '" + steamAppId + "' fully installed.");
       const lines = d.toString().split('\n');
       for (const line of lines) {
         const tr = line.trim();
@@ -280,8 +268,9 @@ async function installSteamGameServer(serverId: string, srvDir: string, steamApp
     });
 
     child.on('close', (code) => {
-      if (code === 0) {
-        appendLog(serverId, 'SUCCESS', `[STEAMCMD] AppID ${steamAppId} erfolgreich heruntergeladen und einsatzbereit!`);
+      clearTimeout(timeout); installingProcesses.delete(child);
+      if (code === 0 && successSeen) {
+        appendLog(serverId, 'INFO', `[STEAMCMD] Download beendet; prüfe Dedicated-Server-Dateien.`);
 
         // Set chmod 755 on binary files
         try {
@@ -302,46 +291,11 @@ async function installSteamGameServer(serverId: string, srvDir: string, steamApp
     });
 
     child.on('error', (err) => {
+      clearTimeout(timeout); installingProcesses.delete(child);
       appendLog(serverId, 'ERROR', `[STEAMCMD Fehler] ${err.message}`);
       resolve(false);
     });
   });
-}
-
-// Helper: Find game binary in server directory
-function findGameExecutable(srvDir: string, preferredExec?: string): string | null {
-  if (preferredExec) {
-    const clean = preferredExec.replace(/^\.\//, '');
-    const directPath = confinedPath(srvDir, clean);
-    if (fs.existsSync(directPath)) return directPath;
-  }
-
-  const commonExecs = [
-    'PalServer.sh',
-    'Pal/Binaries/Linux/PalServer-Linux-Test',
-    'RustDedicated',
-    'valheim_server.x86_64',
-    'srcds_run',
-    'ShooterGame/Binaries/Linux/ShooterGameServer',
-    '7DaysToDieServer.x86_64',
-    'start-server.sh',
-    'FactoryServer.sh',
-    'enshrouded_server'
-  ];
-
-  for (const execName of commonExecs) {
-    const full = confinedPath(srvDir, execName);
-    if (fs.existsSync(full)) return full;
-  }
-
-  // Fallback: search for any .sh script in srvDir
-  try {
-    const entries = fs.readdirSync(srvDir);
-    const shFile = entries.find(e => e.endsWith('.sh') && !e.includes('install') && !e.includes('steamcmd'));
-    if (shFile) return confinedPath(srvDir, shFile);
-  } catch {}
-
-  return null;
 }
 
 // --- SYSTEM DIAGNOSTICS ENDPOINT ---
@@ -372,7 +326,10 @@ app.get('/api/system/diagnostics', async (_req, res) => {
       const dir = instancePath(DATA_DIR, id);
       const hasEula = fs.existsSync(path.join(dir, 'eula.txt'));
       const jarFiles = ['paper.jar', 'server.jar', 'purpur.jar', 'fabric-server-launch.jar'].filter(j => fs.existsSync(path.join(dir, j)));
-      const hasExec = !!findGameExecutable(dir);
+      const hasExec = (() => {
+        try { return registry[id] && registry[id].category !== 'minecraft' ? !!installedSteamExecutable(dir, registry[id]) : false; }
+        catch { return false; }
+      })();
       const logFile = confinedPath(dir, 'logs/latest.log');
       let logSize = 0;
       if (fs.existsSync(logFile)) {
@@ -500,24 +457,35 @@ function validateDefinition(server: any) {
   if (server.steamAppId != null && (!Number.isSafeInteger(server.steamAppId) || server.steamAppId <= 0)) throw new Error('Ungültige Steam-AppID');
   const hostOS = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux';
   if (server.targetOS && server.targetOS !== hostOS) throw new Error('Dieser lokale Manager führt ausschließlich auf ' + hostOS + ' aus');
-  if (server.category === 'minecraft' && server.minecraftType && server.minecraftType !== 'paper') throw new Error('Automatische Installation unterstützt derzeit ausschließlich Paper');
+  if (server.category === 'minecraft' && !MINECRAFT_JARS[server.minecraftType || 'paper']) throw new Error('Für diese Minecraft-Engine fehlt ein eigener Installer');
   if (server.category !== 'minecraft' && process.platform !== 'linux') throw new Error('Native Steam-Spieladapter sind derzeit nur auf Linux implementiert');
+  if (server.category === 'minecraft') paperJavaVersion(server.version);
+  else steamProfile(server);
   if (server.linuxExecutable) confinedPath(instancePath(DATA_DIR, server.id), server.linuxExecutable.replace(/^\.\//, ''));
   if (server.linuxStartArgs) parseArguments(server.linuxStartArgs);
 }
-async function installRegistered(id: string, version?: string) {
+async function installRegistered(id: string, version?: string, allowExperimental = false) {
   const server = registered(id);
   validateDefinition(server);
   if (activeProcesses.has(id) || (runtime[id] && mayBeAlive(runtime[id].pid))) throw Object.assign(new Error('Server vor Installation/Update vollständig stoppen'), { status: 409 });
   const dir = instancePath(DATA_DIR, id);
   if (server.category === 'minecraft') {
-    const result = await installMinecraftServer(id, dir, version || server.version);
-    registry[id] = { ...server, version: result.version };
+    const result = await downloadMinecraft(dir, server.minecraftType || 'paper', version || server.version, fetch, allowExperimental);
+    appendLog(id, 'SUCCESS', (server.minecraftType || 'paper') + ' ' + result.version + ' Build ' + (result.build || 'release') + ' geprüft und installiert (' + result.channel + ')');
+    registry[id] = { ...server, version: result.version, requiredJava: result.requiredJava, allowExperimental: result.allowExperimental, paperChannel: result.channel, requiresInstall: false, installationError: '', installedBuild: result.build };
     saveRegistry();
     return result;
   }
   if (!server.steamAppId) throw new Error('Steam-AppID fehlt');
-  if (!await installSteamGameServer(id, dir, server.steamAppId)) throw new Error('SteamCMD-Installation fehlgeschlagen');
+  const installation = steamQueue.then(() => {
+    if (shuttingDown) throw new Error('Manager wird beendet');
+    return installSteamGameServer(id, dir, server.steamAppId);
+  });
+  steamQueue = installation.catch(() => {});
+  if (!await installation) throw new Error('SteamCMD-Installation fehlgeschlagen; Steam-Anmeldung und Linux-Laufzeitbibliotheken prüfen');
+  installedSteamExecutable(dir, server);
+  registry[id] = { ...server, requiresInstall: false, installationError: '' }; saveRegistry();
+  appendLog(id, 'SUCCESS', 'Dedicated-Server-Dateien geprüft und installiert');
   return { success: true };
 }
 async function startRegistered(id: string) {
@@ -533,16 +501,16 @@ async function startRegistered(id: string) {
   if (server.category === 'minecraft') {
     if (await checkPortInUse(server.port)) throw Object.assign(new Error('TCP-Port ist belegt'), { status: 409 });
     const java = await detectJava();
-    const requiredJava = Number(server.version.split('.')[0]) >= 26 ? 25 : 21;
-    if (!java.installed || Number(java.version.split('.')[0]) < requiredJava) throw new Error('Für diese Paper-Version ist Java ' + requiredJava + ' oder neuer erforderlich');
+    const requiredJava = server.requiredJava || paperJavaVersion(server.version);
+    if (!java.installed || Number(java.version.split('.')[0]) < requiredJava) throw new Error('Für diese Minecraft-Version ist Java ' + requiredJava + ' oder neuer erforderlich');
     const eula = confinedPath(dir, 'eula.txt');
     if (!fs.existsSync(eula) || !/^eula\s*=\s*true\s*$/m.test(fs.readFileSync(eula, 'utf8'))) throw new Error('Minecraft-EULA noch nicht ausdrücklich akzeptiert');
-    const jar = ['paper.jar', 'server.jar', 'purpur.jar', 'fabric-server-launch.jar'].find(name => fs.existsSync(confinedPath(dir, name)));
-    if (!jar) throw new Error('Server-JAR fehlt; zuerst installieren');
+    const jar = MINECRAFT_JARS[server.minecraftType || 'paper'];
+    if (!fs.existsSync(confinedPath(dir, jar))) throw new Error('Server-JAR fehlt; zuerst installieren');
     executable = 'java';
-    args = ['-Xmx' + server.allocatedRamGb + 'G', '-Xms1G', '-XX:+UseG1GC', '-jar', jar, 'nogui'];
+    args = ['-Xmx' + Math.floor(server.allocatedRamGb * 1024) + 'M', '-Xms1G', '-XX:+UseG1GC', '-jar', jar, 'nogui'];
   } else {
-    const foundExecutable = findGameExecutable(dir, server.linuxExecutable);
+    const foundExecutable = installedSteamExecutable(dir, server);
     if (!foundExecutable) throw new Error('Server-Executable fehlt; zuerst installieren');
     executable = foundExecutable;
     fs.chmodSync(executable, 0o755);
@@ -550,7 +518,13 @@ async function startRegistered(id: string) {
   }
   appendLog(id, 'INFO', 'Starte Prozess für ' + server.name);
   if (shuttingDown) throw Object.assign(new Error('Manager wird beendet'), { status: 503 });
-  const child = spawn(executable, args, { cwd: dir, env: { ...process.env } });
+  const childEnv = { ...process.env };
+  if (server.gameId === 'valheim') {
+    args.push('-savedir', confinedPath(dir, 'saves'));
+    childEnv.SteamAppId = '892970';
+    childEnv.LD_LIBRARY_PATH = confinedPath(dir, 'linux64') + (childEnv.LD_LIBRARY_PATH ? ':' + childEnv.LD_LIBRARY_PATH : '');
+  }
+  const child = spawn(executable, args, { cwd: dir, env: childEnv });
   let finish!: () => void;
   const info: ServerProcessInfo = { process: child, pid: child.pid || 0, port: server.port,
     ramGb: server.allocatedRamGb, startTime: Date.now(), state: 'starting',
@@ -615,11 +589,21 @@ app.post('/api/servers/:id/power', async (req, res) => {
   });
   res.json(result);
 });
-app.post('/api/servers/:id/install', async (req, res) => res.json(await exclusive(req.params.id, () => installRegistered(req.params.id, req.body.version))));
+app.get('/api/installers/paper/versions', async (_req, res) => res.json({ success: true, versions: await paperVersions(fetch) }));
+app.get('/api/installers/:engine/versions', async (req, res) => res.json({ success: true, versions: await minecraftVersions(req.params.engine, fetch) }));
+async function installWithState(id: string, version?: string, allowExperimental = false) {
+  try { return await installRegistered(id, version, allowExperimental); }
+  catch (error: any) {
+    if (registry[id]) { registry[id].installationError = error.message; saveRegistry(); }
+    throw error;
+  }
+}
+app.post('/api/servers/:id/install', async (req, res) => res.json(await exclusive(req.params.id, () => installWithState(req.params.id, req.body.version, req.body.allowExperimental === true))));
 app.post('/api/servers/create', async (req, res) => {
   const server = req.body.server;
   if (!server || typeof server !== 'object') throw new Error('Instanzdaten fehlen');
   validateDefinition(server);
+  if (server.category !== 'minecraft') normalizeSteamDefinition(server);
   const dir = instancePath(DATA_DIR, server.id);
   if (registry[server.id] || fs.existsSync(dir)) throw Object.assign(new Error('Instanz-ID/Ordner bereits vorhanden; Daten werden nicht überschrieben'), { status: 409 });
   if (Object.values(registry).some((entry: any) => entry.port === server.port)) throw Object.assign(new Error('Port bereits zugewiesen'), { status: 409 });
@@ -628,14 +612,16 @@ app.post('/api/servers/create', async (req, res) => {
     fs.writeFileSync(confinedPath(dir, 'eula.txt'), '# Read https://aka.ms/MinecraftEULA before accepting\neula=false\n');
     fs.writeFileSync(confinedPath(dir, 'server.properties'), 'server-port=' + server.port + '\nonline-mode=true\nmax-players=' + (Number.isInteger(server.maxPlayers) ? Math.max(1, Math.min(1000, server.maxPlayers)) : 20) + '\n');
   }
-  registry[server.id] = { ...server, autoRestart: false, status: 'offline', installedMods: [], configFiles: {} };
+  registry[server.id] = { ...server, requiresInstall: true, installationError: '', autoRestart: false, status: 'offline', installedMods: [], configFiles: {} };
   saveRegistry();
   appendLog(server.id, 'INFO', 'Instanz dauerhaft angelegt');
   let requiresInstall = true, installationError = '';
   if (req.body.autoInstall === true) {
-    try { await exclusive(server.id, () => installRegistered(server.id)); requiresInstall = false; }
+    try { await exclusive(server.id, () => installWithState(server.id, undefined, server.allowExperimental === true)); requiresInstall = false; }
     catch (error: any) { installationError = error.message; appendLog(server.id, 'ERROR', installationError); }
   }
+  registry[server.id].requiresInstall = requiresInstall;
+  registry[server.id].installationError = installationError; saveRegistry();
   res.status(201).json({ success: true, server: registry[server.id], serverId: server.id, requiresInstall, installationError });
 });
 app.delete('/api/servers/:id', async (req, res) => {
@@ -674,7 +660,7 @@ app.post('/api/servers/:id/install-paper', async (req, res) => {
   const serverId = req.params.id;
   const srvDir = instancePath(DATA_DIR, serverId);
   try {
-    const result = await exclusive(serverId, () => installRegistered(serverId, req.body.version));
+    const result = await exclusive(serverId, () => installWithState(serverId, req.body.version, req.body.allowExperimental === true));
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -916,6 +902,7 @@ async function startServer() {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    for (const child of installingProcesses) child.kill('SIGTERM');
     const deadline = setTimeout(() => process.exit(1), 18000);
     await Promise.allSettled([...activeProcesses.keys()].map(id => stopRegistered(id)));
     httpServer.close(() => { clearTimeout(deadline); process.exit(0); });

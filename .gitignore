@@ -1,12 +1,13 @@
 node_modules/
 build/
 dist/
-data/
+/data/
 steamcmd/
 updates/
 audit/regression-*/
 audit/sandbox-*/
 audit/*.zip
+audit/installer-tools/
 coverage/
 .DS_Store
 *.log

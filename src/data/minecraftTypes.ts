@@ -1,4 +1,4 @@
-import { GameDefinition, JavaVersion } from '../types/game';
+import type { GameDefinition, JavaVersion } from '../types/game';
 
 export interface MinecraftTypeInfo {
   typeId: string;

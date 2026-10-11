@@ -72,6 +72,7 @@ export type JavaVersion =
   | 'Corretto 21+'
   | 'Zulu 21+'
   | 'Java 17'
+  | 'Java 16'
   | 'Java 11'
   | 'Java 8';
 
@@ -92,6 +93,12 @@ export interface ServerInstance {
   targetOS: PlatformOS;
   autoRestart: boolean;
   version: string;
+  requiresInstall?: boolean;
+  installationError?: string;
+  installedBuild?: number;
+  allowExperimental?: boolean;
+  paperChannel?: string;
+  requiredJava?: number;
   javaVersion?: JavaVersion;
   minecraftType?: string;
   uptimeSeconds: number;

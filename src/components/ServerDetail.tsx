@@ -104,6 +104,10 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
 
   return (
     <div className="space-y-6">
+      {(server.requiresInstall || server.installationError) && <div role="alert" className="border border-amber-700 bg-amber-950/30 rounded-lg p-4 text-sm text-amber-200">
+        <p>{server.installationError ? 'Installation fehlgeschlagen: ' + server.installationError : 'Spieldateien sind noch nicht installiert.'}</p>
+        <button onClick={() => setActiveTab('updates')} className="mt-2 rounded bg-emerald-700 px-3 py-2 text-white">Spieldateien installieren / erneut versuchen</button>
+      </div>}
       {/* Top Header Bar */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

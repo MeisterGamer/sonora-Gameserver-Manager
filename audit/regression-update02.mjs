@@ -51,7 +51,7 @@ const imports = {
   express: { default: express }, dotenv: { default: { config() {} } },
   path: { default: path }, url: { fileURLToPath }, fs: { default: fs }, os: { default: os },
   'node:crypto': { createHash: crypto.createHash },
-  child_process: { exec: (_cmd, callback) => callback(null, '', 'openjdk version "21.0.1"'), spawn, ChildProcess: EventEmitter },
+  child_process: { exec: (_cmd, callback) => callback(null, '', 'openjdk version "25.0.1"'), execFile() { throw new Error('Unexpected extraction in fixture'); }, spawn, ChildProcess: EventEmitter },
   net: { default: { createServer() {
     const net = new EventEmitter(); net.listen = () => setImmediate(() => net.emit('listening')); net.close = () => {}; return net;
   } } },
@@ -142,16 +142,17 @@ check('Unavailable version fails without fallback', (await call('POST', '/api/se
 const jar = Buffer.from('PK\u0003\u0004Verified fixture');
 fetchImpl = async url => String(url).startsWith('https://fill.papermc.io/')
   ? { ok: true, json: async () => [{ id: 123, channel: 'STABLE', downloads: { 'server:default': { url: 'https://fill-data.papermc.io/fixture.jar', checksums: { sha256: crypto.createHash('sha256').update(jar).digest('hex') } } } }] }
-  : { ok: true, arrayBuffer: async () => jar };
+  : { ok: true, body: (async function* () { yield jar; })() };
 check('Verified Paper download installs requested version', (await call('POST', '/api/servers/:id/install', 'fixture', { version: '1.21.4' })).body.version === '1.21.4' && fs.readFileSync(path.join(dataDir, 'fixture', 'paper.jar')).equals(jar));
 const first = call('POST', '/api/servers/:id/power', 'fixture', { action: 'start' });
 check('Concurrent power action blocked', (await call('POST', '/api/servers/:id/power', 'fixture', { action: 'start' })).statusCode === 409);
 await first;
 await call('POST', '/api/servers/:id/power', 'fixture', { action: 'kill' });
-const nativeDefinition = { ...definition, id: 'native', category: 'survival', port: 25573, steamAppId: 123, linuxExecutable: 'server.sh', linuxStartArgs: '--name "two words"' };
+const nativeDefinition = { ...definition, id: 'native', category: 'survival', gameId: 'valheim', port: 25573, steamAppId: 896660, linuxExecutable: 'valheim_server.x86_64', linuxStartArgs: '--name "two words"' };
 await call('POST', '/api/servers/create', null, { server: nativeDefinition });
-fs.writeFileSync(path.join(dataDir, 'native', 'server.sh'), 'FIXTURE ONLY');
-check('Native start preserves argument quoting', (await call('POST', '/api/servers/:id/power', 'native', { action: 'start' })).body.success && spawns.at(-1).args[1] === 'two words');
+fs.writeFileSync(path.join(dataDir, 'native', 'valheim_server.x86_64'), 'FIXTURE ONLY');
+check('Native start preserves argument quoting', (await call('POST', '/api/servers/:id/power', 'native', { action: 'start' })).body.success && spawns.at(-1).args[1] === 'ApexHost Valheim');
+check('Valheim worlds use instance-specific storage', spawns.at(-1).args.includes('-savedir') && spawns.at(-1).args.includes(path.join(dataDir, 'native', 'saves')) && spawns.at(-1).options.env.SteamAppId === '892970');
 await call('POST', '/api/servers/:id/power', 'native', { action: 'kill' });
 fs.mkdirSync(path.join(sandbox, 'data', 'steamcmd'), { recursive: true });
 fs.writeFileSync(path.join(sandbox, 'data', 'steamcmd', 'steamcmd.sh'), 'FIXTURE ONLY');
@@ -159,6 +160,32 @@ const steamInstall = call('POST', '/api/servers/:id/install', 'native');
 await new Promise(resolve => setImmediate(resolve));
 spawns.at(-1).child.emit('close', null, 'SIGTERM');
 check('Signal-terminated SteamCMD fails instead of reporting success', (await steamInstall).statusCode === 400);
+check('SteamCMD explicitly selects public branch', JSON.stringify(spawns.at(-1).args).includes('"-beta","public"'));
+fs.unlinkSync(path.join(dataDir, 'native', 'valheim_server.x86_64'));
+const missingFilesInstall = call('POST', '/api/servers/:id/install', 'native');
+await new Promise(resolve => setImmediate(resolve));
+spawns.at(-1).child.stdout.emit('data', Buffer.from("Success! App '896660' fully installed."));
+spawns.at(-1).child.emit('close', 0, null);
+check('SteamCMD success without actual server files fails', (await missingFilesInstall).statusCode === 400);
+fs.writeFileSync(path.join(dataDir, 'native', 'valheim_server.x86_64'), 'FIXTURE ONLY');
+const noConfirmationInstall = call('POST', '/api/servers/:id/install', 'native');
+await new Promise(resolve => setImmediate(resolve));
+spawns.at(-1).child.emit('close', 0, null);
+check('SteamCMD exit zero alone is not falsely successful', (await noConfirmationInstall).statusCode === 400);
+const confirmedInstall = call('POST', '/api/servers/:id/install', 'native');
+await new Promise(resolve => setImmediate(resolve));
+spawns.at(-1).child.stdout.emit('data', Buffer.from("Success! App '896660' fully installed."));
+spawns.at(-1).child.emit('close', 0, null);
+check('Confirmed Steam installation checks executable and saves state', (await confirmedInstall).body.success && JSON.parse(fs.readFileSync(path.join(sandbox, 'data', 'manager', 'servers.json'))).native.requiresInstall === false);
+check('Selected native instance port reaches launch arguments', spawns.find(entry => entry.executable.endsWith('valheim_server.x86_64')).args.includes('25573'));
+const unsupportedNative = { ...nativeDefinition, id: 'unsupported', port: 25610, gameId: 'space_engineers', steamAppId: 298740 };
+check('Unsupported Windows-only catalogue adapter rejected before creating folder', (await call('POST', '/api/servers/create', null, { server: unsupportedNative })).statusCode === 400 && !fs.existsSync(path.join(dataDir, 'unsupported')));
+fetchImpl = async () => ({ ok: false, status: 404 });
+const failedAutoCreate = await call('POST', '/api/servers/create', null, { server: { ...definition, id: 'failed_install', port: 25611 }, autoInstall: true });
+check('Failed auto-install retains instance with persistent error and retry state', failedAutoCreate.body.installationError && failedAutoCreate.body.server.requiresInstall && JSON.parse(fs.readFileSync(path.join(sandbox, 'data', 'manager', 'servers.json'))).failed_install.installationError);
+fetchImpl = async () => ({ ok: true, json: async () => ({ versions: { '26': ['26.3', '26.1'], '1.21': ['1.21.4', '1.21.11'], malicious: ['../../outside', '26.3'] } }) });
+const published = await call('GET', '/api/installers/paper/versions');
+check('Versions endpoint uses published distinct sorted versions', JSON.stringify(published.body.versions) === JSON.stringify(['26.3', '26.1', '1.21.11', '1.21.4']));
 const { parseArguments, confinedPath, instancePath, readFileTail } = await import('../backend/paths.ts');
 check('Quoted and empty start arguments preserved', JSON.stringify(parseArguments('--name "two words" --empty ""')) === JSON.stringify(['--name', 'two words', '--empty', '']));
 check('Unterminated quoted argument rejected', (() => { try { parseArguments('"broken'); return false; } catch { return true; } })());

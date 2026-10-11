@@ -1,180 +1,115 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# Sonora Gameserver Manager — All-in-One Installer für Ubuntu & Debian
-# Repository: https://github.com/MeisterGamer/sonora-Gameserver-Manager.git
-# ==============================================================================
-
-set -e
-
-# Farben für Terminalausgabe
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
-
-echo -e "${CYAN}${BOLD}"
-echo "╔══════════════════════════════════════════════════════════════════════╗"
-echo "║          SONORA GAMESERVER MANAGER — ALL-IN-ONE INSTALLER            ║"
-echo "║     Vollständige automatische Einrichtung für Ubuntu & Debian        ║"
-echo "╚══════════════════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
-
-# 1. Root-Rechte prüfen
-if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}[FEHLER] Dieses Skript muss mit Root-Rechten ausgeführt werden!${NC}"
-  echo -e "Bitte starte das Skript erneut mit: ${BOLD}sudo bash install.sh${NC}"
-  exit 1
-fi
-
-echo -e "${GREEN}[1/8] Root-Rechte bestätigt.${NC}"
-
-# 2. System-Paketlisten aktualisieren & Basistools installieren
-echo -e "${BLUE}[2/8] Aktualisiere Paketlisten und installiere Basiskomponenten...${NC}"
+# Ubuntu/Debian deployment: shared runtime, immutable release, preserved data.
+set -Eeuo pipefail
+umask 022
+START=false
+for argument in "$@"; do
+  case "$argument" in
+    --start) START=true ;;
+    *) echo 'Usage: sudo bash install.sh [--start]' >&2; exit 2 ;;
+  esac
+done
+[[ $EUID -eq 0 ]] || { echo 'Run with sudo bash install.sh.' >&2; exit 1; }
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
+  echo 'Supported: Debian/Ubuntu Linux x86_64.' >&2; exit 1;
+}
+command -v apt-get >/dev/null
+SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+git -C "$SOURCE_DIR" rev-parse --show-toplevel >/dev/null
+[[ -z $(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no) ]] || {
+  echo 'Commit/save tracked changes first; deployment uses git HEAD.' >&2; exit 1;
+}
+REVISION=$(git -C "$SOURCE_DIR" rev-parse HEAD)
+RELEASE_DIR="/opt/sonora-releases/$(date -u +%Y%m%dT%H%M%SZ)-${REVISION:0:12}-$$"
+DATA_ROOT=/opt/sonora-manager/data
+RUNTIME_ROOT=/opt/sonora-runtime
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y -q
-apt-get install -y -q curl wget git unzip tar ufw software-properties-common ca-certificates build-essential net-tools
+apt-get update -q
+apt-get install -y ca-certificates curl git tar xz-utils jq build-essential libatomic1 libpulse0
+dpkg --add-architecture i386
+apt-get update -q
+apt-get install -y lib32gcc-s1 lib32stdc++6
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf -- "$WORK_DIR"' EXIT
+trap 'echo "Installation failed at line $LINENO; check the service before restarting." >&2' ERR
 
-# Java 21 for Paper 1.20/1.21; Paper 26.x needs Java 25 installed separately.
-echo -e "${BLUE}[3/8] Prüfe Java-Laufzeitumgebung (Java 21 LTS)...${NC}"
-NEED_JAVA=true
-if command -v java &>/dev/null; then
-  JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}')
-  echo -e "${CYAN}Gefundenes Java:${NC} $JAVA_VER"
-  if [[ "$JAVA_VER" == 21* || "$JAVA_VER" == 22* || "$JAVA_VER" == 23* || "$JAVA_VER" == 24* || "$JAVA_VER" == 25* ]]; then
-    echo -e "${GREEN}✓ Kompatibles modernes Java ($JAVA_VER) ist bereits installiert.${NC}"
-    NEED_JAVA=false
-  fi
-fi
+# Official Node distribution with verified SHA-256, independent of root's nvm.
+curl -fsSL --max-time 60 https://nodejs.org/dist/index.json -o "$WORK_DIR/node-index.json"
+NODE_VERSION=$(jq -er '[.[] | select(.version | test("^v24\\."))][0].version' "$WORK_DIR/node-index.json")
+[[ $NODE_VERSION =~ ^v24\.[0-9]+\.[0-9]+$ ]]
+NODE_ARCHIVE="node-${NODE_VERSION}-linux-x64.tar.xz"
+curl -fsSL --max-time 300 "https://nodejs.org/dist/${NODE_VERSION}/${NODE_ARCHIVE}" -o "$WORK_DIR/$NODE_ARCHIVE"
+curl -fsSL --max-time 60 "https://nodejs.org/dist/${NODE_VERSION}/SHASUMS256.txt" -o "$WORK_DIR/node-sums.txt"
+awk -v file="$NODE_ARCHIVE" '$2 == file {print}' "$WORK_DIR/node-sums.txt" > "$WORK_DIR/node-check.txt"
+[[ -s $WORK_DIR/node-check.txt ]]
+(cd "$WORK_DIR" && sha256sum --check node-check.txt)
+mkdir -p "$RUNTIME_ROOT"
+NODE_ROOT="$RUNTIME_ROOT/node-${NODE_VERSION}-linux-x64-$$"
+mkdir "$NODE_ROOT"
+tar -xJf "$WORK_DIR/$NODE_ARCHIVE" --strip-components=1 -C "$NODE_ROOT"
+export PATH="$NODE_ROOT/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+NODE_BINARY="$NODE_ROOT/bin/node"
+"$NODE_BINARY" --version
 
-if [ "$NEED_JAVA" = true ]; then
-  echo -e "${YELLOW}Installiere OpenJDK 21 LTS für Minecraft Gameserver...${NC}"
-  apt-get install -y -q openjdk-21-jre-headless openjdk-21-jdk-headless
-  echo -e "${GREEN}✓ Java 21 erfolgreich installiert ($(java -version 2>&1 | head -n 1)).${NC}"
-fi
-
-# 4. SteamCMD & 32-Bit Bibliotheken prüfen / installieren (Essentiell für Palworld, Rust, CS2, Valheim etc.)
-echo -e "${BLUE}[4/9] Prüfe Valve SteamCMD & System-Laufzeitbibliotheken...${NC}"
-dpkg --add-architecture i386 || true
-apt-get update -y -q
-apt-get install -y -q lib32gcc-s1 lib32stdc++6 libsdl2-2.0-0 || true
-
-# Pre-seed steamcmd license agreement
-echo steam steam/question select "I AGREE" | debconf-set-selections || true
-echo steam steam/license note '' | debconf-set-selections || true
-apt-get install -y -q steamcmd || true
-
-if [ -f /usr/games/steamcmd ] && [ ! -f /usr/bin/steamcmd ]; then
-  ln -s /usr/games/steamcmd /usr/bin/steamcmd
-fi
-
-# Standalone SteamCMD in /opt/steamcmd als stabiler Fallback
-mkdir -p /opt/steamcmd
-if [ ! -f /opt/steamcmd/steamcmd.sh ]; then
-  echo -e "${YELLOW}Richte SteamCMD Portable in /opt/steamcmd ein...${NC}"
-  curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar -zxvf - -C /opt/steamcmd/ || true
-  chmod +x /opt/steamcmd/steamcmd.sh 2>/dev/null || true
-fi
-echo -e "${GREEN}✓ SteamCMD einsatzbereit für automatische Steam-Gameserver Downloads.${NC}"
-
-# 5. Node.js (v24 LTS) & npm prüfen / installieren
-echo -e "${BLUE}[5/9] Prüfe Node.js & npm...${NC}"
-NEED_NODE=true
-if command -v node &>/dev/null; then
-  NODE_VER=$(node -v | sed 's/v//')
-  NODE_MAJOR=$(echo "$NODE_VER" | cut -d'.' -f1)
-  if [ "$NODE_MAJOR" -ge 24 ]; then
-    echo -e "${GREEN}✓ Kompatibles Node.js ($NODE_VER) und npm ($(npm -v)) bereits vorhanden.${NC}"
-    NEED_NODE=false
-  fi
-fi
-
-if [ "$NEED_NODE" = true ]; then
-  echo -e "${YELLOW}Installiere modernes Node.js 24 LTS via NodeSource...${NC}"
-  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-  apt-get install -y -q nodejs
-  echo -e "${GREEN}✓ Node.js $(node -v) und npm $(npm -v) erfolgreich installiert.${NC}"
-fi
-
-# 6. Repository prüfen bzw. klonen
-echo -e "${BLUE}[6/9] Richte Sonora Gameserver Manager Projekt ein...${NC}"
-REPO_URL="https://github.com/MeisterGamer/sonora-Gameserver-Manager.git"
-
-if [ -f "./package.json" ] && [ -f "./server.ts" ]; then
-  INSTALL_DIR="$(pwd)"
-  echo -e "${GREEN}✓ Skript wurde im Projektverzeichnis ausgeführt: ${INSTALL_DIR}${NC}"
-else
-  INSTALL_DIR="/opt/sonora-manager"
-  if [ -d "$INSTALL_DIR/.git" ]; then
-    echo -e "${YELLOW}Bestehendes Verzeichnis in ${INSTALL_DIR} gefunden. Aktualisiere mit git pull...${NC}"
-    cd "$INSTALL_DIR"
-    if [ -n "$(git status --porcelain)" ]; then
-      echo "[FEHLER] Lokale Änderungen vorhanden. Vor Update sichern; sie werden nicht überschrieben."
-      exit 1
-    fi
-    git pull --ff-only
+if ! command -v java >/dev/null || ! java -version 2>&1 | grep -Eq 'version "(25|2[6-9]|[3-9][0-9])'; then
+  if apt-cache show openjdk-25-jre-headless >/dev/null 2>&1; then
+    apt-get install -y openjdk-25-jre-headless
   else
-    echo -e "${YELLOW}Klone Repository von GitHub in ${INSTALL_DIR}...${NC}"
-    mkdir -p "$INSTALL_DIR"
-    git clone "$REPO_URL" "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
+    curl -fsSL --max-time 60 'https://api.adoptium.net/v3/assets/latest/25/hotspot?architecture=x64&image_type=jre&os=linux&vendor=eclipse' -o "$WORK_DIR/java.json"
+    JAVA_URL=$(jq -er '.[0].binary.package.link' "$WORK_DIR/java.json")
+    JAVA_HASH=$(jq -er '.[0].binary.package.checksum' "$WORK_DIR/java.json")
+    [[ $JAVA_URL == https://github.com/adoptium/temurin25-binaries/releases/download/* && $JAVA_HASH =~ ^[a-f0-9]{64}$ ]]
+    curl -fsSL --max-time 300 "$JAVA_URL" -o "$WORK_DIR/java.tar.gz"
+    printf '%s  java.tar.gz\n' "$JAVA_HASH" > "$WORK_DIR/java-check.txt"
+    (cd "$WORK_DIR" && sha256sum --check java-check.txt)
+    JAVA_ROOT="$RUNTIME_ROOT/temurin25-$JAVA_HASH"
+    mkdir -p "$JAVA_ROOT"
+    tar -xzf "$WORK_DIR/java.tar.gz" --strip-components=1 -C "$JAVA_ROOT"
+    export JAVA_HOME="$JAVA_ROOT"
+    export PATH="$JAVA_ROOT/bin:$PATH"
+    java -version
   fi
 fi
-
-# Verzeichnisse für Gameserver und Logs anlegen
-mkdir -p "$INSTALL_DIR/data/servers"
-
-# 7. NPM Abhängigkeiten installieren & Production Build kompilieren
-echo -e "${BLUE}[7/9] Installiere NPM-Abhängigkeiten und erstelle Production-Build...${NC}"
-cd "$INSTALL_DIR"
-
-# Use the pinned package manager and committed lockfile.
+id sonora >/dev/null 2>&1 || useradd --system --user-group --create-home --home-dir /var/lib/sonora --shell /usr/sbin/nologin sonora
+mkdir -p "$RELEASE_DIR" "$DATA_ROOT/servers" "$DATA_ROOT/steamcmd"
+git -C "$SOURCE_DIR" archive HEAD | tar -xf - -C "$RELEASE_DIR"
+cd "$RELEASE_DIR"
 npm exec --yes --package=pnpm@11.25.0 -- pnpm install --frozen-lockfile --ignore-scripts
 npm exec --yes --package=pnpm@11.25.0 -- pnpm run lint
-
-echo -e "${YELLOW}Kompiliere Frontend-Assets (Vite Build)...${NC}"
 npm exec --yes --package=pnpm@11.25.0 -- pnpm run build
-echo -e "${GREEN}✓ Production-Build erfolgreich erstellt.${NC}"
+printf '%s\n' "$REVISION" > DEPLOYED-REVISION
 
-# 8. Firewall (UFW) Ports freischalten
-echo -e "${BLUE}[8/9] Konfiguriere Firewall (UFW Ports für Panel, Minecraft & Steam)...${NC}"
-if command -v ufw &>/dev/null; then
-  # Panel binds to loopback; remote access requires an explicitly configured TLS proxy.
-  ufw allow 25565/tcp comment 'Minecraft Server Port TCP' >/dev/null 2>&1 || true
-  ufw allow 25565/udp comment 'Minecraft Server Port UDP' >/dev/null 2>&1 || true
-  ufw allow 8211/udp comment 'Palworld Dedicated Port' >/dev/null 2>&1 || true
-  ufw allow 28015/tcp comment 'Rust Server Port TCP' >/dev/null 2>&1 || true
-  ufw allow 28015/udp comment 'Rust Server Port UDP' >/dev/null 2>&1 || true
-  ufw allow 28016/tcp comment 'Rust RCON Port' >/dev/null 2>&1 || true
-  ufw allow 2456:2457/udp comment 'Valheim Server Ports' >/dev/null 2>&1 || true
-  ufw allow 27015/udp comment 'Steam Master Server Query' >/dev/null 2>&1 || true
-  # No SFTP daemon is implemented; do not advertise/open a non-existent service.
-  if ufw status | grep -q "Status: active"; then
-    ufw reload >/dev/null 2>&1 || true
-    echo "UFW-Regeln für Spiele geprüft. Panel und SFTP wurden nicht öffentlich freigegeben."
-  else
-    echo -e "${YELLOW}ℹ UFW Firewall ist inaktiv (alle Ports bereits offen).${NC}"
+OLD_DIR=$(systemctl show sonora-manager -p WorkingDirectory --value 2>/dev/null || true)
+for CONFIG_SOURCE in "$OLD_DIR/.env" /opt/sonora-manager/.env "$SOURCE_DIR/.env"; do
+  if [[ -f $CONFIG_SOURCE ]]; then
+    install -o root -g sonora -m 640 "$CONFIG_SOURCE" "$RELEASE_DIR/.env"
+    break
   fi
-fi
+done
+chown -R sonora:sonora "$DATA_ROOT"
+chmod 700 "$DATA_ROOT"
+runuser -u sonora -- "$NODE_BINARY" --version
+runuser -u sonora -- env "PATH=$PATH" "APEXHOST_DATA_DIR=$DATA_ROOT/servers" "$NODE_BINARY" "$RELEASE_DIR/scripts/check-runtime.mjs"
 
-# 9. systemd Service Unit einrichten (Automatischer Start beim Booten)
-echo -e "${BLUE}[9/9] Richte systemd Hintergrunddienst ein...${NC}"
-
-if ! id sonora >/dev/null 2>&1; then
-  useradd --system --user-group --create-home --home-dir /var/lib/sonora --shell /usr/sbin/nologin sonora
-fi
-mkdir -p "$INSTALL_DIR/data" "$INSTALL_DIR/steamcmd"
-chown -R sonora:sonora "$INSTALL_DIR/data" "$INSTALL_DIR/steamcmd" /opt/steamcmd
-chmod 700 "$INSTALL_DIR/data"
-
-SERVICE_FILE="/etc/systemd/system/sonora-manager.service"
-
-cat <<EOF > "$SERVICE_FILE"
+UNIT=/etc/systemd/system/sonora-manager.service
+BACKUP_DIR="/var/backups/sonora/$(basename "$RELEASE_DIR")"
+mkdir -p "$BACKUP_DIR"
+[[ ! -f $UNIT ]] || cp -a "$UNIT" "$BACKUP_DIR/"
+if [[ -d $UNIT.d ]]; then cp -a "$UNIT.d" "$BACKUP_DIR/"; fi
+mkdir -p "$UNIT.d"
+# Supersede the earlier repair override; preserve other administrator overrides.
+cat > "$UNIT.d/paths.conf" <<EOF
+[Service]
+WorkingDirectory=$RELEASE_DIR
+ExecStart=
+ExecStart=$NODE_BINARY $RELEASE_DIR/node_modules/tsx/dist/cli.mjs $RELEASE_DIR/server.ts
+Environment="PATH=$PATH"
+Environment=APEXHOST_DATA_DIR=$DATA_ROOT/servers
+EOF
+cat > "$UNIT" <<EOF
 [Unit]
-Description=Sonora Gameserver Manager & Daemon
-After=network.target network-online.target
+Description=Sonora Gameserver Manager
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -182,48 +117,48 @@ Type=simple
 User=sonora
 Group=sonora
 NoNewPrivileges=true
-WorkingDirectory=${INSTALL_DIR}
-ExecStart=$(which npx) tsx server.ts
-Restart=always
+WorkingDirectory=$RELEASE_DIR
+ExecStart=$NODE_BINARY $RELEASE_DIR/node_modules/tsx/dist/cli.mjs $RELEASE_DIR/server.ts
+Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=SONORA_BIND_HOST=127.0.0.1
-TimeoutStopSec=20
-LimitNOFILE=65536
-LimitNPROC=32768
+Environment=APEXHOST_DATA_DIR=$DATA_ROOT/servers
+Environment="PATH=$PATH"
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
+systemd-analyze verify "$UNIT"
+systemctl stop sonora-manager
 systemctl daemon-reload
-systemctl enable sonora-manager.service
-systemctl restart sonora-manager.service
-
-# Kurzer Health-Check
-sleep 3
-SERVER_IP=$(curl -s -m 4 https://ifconfig.me 2>/dev/null || curl -s -m 4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
-
-echo ""
-echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}   ✓ INSTALLATION ERFOLGREICH ABGESCHLOSSEN!                          ${NC}"
-echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════════════${NC}"
-echo ""
-echo "  Web-Panel: http://127.0.0.1:3000 (lokal; Remote-Zugriff nur nach TLS-Proxy-Konfiguration)"
-echo "  Spielinstanzen werden erst nach ausdrücklichem Anlegen, Installieren und Starten aktiv."
-echo "  SteamCMD: Linux-Adapter vorbereitet; noch keine Spielinstanz gestartet."
-echo -e "  ☕ ${BOLD}Installiertes Java:${NC}     $(java -version 2>&1 | head -n 1)"
-echo -e "  ⚡ ${BOLD}Node.js Version:${NC}        $(node -v)"
-echo -e "  📂 ${BOLD}Installationspfad:${NC}      ${INSTALL_DIR}"
-echo -e "  📁 ${BOLD}Server-Dateien & Logs:${NC}  ${INSTALL_DIR}/data/servers/"
-echo ""
-echo -e "${CYAN}${BOLD}Nützliche Service-Befehle:${NC}"
-echo -e "  • Status prüfen:       ${BOLD}systemctl status sonora-manager${NC}"
-echo -e "  • Live-Logs ansehen:   ${BOLD}journalctl -u sonora-manager -f${NC}"
-echo -e "  • Manager neustarten:  ${BOLD}systemctl restart sonora-manager${NC}"
-echo -e "  • Manager stoppen:     ${BOLD}systemctl stop sonora-manager${NC}"
-echo "  Reale Instanzlogs: data/servers/<instance-id>/logs/latest.log"
-echo ""
-echo -e "${GREEN}Der Sonora Gameserver Manager läuft nun im Hintergrund und startet automatisch beim Server-Neustart!${NC}"
-echo ""
+systemctl reset-failed sonora-manager
+EXPECTED_DIR=$(systemctl show sonora-manager -p WorkingDirectory --value)
+[[ $EXPECTED_DIR == "$RELEASE_DIR" ]] || {
+  echo "Another override selects $EXPECTED_DIR; resolve it before starting." >&2; exit 1;
+}
+EFFECTIVE_EXEC=$(systemctl show sonora-manager -p ExecStart --value)
+[[ $EFFECTIVE_EXEC == *"$NODE_BINARY"* && $EFFECTIVE_EXEC == *"$RELEASE_DIR/server.ts"* ]] || {
+  echo 'Another override changed ExecStart; resolve it before starting.' >&2; exit 1;
+}
+if $START; then
+  systemctl enable sonora-manager
+  systemctl start sonora-manager
+  HEALTHY=false
+  for attempt in {1..30}; do
+    if systemctl is-active --quiet sonora-manager && \
+       curl -fsS --max-time 2 http://127.0.0.1:3000/api/health | jq -e '.success == true and .version == "0.1.1" and .update == "03"' >/dev/null; then
+      HEALTHY=true; break
+    fi
+    sleep 1
+  done
+  $HEALTHY || { journalctl -u sonora-manager -n 50 --no-pager; exit 1; }
+else
+  echo 'Deployment complete. Manager remains stopped. Start with systemctl start sonora-manager.'
+fi
+echo "Deployed revision: $REVISION"
+echo "Service source: $RELEASE_DIR"
+echo "Persistent data: $DATA_ROOT"
+echo 'Panel: http://127.0.0.1:3000; remote access through SSH tunnel or configured HTTPS proxy.'

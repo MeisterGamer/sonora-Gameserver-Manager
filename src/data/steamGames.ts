@@ -1,4 +1,4 @@
-import { GameDefinition } from '../types/game';
+import type { GameDefinition } from '../types/game';
 
 export const STEAM_GAMES_DATABASE: GameDefinition[] = [
   // --- SURVIVAL & CRAFTING (1-25) ---

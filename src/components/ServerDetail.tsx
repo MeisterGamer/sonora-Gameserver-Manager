@@ -27,15 +27,15 @@ import {
 } from 'lucide-react';
 import { ServerInstance, LogMessage, ModItem, JavaVersion } from '../types/game';
 import { ConsoleView } from './ConsoleView';
-import { ModPluginBrowser } from './ModPluginBrowser';
+import { ModPluginBrowser } from './RealModPluginBrowser';
 import { ConfigFileEditor } from './ConfigFileEditor';
 import { PlayerManager } from './PlayerManager';
-import { BackupsView } from './BackupsView';
+import { BackupsView } from './RealBackupsView';
 import { CrossPlatformView } from './CrossPlatformView';
-import { FileManagerView } from './FileManagerView';
+import { FileManagerView } from './RealFileManagerView';
 import { MetricsView } from './MetricsView';
 import { NetworkPortsView } from './NetworkPortsView';
-import { UpdateManagerView } from './UpdateManagerView';
+import { UpdateManagerView } from './RealUpdateManagerView';
 import { AuditLogView } from './AuditLogView';
 import { WebhooksView } from './WebhooksView';
 import { JavaRuntimeModal } from './JavaRuntimeModal';
@@ -136,12 +136,12 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                     <span>·</span>
                     <button
                       type="button"
-                      onClick={() => setIsJavaModalOpen(true)}
+                      onClick={() => onNotify?.('Verwendet wird das Java des Hosts. Separate Laufzeitwahl ist noch nicht implementiert.')}
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-mono transition-colors cursor-pointer group"
                       title="Java 21+ Laufzeit & JVM-Flags konfigurieren"
                     >
                       <Coffee className="w-3 h-3 text-amber-400 group-hover:rotate-12 transition-transform" />
-                      <span>{server.javaVersion || 'Java 21'}</span>
+                      <span>{'Host-Java'}</span>
                       <span className="text-[10px] text-amber-400/80 underline ml-0.5 font-sans">Ändern</span>
                     </button>
                   </>
@@ -210,7 +210,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <Cpu className="w-3.5 h-3.5 text-sky-400" />
                 <span>CPU Last</span>
               </span>
-              <span className="font-mono tabular-nums text-neutral-200">{server.cpuUsagePercent}%</span>
+              <span className="font-mono tabular-nums text-neutral-200">{'Nicht erfasst'}</span>
             </div>
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
@@ -227,7 +227,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <span>RAM Auslastung</span>
               </span>
               <span className="font-mono tabular-nums text-neutral-200">
-                {Math.round(server.ramUsageMb / 1024 * 10) / 10} / {server.allocatedRamGb} GB
+                {'Nicht erfasst · Limit: ' + server.allocatedRamGb + ' GB'}
               </span>
             </div>
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
@@ -245,7 +245,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <span>Spieler</span>
               </span>
               <span className="font-mono tabular-nums text-neutral-200">
-                {server.currentPlayers} / {server.maxPlayers}
+                {'Nicht abgefragt'}
               </span>
             </div>
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
@@ -262,7 +262,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <Globe className="w-3.5 h-3.5 text-purple-400" />
                 <span>Tickrate / TPS</span>
               </span>
-              <span className="font-mono tabular-nums text-emerald-400 font-bold">{server.tps}</span>
+              <span className="font-mono tabular-nums text-emerald-400 font-bold">{'Nicht erfasst'}</span>
             </div>
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
@@ -289,7 +289,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('metrics')}
+          onClick={() => onNotify?.('Prozessmetriken sind noch nicht implementiert; es werden keine Messwerte simuliert.')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'metrics'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -325,7 +325,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('config')}
+          onClick={() => setActiveTab('files')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'config'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -337,7 +337,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('network')}
+          onClick={() => onNotify?.('DNS-/Portänderungen sind noch nicht implementiert.')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'network'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -349,7 +349,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('players')}
+          onClick={() => onNotify?.('Spielerabfrage/RCON noch nicht implementiert; echte Befehle über die Konsole senden.')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'players'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -385,7 +385,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('audit')}
+          onClick={() => onNotify?.('Separate Audit-Ereignisdatenbank ist noch nicht implementiert. Reale Prozesslogs stehen in der Konsole.')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'audit'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -397,7 +397,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('webhooks')}
+          onClick={() => onNotify?.('Webhook-Ereignisse sind noch nicht implementiert; es wird keine Zustellung simuliert.')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'webhooks'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -409,7 +409,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('crossplatform')}
+          onClick={() => onNotify?.('Remote-/Containerverwaltung ist noch nicht implementiert. Ausführung erfolgt auf dem lokalen Host.')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'crossplatform'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'

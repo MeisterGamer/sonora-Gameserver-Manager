@@ -1,15 +1,17 @@
 {
-  "name": "react-example",
+  "name": "sonora-gameserver-manager",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "engines": { "node": ">=24.0.0" },
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "node server.ts",
+    "start": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "clean": "node scripts/clean.mjs",
+    "lint": "tsc --noEmit",
+    "test": "node --experimental-vm-modules audit/regression-update02.mjs && node audit/frontend-regression.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -21,7 +23,8 @@
     "vite": "^8.3.0",
     "express": "^4.21.2",
     "dotenv": "^17.2.3",
-    "motion": "^12.23.24"
+    "motion": "^12.23.24",
+    "tsx": "^4.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
@@ -29,7 +32,6 @@
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.3.3",
-    "tsx": "^4.21.0",
     "typescript": "^7.0.2",
     "@types/express": "^4.17.21"
   }

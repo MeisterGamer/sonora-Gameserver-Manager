@@ -1,0 +1,14 @@
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import App from '../src/App';
+const store = new Map<string, string>();
+Object.defineProperty(globalThis, 'localStorage', { value: { getItem: (key: string) => store.get(key) || null, setItem: (key: string, value: string) => store.set(key, value) }, configurable: true });
+const html = renderToStaticMarkup(<App />);
+assert.ok(html.includes('Manager-Anmeldung'));
+assert.ok(html.includes('type="password"'));
+assert.ok(!html.includes('1-Klick Rollenwechsel'));
+assert.ok(!html.includes('Survival SMP Season 4'));
+fs.writeFileSync('audit/render-smoke.html', '<!doctype html><html><meta charset="utf-8"><body>' + html + '</body></html>');
+console.log('React startup rendered: password login present, no seeded server or role-switch UI. No HTTP service/browser started.');

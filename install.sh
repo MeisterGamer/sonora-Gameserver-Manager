@@ -37,7 +37,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y -q
 apt-get install -y -q curl wget git unzip tar ufw software-properties-common ca-certificates build-essential net-tools
 
-# 3. Java 21 LTS prüfen / installieren (Essentiell für Minecraft 1.20.5 - 26.x)
+# Java 21 for Paper 1.20/1.21; Paper 26.x needs Java 25 installed separately.
 echo -e "${BLUE}[3/8] Prüfe Java-Laufzeitumgebung (Java 21 LTS)...${NC}"
 NEED_JAVA=true
 if command -v java &>/dev/null; then
@@ -79,21 +79,21 @@ if [ ! -f /opt/steamcmd/steamcmd.sh ]; then
 fi
 echo -e "${GREEN}✓ SteamCMD einsatzbereit für automatische Steam-Gameserver Downloads.${NC}"
 
-# 5. Node.js (v22 LTS) & npm prüfen / installieren
+# 5. Node.js (v24 LTS) & npm prüfen / installieren
 echo -e "${BLUE}[5/9] Prüfe Node.js & npm...${NC}"
 NEED_NODE=true
 if command -v node &>/dev/null; then
   NODE_VER=$(node -v | sed 's/v//')
   NODE_MAJOR=$(echo "$NODE_VER" | cut -d'.' -f1)
-  if [ "$NODE_MAJOR" -ge 20 ]; then
+  if [ "$NODE_MAJOR" -ge 24 ]; then
     echo -e "${GREEN}✓ Kompatibles Node.js ($NODE_VER) und npm ($(npm -v)) bereits vorhanden.${NC}"
     NEED_NODE=false
   fi
 fi
 
 if [ "$NEED_NODE" = true ]; then
-  echo -e "${YELLOW}Installiere modernes Node.js 22 LTS via NodeSource...${NC}"
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  echo -e "${YELLOW}Installiere modernes Node.js 24 LTS via NodeSource...${NC}"
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   apt-get install -y -q nodejs
   echo -e "${GREEN}✓ Node.js $(node -v) und npm $(npm -v) erfolgreich installiert.${NC}"
 fi
@@ -110,8 +110,11 @@ else
   if [ -d "$INSTALL_DIR/.git" ]; then
     echo -e "${YELLOW}Bestehendes Verzeichnis in ${INSTALL_DIR} gefunden. Aktualisiere mit git pull...${NC}"
     cd "$INSTALL_DIR"
-    git reset --hard HEAD
-    git pull
+    if [ -n "$(git status --porcelain)" ]; then
+      echo "[FEHLER] Lokale Änderungen vorhanden. Vor Update sichern; sie werden nicht überschrieben."
+      exit 1
+    fi
+    git pull --ff-only
   else
     echo -e "${YELLOW}Klone Repository von GitHub in ${INSTALL_DIR}...${NC}"
     mkdir -p "$INSTALL_DIR"
@@ -127,17 +130,18 @@ mkdir -p "$INSTALL_DIR/data/servers"
 echo -e "${BLUE}[7/9] Installiere NPM-Abhängigkeiten und erstelle Production-Build...${NC}"
 cd "$INSTALL_DIR"
 
-# npm install mit legacy-peer-deps ausführen, um peer-Konflikte auszuschließen
-npm install --legacy-peer-deps
+# Use the pinned package manager and committed lockfile.
+npm exec --yes --package=pnpm@11.25.0 -- pnpm install --frozen-lockfile --ignore-scripts
+npm exec --yes --package=pnpm@11.25.0 -- pnpm run lint
 
 echo -e "${YELLOW}Kompiliere Frontend-Assets (Vite Build)...${NC}"
-npm run build
+npm exec --yes --package=pnpm@11.25.0 -- pnpm run build
 echo -e "${GREEN}✓ Production-Build erfolgreich erstellt.${NC}"
 
 # 8. Firewall (UFW) Ports freischalten
 echo -e "${BLUE}[8/9] Konfiguriere Firewall (UFW Ports für Panel, Minecraft & Steam)...${NC}"
 if command -v ufw &>/dev/null; then
-  ufw allow 3000/tcp comment 'Sonora Manager Web Panel' >/dev/null 2>&1 || true
+  # Panel binds to loopback; remote access requires an explicitly configured TLS proxy.
   ufw allow 25565/tcp comment 'Minecraft Server Port TCP' >/dev/null 2>&1 || true
   ufw allow 25565/udp comment 'Minecraft Server Port UDP' >/dev/null 2>&1 || true
   ufw allow 8211/udp comment 'Palworld Dedicated Port' >/dev/null 2>&1 || true
@@ -146,10 +150,10 @@ if command -v ufw &>/dev/null; then
   ufw allow 28016/tcp comment 'Rust RCON Port' >/dev/null 2>&1 || true
   ufw allow 2456:2457/udp comment 'Valheim Server Ports' >/dev/null 2>&1 || true
   ufw allow 27015/udp comment 'Steam Master Server Query' >/dev/null 2>&1 || true
-  ufw allow 2022/tcp comment 'SFTP Daemon Port' >/dev/null 2>&1 || true
+  # No SFTP daemon is implemented; do not advertise/open a non-existent service.
   if ufw status | grep -q "Status: active"; then
     ufw reload >/dev/null 2>&1 || true
-    echo -e "${GREEN}✓ UFW Ports 3000 (Panel), 25565 (Minecraft), 8211 (Palworld), 28015 (Rust) und 2022 (SFTP) freigegeben.${NC}"
+    echo "UFW-Regeln für Spiele geprüft. Panel und SFTP wurden nicht öffentlich freigegeben."
   else
     echo -e "${YELLOW}ℹ UFW Firewall ist inaktiv (alle Ports bereits offen).${NC}"
   fi
@@ -158,7 +162,15 @@ fi
 # 9. systemd Service Unit einrichten (Automatischer Start beim Booten)
 echo -e "${BLUE}[9/9] Richte systemd Hintergrunddienst ein...${NC}"
 
+if ! id sonora >/dev/null 2>&1; then
+  useradd --system --user-group --create-home --home-dir /var/lib/sonora --shell /usr/sbin/nologin sonora
+fi
+mkdir -p "$INSTALL_DIR/data" "$INSTALL_DIR/steamcmd"
+chown -R sonora:sonora "$INSTALL_DIR/data" "$INSTALL_DIR/steamcmd" /opt/steamcmd
+chmod 700 "$INSTALL_DIR/data"
+
 SERVICE_FILE="/etc/systemd/system/sonora-manager.service"
+
 cat <<EOF > "$SERVICE_FILE"
 [Unit]
 Description=Sonora Gameserver Manager & Daemon
@@ -167,13 +179,17 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=sonora
+Group=sonora
+NoNewPrivileges=true
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=$(which npx) tsx server.ts
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
 Environment=PORT=3000
+Environment=SONORA_BIND_HOST=127.0.0.1
+TimeoutStopSec=20
 LimitNOFILE=65536
 LimitNPROC=32768
 
@@ -194,9 +210,9 @@ echo -e "${GREEN}${BOLD}══════════════════�
 echo -e "${GREEN}${BOLD}   ✓ INSTALLATION ERFOLGREICH ABGESCHLOSSEN!                          ${NC}"
 echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════════════${NC}"
 echo ""
-echo -e "  🌐 ${BOLD}Web-Panel aufrufen:${NC}     http://${SERVER_IP}:3000"
-echo -e "  🎮 ${BOLD}Minecraft Gameserver:${NC}   ${SERVER_IP}:25565"
-echo -e "  🚀 ${BOLD}Steam Dedicated Server:${NC} Aktiv (Palworld, Rust, CS2, Valheim etc.)"
+echo "  Web-Panel: http://127.0.0.1:3000 (lokal; Remote-Zugriff nur nach TLS-Proxy-Konfiguration)"
+echo "  Spielinstanzen werden erst nach ausdrücklichem Anlegen, Installieren und Starten aktiv."
+echo "  SteamCMD: Linux-Adapter vorbereitet; noch keine Spielinstanz gestartet."
 echo -e "  ☕ ${BOLD}Installiertes Java:${NC}     $(java -version 2>&1 | head -n 1)"
 echo -e "  ⚡ ${BOLD}Node.js Version:${NC}        $(node -v)"
 echo -e "  📂 ${BOLD}Installationspfad:${NC}      ${INSTALL_DIR}"
@@ -207,7 +223,7 @@ echo -e "  • Status prüfen:       ${BOLD}systemctl status sonora-manager${NC}
 echo -e "  • Live-Logs ansehen:   ${BOLD}journalctl -u sonora-manager -f${NC}"
 echo -e "  • Manager neustarten:  ${BOLD}systemctl restart sonora-manager${NC}"
 echo -e "  • Manager stoppen:     ${BOLD}systemctl stop sonora-manager${NC}"
-echo -e "  • Minecraft Live-Logs: ${BOLD}tail -f ${INSTALL_DIR}/data/servers/srv_paper_smp/logs/latest.log${NC}"
+echo "  Reale Instanzlogs: data/servers/<instance-id>/logs/latest.log"
 echo ""
 echo -e "${GREEN}Der Sonora Gameserver Manager läuft nun im Hintergrund und startet automatisch beim Server-Neustart!${NC}"
 echo ""

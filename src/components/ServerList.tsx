@@ -158,7 +158,7 @@ export const ServerList: React.FC<ServerListProps> = ({
             <Users className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-xl font-bold font-mono text-neutral-100 tabular-nums">
-            {totalPlayers} <span className="text-xs text-neutral-500 font-normal">Spieler online</span>
+            <span className="text-xs text-neutral-500 font-normal">Noch nicht abgefragt</span>
           </div>
         </div>
 
@@ -375,21 +375,21 @@ export const ServerList: React.FC<ServerListProps> = ({
                     <div>
                       <div className="text-[11px] text-neutral-500">Spieler</div>
                       <div className="font-mono font-semibold text-neutral-200 tabular-nums">
-                        {isRunning ? `${server.currentPlayers} / ${server.maxPlayers}` : '-'}
+                        {'Nicht abgefragt'}
                       </div>
                     </div>
 
                     <div>
                       <div className="text-[11px] text-neutral-500">CPU Last</div>
                       <div className="font-mono font-semibold text-neutral-200 tabular-nums">
-                        {isRunning ? `${server.cpuUsagePercent}%` : '-'}
+                        {'Nicht erfasst'}
                       </div>
                     </div>
 
                     <div>
                       <div className="text-[11px] text-neutral-500">Tickrate</div>
                       <div className="font-mono font-semibold text-neutral-200 tabular-nums">
-                        {isRunning ? `${server.tps} TPS` : '-'}
+                        {'Nicht erfasst'}
                       </div>
                     </div>
                   </div>

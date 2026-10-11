@@ -1,3 +1,4 @@
+import { apiRequest } from './services/api';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -74,38 +75,38 @@ import { CustomGameModal } from './components/CustomGameModal';
 import { ShopView } from './components/ShopView';
 import { AdminControlView } from './components/AdminControlView';
 import { UserControlView } from './components/UserControlView';
-import { LoginModal } from './components/LoginModal';
+import { LoginModal } from './components/RealLoginModal';
 import { CRMView } from './components/CRMView';
 import { ExpiryWarningBanner } from './components/ExpiryWarningBanner';
 import { DeleteServerModal } from './components/DeleteServerModal';
 import { SetupWizardModal, SetupWizardResult } from './components/SetupWizardModal';
 
 export default function App() {
-  const [servers, setServers] = useState<ServerInstance[]>(getStoredServers);
+  const [servers, setServers] = useState<ServerInstance[]>([]);
   const [availableGames, setAvailableGames] = useState<GameDefinition[]>(getAllAvailableGames);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [currentNavTab, setCurrentNavTab] = useState<'servers' | 'catalog' | 'mods' | 'shop' | 'crm' | 'admincontrol' | 'usercontrol' | 'crossplatform'>('servers');
   const [selectedOS, setSelectedOS] = useState<PlatformOS>('linux');
 
   // Auth & User state
-  const [users, setUsers] = useState<UserAccount[]>(getStoredUsers);
-  const [currentUser, setCurrentUser] = useState<UserAccount>(getCurrentUser);
-  const [subUsers, setSubUsers] = useState<SubUser[]>(getStoredSubUsers);
-  const [userOrders, setUserOrders] = useState<ShopOrder[]>(getStoredOrders);
+  const [users, setUsers] = useState<UserAccount[]>([]);
+  const [currentUser, setCurrentUser] = useState<UserAccount>({ id: '', username: 'Nicht angemeldet', email: '', role: 'user', balance: 0, status: 'active', avatarInitials: '?', createdAt: '', twoFactorEnabled: false, apiToken: '' });
+  const [subUsers, setSubUsers] = useState<SubUser[]>([]);
+  const [userOrders, setUserOrders] = useState<ShopOrder[]>([]);
 
   // CRM, Contracts & Billing State
-  const [contracts, setContracts] = useState<CustomerContract[]>(getStoredContracts);
-  const [customers, setCustomers] = useState<CustomerProfile[]>(getStoredCustomers);
-  const [invoices, setInvoices] = useState<Invoice[]>(getStoredInvoices);
-  const [transactions, setTransactions] = useState<PaymentTransaction[]>(getStoredTransactions);
-  const [tickets, setTickets] = useState<SupportTicket[]>(getStoredTickets);
-  const [notifications, setNotifications] = useState<ExpiryNotification[]>(getStoredNotifications);
+  const [contracts, setContracts] = useState<CustomerContract[]>([]);
+  const [customers, setCustomers] = useState<CustomerProfile[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [notifications, setNotifications] = useState<ExpiryNotification[]>([]);
   const [adminSettings, setAdminSettings] = useState<AdminSettings>(getStoredAdminSettings);
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCustomGameModalOpen, setIsCustomGameModalOpen] = useState(false);
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(true);
   const [isSetupWizardOpen, setIsSetupWizardOpen] = useState(false);
   const [serverToDelete, setServerToDelete] = useState<ServerInstance | null>(null);
   const [preselectedGame, setPreselectedGame] = useState<GameDefinition | null>(null);
@@ -119,71 +120,30 @@ export default function App() {
   };
 
   // Server console logs map
-  const [logsMap, setLogsMap] = useState<Record<string, LogMessage[]>>({
-    srv_paper_smp: [
-      { id: 'l1', timestamp: '12:00:01', level: 'INFO', message: 'Starting PaperMC 26.3 server on 0.0.0.0:25565...' },
-      { id: 'l2', timestamp: '12:00:03', level: 'INFO', message: 'Loading recipes, dimensions and datapacks for Minecraft 26.3...' },
-      { id: 'l3', timestamp: '12:00:06', level: 'INFO', message: '[LuckPerms] Loading configuration and storage provider (H2)...' },
-      { id: 'l4', timestamp: '12:00:07', level: 'INFO', message: '[EssentialsX] Loaded 12 modules and 4 warps.' },
-      { id: 'l5', timestamp: '12:00:09', level: 'INFO', message: '[CoreProtect] Database connection established.' },
-      { id: 'l6', timestamp: '12:00:10', level: 'INFO', message: 'Preparing spawn area for world: 100%' },
-      { id: 'l7', timestamp: '12:00:11', level: 'SUCCESS', message: 'Done (10.421s)! For help, type "help"' },
-      { id: 'l8', timestamp: '12:15:30', level: 'INFO', message: 'GamerAlex joined the game [192.168.1.104:54210]' },
-      { id: 'l9', timestamp: '12:18:44', level: 'INFO', message: 'ShadowCrafter joined the game [84.115.42.12:49812]' },
-      { id: 'l10', timestamp: '12:40:12', level: 'INFO', message: '[Server: Saved 3 worlds to disk]' }
-    ],
-    srv_palworld_prime: [
-      { id: 'p1', timestamp: '13:30:00', level: 'INFO', message: '[PalServer] Initializing Unreal Engine Dedicated Server on UDP:8211...' },
-      { id: 'p2', timestamp: '13:30:04', level: 'INFO', message: '[PalServer] Loading world save "world1" (32 players max)...' },
-      { id: 'p3', timestamp: '13:30:08', level: 'SUCCESS', message: '[PalServer] Server started successfully and listening on port 8211.' },
-      { id: 'p4', timestamp: '13:45:10', level: 'INFO', message: '[PalServer] Connected Steam client 76561198012345678' }
-    ],
-    srv_rust_pvp: [
-      { id: 'r1', timestamp: '08:00:00', level: 'INFO', message: 'Server process stopped.' }
-    ]
-  });
+  const [logsMap, setLogsMap] = useState<Record<string, LogMessage[]>>({});
 
-  // Sync state to localStorage
-  useEffect(() => { saveStoredServers(servers); }, [servers]);
-  useEffect(() => { saveUsers(users); }, [users]);
-  useEffect(() => { saveSubUsers(subUsers); }, [subUsers]);
-  useEffect(() => { saveStoredContracts(contracts); }, [contracts]);
-  useEffect(() => { saveStoredCustomers(customers); }, [customers]);
-  useEffect(() => { saveStoredInvoices(invoices); }, [invoices]);
-  useEffect(() => { saveStoredTransactions(transactions); }, [transactions]);
-  useEffect(() => { saveStoredTickets(tickets); }, [tickets]);
-  useEffect(() => { saveStoredNotifications(notifications); }, [notifications]);
-  useEffect(() => { saveStoredAdminSettings(adminSettings); }, [adminSettings]);
+  // Legacy browser data is retained; backend records are authoritative.
 
-  // Live telemetry ticker for active servers
+  const refreshServers = async () => {
+    const data = await apiRequest('/api/servers');
+    setServers(data.servers);
+  };
   useEffect(() => {
-    const timer = setInterval(() => {
-      setServers((prevServers) =>
-        prevServers.map((srv) => {
-          if (srv.status === 'running') {
-            const cpuDelta = (Math.random() * 4 - 2);
-            const newCpu = Math.max(5, Math.min(85, Math.round((srv.cpuUsagePercent + cpuDelta) * 10) / 10));
-            const ramDelta = Math.floor(Math.random() * 40 - 20);
-            const newRam = Math.max(1024, Math.min(srv.allocatedRamGb * 1024, srv.ramUsageMb + ramDelta));
-            const netIn = Math.max(10, Math.round((srv.networkInKb + Math.random() * 10 - 5) * 10) / 10);
-            const netOut = Math.max(30, Math.round((srv.networkOutKb + Math.random() * 20 - 10) * 10) / 10);
-
-            return {
-              ...srv,
-              uptimeSeconds: srv.uptimeSeconds + 3,
-              cpuUsagePercent: newCpu,
-              ramUsageMb: newRam,
-              networkInKb: netIn,
-              networkOutKb: netOut
-            };
-          }
-          return srv;
-        })
-      );
-    }, 3000);
-
-    return () => clearInterval(timer);
+    const requireLogin = () => setIsLoginModalOpen(true);
+    window.addEventListener('sonora-login-required', requireLogin);
+    apiRequest('/api/auth/session').then(data => {
+      setCurrentUser(data.user); setIsLoginModalOpen(false);
+    }).catch(() => {});
+    return () => window.removeEventListener('sonora-login-required', requireLogin);
   }, []);
+  useEffect(() => {
+    if (!currentUser.id) return;
+    const refresh = () => refreshServers().catch(error => showToast(error.message));
+    refresh();
+    apiRequest('/api/system/diagnostics').then(data => setSelectedOS(data.platform === 'win32' ? 'windows' : data.platform === 'darwin' ? 'macos' : 'linux')).catch(() => {});
+    const timer = setInterval(refresh, 3000);
+    return () => clearInterval(timer);
+  }, [currentUser.id]);
 
   // Poll real server logs from disk / daemon if server is selected
   useEffect(() => {
@@ -214,147 +174,22 @@ export default function App() {
   const selectedServer = servers.find(s => s.id === selectedServerId);
 
   // Server power handlers
-  const handleStartServer = async (id: string) => {
-    // Check if contract is expired or in grace period
-    const contract = contracts.find(c => c.serverId === id);
-    if (contract && contract.status === 'grace_period') {
-      alert(`Der Server "${contract.serverName}" befindet sich in der Karenzzeit und ist abgelaufen. Bitte verlängere zuerst das Prepaid-Guthaben!`);
-      setCurrentNavTab('crm');
-      return;
-    }
 
-    setServers(prev => prev.map(s => s.id === id ? { ...s, status: 'starting' } : s));
-    const now = new Date().toTimeString().slice(0, 8);
-    const target = servers.find(s => s.id === id);
-
-    setLogsMap(prev => ({
-      ...prev,
-      [id]: [
-        ...(prev[id] || []),
-        { id: `log_${Date.now()}_1`, timestamp: now, level: 'INFO', message: `Initializing process on ${target?.targetOS || 'linux'} (Port ${target?.port || 25565}, RAM: ${target?.allocatedRamGb || 4} GB)...` }
-      ]
-    }));
-
+  const runPower = async (id: string, action: string) => {
     try {
-      const res = await fetch(`/api/servers/${id}/power`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'start', 
-          ramGb: target?.allocatedRamGb || 4, 
-          port: target?.port || 25565,
-          gameId: target?.gameId,
-          category: target?.category,
-          steamAppId: target?.steamAppId,
-          executable: target?.linuxExecutable,
-          startArgs: target?.linuxStartArgs,
-          version: target?.version
-        })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setServers(prev => prev.map(s => s.id === id ? { ...s, status: 'offline' } : s));
-        const errTime = new Date().toTimeString().slice(0, 8);
-        setLogsMap(prev => ({
-          ...prev,
-          [id]: [
-            ...(prev[id] || []),
-            { id: `err_${Date.now()}_1`, timestamp: errTime, level: 'ERROR', message: `[START FEHLGESCHLAGEN] ${data.error || 'Server konnte nicht gestartet werden'}` },
-            ...(data.solution ? [{ id: `err_${Date.now()}_2`, timestamp: errTime, level: 'WARN' as const, message: `Lösung auf Ubuntu Host: ${data.solution}` }] : [])
-          ]
-        }));
-        showToast(data.error || 'Start fehlgeschlagen - Siehe Konsole');
-        return;
-      }
-    } catch {
-      // preview environment simulation fallback
-    }
-
-    setTimeout(() => {
-      setServers(prev => prev.map(s => s.id === id ? {
-        ...s,
-        status: 'running',
-        uptimeSeconds: 1,
-        cpuUsagePercent: 12.5,
-        ramUsageMb: Math.round((s.allocatedRamGb * 1024) * 0.35)
-      } : s));
-
-      const doneTime = new Date().toTimeString().slice(0, 8);
-      setLogsMap(prev => ({
-        ...prev,
-        [id]: [
-          ...(prev[id] || []),
-          { id: `log_${Date.now()}_3`, timestamp: doneTime, level: 'SUCCESS', message: `Server gestartet und bindet Port 0.0.0.0:${target?.port || 25565}. Logs werden in data/servers/${id}/logs/latest.log abgelegt.` }
-        ]
-      }));
-    }, 1800);
+      const data = await apiRequest('/api/servers/' + id + '/power', 'POST', { action });
+      await refreshServers();
+      showToast(data.message || 'Aktion bestätigt: ' + action + ' (' + data.status + ')');
+    } catch (error: any) { showToast(error.message); await refreshServers().catch(() => {}); }
   };
+  const handleStartServer = (id: string) => runPower(id, 'start');
 
-  const handleStopServer = async (id: string) => {
-    setServers(prev => prev.map(s => s.id === id ? { ...s, status: 'stopping' } : s));
-    const now = new Date().toTimeString().slice(0, 8);
-    setLogsMap(prev => ({
-      ...prev,
-      [id]: [
-        ...(prev[id] || []),
-        { id: `log_${Date.now()}_1`, timestamp: now, level: 'WARN', message: 'Sending SIGTERM: Gracefully saving world state...' }
-      ]
-    }));
 
-    try {
-      await fetch(`/api/servers/${id}/power`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'stop' })
-      });
-    } catch {
-      // preview fallback
-    }
+  const handleStopServer = (id: string) => runPower(id, 'stop');
 
-    setTimeout(() => {
-      setServers(prev => prev.map(s => s.id === id ? {
-        ...s,
-        status: 'offline',
-        uptimeSeconds: 0,
-        cpuUsagePercent: 0,
-        ramUsageMb: 0,
-        currentPlayers: 0
-      } : s));
+  const handleRestartServer = (id: string) => runPower(id, 'restart');
 
-      const stopTime = new Date().toTimeString().slice(0, 8);
-      setLogsMap(prev => ({
-        ...prev,
-        [id]: [
-          ...(prev[id] || []),
-          { id: `log_${Date.now()}_2`, timestamp: stopTime, level: 'INFO', message: 'Process exited with code 0 (Offline).' }
-        ]
-      }));
-    }, 1400);
-  };
-
-  const handleRestartServer = (id: string) => {
-    handleStopServer(id);
-    setTimeout(() => { handleStartServer(id); }, 1800);
-  };
-
-  const handleKillServer = (id: string) => {
-    setServers(prev => prev.map(s => s.id === id ? {
-      ...s,
-      status: 'offline',
-      uptimeSeconds: 0,
-      cpuUsagePercent: 0,
-      ramUsageMb: 0,
-      currentPlayers: 0
-    } : s));
-    const now = new Date().toTimeString().slice(0, 8);
-    setLogsMap(prev => ({
-      ...prev,
-      [id]: [
-        ...(prev[id] || []),
-        { id: `log_${Date.now()}`, timestamp: now, level: 'ERROR', message: 'SIGKILL received: Process forcefully terminated.' }
-      ]
-    }));
-  };
+  const handleKillServer = (id: string) => runPower(id, 'kill');
 
   const handleDeleteServer = (id: string) => {
     const srv = servers.find(s => s.id === id);
@@ -363,31 +198,17 @@ export default function App() {
     }
   };
 
-  const handleConfirmDeleteServer = (id: string, keepBackups?: boolean) => {
-    const target = servers.find(s => s.id === id);
-    const targetName = target ? target.name : 'Server';
 
-    // 1. Remove from active servers list
-    setServers(prev => prev.filter(s => s.id !== id));
-
-    // 2. Clear from logs
-    setLogsMap(prev => {
-      const copy = { ...prev };
-      delete copy[id];
-      return copy;
-    });
-
-    // 3. Mark or terminate associated contract in CRM
-    setContracts(prev => prev.filter(c => c.serverId !== id));
-
-    // 4. Reset selected view if currently open
-    if (selectedServerId === id) {
-      setSelectedServerId(null);
-    }
-
-    setServerToDelete(null);
-    showToast(`Server "${targetName}" wurde erfolgreich und unwiderruflich gelöscht.`);
+  const handleConfirmDeleteServer = async (id: string, keepBackups?: boolean) => {
+    try {
+      const data = await apiRequest('/api/servers/' + id, 'DELETE');
+      await refreshServers();
+      if (selectedServerId === id) setSelectedServerId(null);
+      setServerToDelete(null);
+      showToast(data.message);
+    } catch (error: any) { showToast(error.message); throw error; }
   };
+
 
   const handleUpdateVersion = (serverId: string, newVersion: string, notes?: string, javaVersion?: JavaVersion) => {
     setServers(prev => prev.map(s => {
@@ -402,384 +223,64 @@ export default function App() {
     }));
   };
 
-  const handleUpdateJavaVersion = (serverId: string, javaVersion: JavaVersion, restart?: boolean) => {
-    setServers(prev => prev.map(s => {
-      if (s.id === serverId) {
-        return { ...s, javaVersion };
-      }
-      return s;
-    }));
-    showToast(`Java-Laufzeitumgebung auf ${javaVersion} aktualisiert${restart ? ' und Server wird neu gestartet...' : '.'}`);
+  const handleUpdateJavaVersion = () => showToast('Separate Java-Laufzeitwahl ist noch nicht implementiert; der Host verwendet sein installiertes Java.');
+
+  const handleCloneServer = () => showToast('Instanzklonen ist noch nicht implementiert; es wurde keine Kopie angelegt.');
+
+
+  const handleSendCommand = async (id: string, command: string) => {
+    try { const data = await apiRequest('/api/servers/' + id + '/command', 'POST', { command }); showToast(data.message); }
+    catch (error: any) { showToast(error.message); }
   };
 
-  const handleCloneServer = (serverId: string) => {
-    const srv = servers.find(s => s.id === serverId);
-    if (!srv) return;
 
-    const maxPort = Math.max(...servers.map(s => s.port), srv.port);
-    const newPort = maxPort + 1;
-    const newId = `srv_${srv.gameId}_${Date.now()}`;
 
-    const clonedServer: ServerInstance = {
-      ...srv,
-      id: newId,
-      name: `${srv.name} (Klon)`,
-      status: 'offline',
-      port: newPort,
-      queryPort: newPort,
-      rconPort: srv.rconPort ? srv.rconPort + 10 : undefined,
-      uptimeSeconds: 0,
-      cpuUsagePercent: 0,
-      ramUsageMb: 0,
-      currentPlayers: 0,
-      createdAt: new Date().toISOString()
-    };
-
-    setServers(prev => [...prev, clonedServer]);
-    showToast(`Server "${srv.name}" erfolgreich dupliziert auf Port ${newPort}!`);
-  };
-
-  // Interactive Command Execution
-  const handleSendCommand = (id: string, cmd: string) => {
-    const timestamp = new Date().toTimeString().slice(0, 8);
-    const targetServer = servers.find(s => s.id === id);
-    const isMc = targetServer?.category === 'minecraft';
-
-    let responseLevel: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR' = 'INFO';
-    let responseText = '';
-
-    const lower = cmd.toLowerCase().trim();
-
-    if (lower === 'help') {
-      responseText = isMc
-        ? 'Verfügbare Befehle: list, tps, op <spieler>, deop <spieler>, kick <spieler>, ban <spieler>, say <nachricht>, save-all, whitelist <on|off|add>, stop'
-        : 'Verfügbare Befehle: status, rcon status, say <nachricht>, kick <spieler>, save, restart, players';
-    } else if (lower === 'list' || lower === 'players') {
-      responseText = `Es sind ${targetServer?.currentPlayers || 0} von maximal ${targetServer?.maxPlayers || 20} Spielern online: GamerAlex, ShadowCrafter, NordicViking`;
-    } else if (lower === 'tps') {
-      responseText = `Aktuelle Server-Tickrate: TPS: ${targetServer?.tps || 20.0} (50.0ms tick), RAM: ${targetServer?.ramUsageMb || 4000}MB / ${targetServer?.maxRamMb || 8192}MB`;
-    } else if (lower.startsWith('say ')) {
-      const msg = cmd.slice(4);
-      responseText = `[Server Broadcast]: ${msg}`;
-    } else if (lower === 'save-all' || lower === 'save') {
-      responseLevel = 'SUCCESS';
-      responseText = 'Welt-Sicherung abgeschlossen. Alle Chunks und Spielerdaten auf Festplatte synchronisiert.';
-    } else if (lower.startsWith('op ')) {
-      const user = cmd.slice(3).trim();
-      responseLevel = 'SUCCESS';
-      responseText = `Dem Spieler '${user}' wurden Administrator-Rechte (OP Stufe 4) erteilt.`;
-    } else if (lower.startsWith('kick ')) {
-      const user = cmd.slice(5).trim();
-      responseLevel = 'WARN';
-      responseText = `Spieler '${user}' wurde durch die Konsole vom Server gekickt.`;
-    } else if (lower.startsWith('ban ')) {
-      const user = cmd.slice(4).trim();
-      responseLevel = 'ERROR';
-      responseText = `Spieler '${user}' wurde dauerhaft auf der Ban-Liste eingetragen.`;
-    } else if (lower.startsWith('whitelist ')) {
-      responseLevel = 'SUCCESS';
-      responseText = `Whitelist-Einstellung aktualisiert: ${cmd.slice(10)}`;
-    } else if (lower === 'stop') {
-      handleStopServer(id);
-      return;
-    } else {
-      responseText = `Befehl ausgeführt: "${cmd}"`;
-    }
-
+  const handleInstallMod = async (serverId: string, mod: ModItem, restartServer?: boolean) => {
     try {
-      fetch(`/api/servers/${id}/command`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd })
-      }).catch(() => {});
-    } catch {
-      // preview fallback
-    }
-
-    setLogsMap(prev => ({
-      ...prev,
-      [id]: [
-        ...(prev[id] || []),
-        { id: `cmd_${Date.now()}`, timestamp, level: 'INFO', message: `> ${cmd}` },
-        { id: `res_${Date.now()}`, timestamp, level: responseLevel, message: responseText }
-      ]
-    }));
+      await apiRequest('/api/servers/' + serverId + '/mods', 'POST', { mod });
+      await refreshServers(); showToast('Plugindatei verifiziert und installiert.');
+      if (restartServer) await handleRestartServer(serverId);
+    } catch (error: any) { showToast(error.message); throw error; }
   };
 
-  // Mod management
-  const handleInstallMod = (serverId: string, mod: ModItem, restartServer?: boolean) => {
-    const newInstId = `inst_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
 
-    setServers(prev => prev.map(s => {
-      if (s.id !== serverId) return s;
 
-      const modNameClean = mod.name.toLowerCase().trim();
-      const modIdClean = mod.id.toLowerCase().trim();
-
-      const existingIndex = s.installedMods.findIndex(m => 
-        m.modId.toLowerCase().trim() === modIdClean ||
-        m.name.toLowerCase().trim() === modNameClean
-      );
-
-      if (existingIndex >= 0) {
-        // Update existing installed mod
-        const updatedMods = [...s.installedMods];
-        updatedMods[existingIndex] = {
-          ...updatedMods[existingIndex],
-          version: mod.version || updatedMods[existingIndex].version,
-          enabled: true,
-          fileSize: mod.fileSize || updatedMods[existingIndex].fileSize,
-          source: mod.source || updatedMods[existingIndex].source
-        };
-        return {
-          ...s,
-          installedMods: updatedMods
-        };
-      }
-
-      // Add new installed mod
-      return {
-        ...s,
-        installedMods: [
-          ...s.installedMods,
-          {
-            id: newInstId,
-            modId: mod.id,
-            name: mod.name,
-            version: mod.version || '1.0.0',
-            enabled: true,
-            installedAt: new Date().toISOString().slice(0, 10),
-            source: mod.source || 'Modrinth',
-            fileSize: mod.fileSize || '2.4 MB'
-          }
-        ]
-      };
-    }));
-
-    const now = new Date().toTimeString().slice(0, 8);
-    const isMod = mod.tags?.some(t => ['fabric', 'forge', 'neoforge'].includes(t.toLowerCase()));
-    const targetFolder = isMod ? '/mods/' : '/plugins/';
-    const cleanFileName = `${mod.name.replace(/[^\w-]/g, '')}.jar`;
-
-    setLogsMap(prev => ({
-      ...prev,
-      [serverId]: [
-        ...(prev[serverId] || []),
-        { id: `mod_${Date.now()}_1`, timestamp: now, level: 'INFO', message: `[Installer] Lade ${mod.name} v${mod.version || '1.0.0'} (${mod.source}) herunter...` },
-        { id: `mod_${Date.now()}_2`, timestamp: now, level: 'SUCCESS', message: `[Installer] Datei abgelegt unter ${targetFolder}${cleanFileName} (${mod.fileSize || '2.4 MB'}). Erweiterung aktiviert.` }
-      ]
-    }));
-
-    showToast(`"${mod.name}" wurde erfolgreich installiert.`);
-
-    if (restartServer) {
-      handleRestartServer(serverId);
-    }
+  const handleUninstallMod = async (serverId: string, installedModId: string) => {
+    try { await apiRequest('/api/servers/' + serverId + '/mods', 'DELETE', { installedModId }); await refreshServers(); showToast('Plugindatei entfernt.'); }
+    catch (error: any) { showToast(error.message); throw error; }
   };
 
-  const handleUninstallMod = (serverId: string, installedModId: string) => {
-    let uninstalledName = 'Erweiterung';
 
-    setServers(prev => prev.map(s => {
-      if (s.id !== serverId) return s;
-      const target = s.installedMods.find(m => m.id === installedModId || m.modId === installedModId);
-      if (target) uninstalledName = target.name;
-      return {
-        ...s,
-        installedMods: s.installedMods.filter(m => m.id !== installedModId && m.modId !== installedModId)
-      };
-    }));
 
-    const now = new Date().toTimeString().slice(0, 8);
-    setLogsMap(prev => ({
-      ...prev,
-      [serverId]: [
-        ...(prev[serverId] || []),
-        { id: `mod_${Date.now()}`, timestamp: now, level: 'WARN', message: `[Installer] "${uninstalledName}" deinstalliert und JAR aus Dateisystem entfernt.` }
-      ]
-    }));
-    showToast(`"${uninstalledName}" wurde deinstalliert.`);
+  const handleToggleMod = async (serverId: string, installedModId: string, enabled: boolean) => {
+    try { await apiRequest('/api/servers/' + serverId + '/mods/toggle', 'POST', { installedModId, enabled }); await refreshServers(); }
+    catch (error: any) { showToast(error.message); throw error; }
   };
 
-  const handleToggleMod = (serverId: string, installedModId: string, enabled: boolean) => {
-    setServers(prev => prev.map(s => {
-      if (s.id !== serverId) return s;
-      return {
-        ...s,
-        installedMods: s.installedMods.map(m => 
-          (m.id === installedModId || m.modId === installedModId) ? { ...m, enabled } : m
-        )
-      };
-    }));
 
-    const now = new Date().toTimeString().slice(0, 8);
-    setLogsMap(prev => ({
-      ...prev,
-      [serverId]: [
-        ...(prev[serverId] || []),
-        { id: `mod_${Date.now()}`, timestamp: now, level: 'INFO', message: `[Installer] Erweiterungsstatus geändert: ${enabled ? 'Aktiviert' : 'Deaktiviert'}` }
-      ]
-    }));
+
+  const handleSaveConfigFile = async (serverId: string, filename: string, content: string) => {
+    await apiRequest('/api/servers/' + serverId + '/file', 'POST', { path: filename, content });
+    setServers(prev => prev.map(server => server.id === serverId ? { ...server, configFiles: { ...server.configFiles, [filename]: content } } : server));
   };
 
-  const handleSaveConfigFile = (serverId: string, filename: string, content: string) => {
-    setServers(prev => prev.map(s => {
-      if (s.id !== serverId) return s;
-      return {
-        ...s,
-        configFiles: {
-          ...s.configFiles,
-          [filename]: content
-        }
-      };
-    }));
+
+  const handleCompleteSetupWizard = () => showToast('Systeminstallation über den Assistenten ist noch nicht implementiert.');
+
+
+  const handleCreateNewServer = async (data: Partial<ServerInstance>) => {
+    const server = { ...data, id: 'srv_' + Date.now().toString(36), category: data.category || 'minecraft',
+      targetOS: selectedOS, allocatedRamGb: data.allocatedRamGb || 4, port: data.port || 25565,
+      version: data.version || '1.21.4', minecraftType: data.minecraftType || (data.category === 'minecraft' ? 'paper' : undefined),
+      status: 'offline', uptimeSeconds: 0, installedMods: [], configFiles: {} };
+    try {
+      const result = await apiRequest('/api/servers/create', 'POST', { server, autoInstall: (data as any).autoInstall === true });
+      await refreshServers(); setSelectedServerId(result.serverId); setCurrentNavTab('servers');
+      showToast(result.installationError ? 'Instanz angelegt; Installation fehlgeschlagen: ' + result.installationError : result.requiresInstall ? 'Instanz angelegt. Spieldateien installieren und EULA ausdrücklich akzeptieren.' : 'Instanz und Spieldateien angelegt. Minecraft-EULA ausdrücklich akzeptieren; der Server ist gestoppt.');
+    } catch (error: any) { showToast(error.message); throw error; }
   };
 
-  // Setup Wizard Completion Handler
-  const handleCompleteSetupWizard = (result: SetupWizardResult, createdServer?: ServerInstance) => {
-    // 1. Update admin settings with wizard choices
-    setAdminSettings(prev => ({
-      ...prev,
-      defaultJavaVersion: result.defaultJava,
-      steamMode: result.steamMode,
-      discordWebhookUrl: result.discordWebhook || prev.discordWebhookUrl
-    }));
 
-    // 2. If admin user/password updated
-    if (result.adminUsername || result.adminEmail) {
-      const updatedUser: UserAccount = {
-        ...currentUser,
-        username: result.adminUsername || currentUser.username,
-        email: result.adminEmail || currentUser.email,
-        role: 'admin'
-      };
-      setCurrentUser(updatedUser);
-      setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
-    }
-
-    // 3. Set host OS if changed
-    if (result.targetOS) {
-      setSelectedOS(result.targetOS);
-    }
-
-    // 4. If a first server was created
-    if (createdServer) {
-      setServers(prev => [createdServer, ...prev]);
-      setLogsMap(prev => ({
-        ...prev,
-        [createdServer.id]: [
-          { id: 'l_init_1', timestamp: new Date().toTimeString().slice(0, 8), level: 'INFO', message: `[SetupWizard] Host-Knoten "${result.nodeName}" initialisiert. Gameserver "${createdServer.name}" eingerichtet.` },
-          { id: 'l_init_2', timestamp: new Date().toTimeString().slice(0, 8), level: 'SUCCESS', message: `[SetupWizard] Java Runtime ${createdServer.javaVersion} verifiziert. EULA akzeptiert. Port ${createdServer.port} gebunden.` },
-          { id: 'l_init_3', timestamp: new Date().toTimeString().slice(0, 8), level: 'INFO', message: `Dienste online und bereit für Verbindungen.` }
-        ]
-      }));
-
-      // Create initial contract for first server
-      const newContract: CustomerContract = {
-        id: `cnt_${Date.now().toString(36)}`,
-        customerId: currentUser.id,
-        customerName: currentUser.username,
-        serverId: createdServer.id,
-        serverName: createdServer.name,
-        gameName: createdServer.gameName,
-        planName: 'Initial-Setup Server',
-        monthlyPrice: 0.00,
-        startDate: new Date().toISOString().slice(0, 10),
-        expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10),
-        daysRemaining: 30,
-        autoRenew: true,
-        status: 'active',
-        location: 'Frankfurt am Main (DE)',
-        ipAddress: `${result.hostIp || '185.244.195.42'}:${createdServer.port}`
-      };
-      setContracts(prev => [newContract, ...prev]);
-
-      setSelectedServerId(createdServer.id);
-      setCurrentNavTab('servers');
-    }
-
-    showToast(`ApexHost Manager & Node "${result.nodeName}" erfolgreich eingerichtet!`);
-  };
-
-  // Manual server creation
-  const handleCreateNewServer = (data: Partial<ServerInstance>) => {
-    const newId = `srv_${Date.now().toString(36)}`;
-    const newServer: ServerInstance = {
-      id: newId,
-      name: data.name || 'Gameserver',
-      gameId: data.gameId || 'mc_paper',
-      gameName: data.gameName || 'Minecraft',
-      category: data.category || 'minecraft',
-      steamAppId: data.steamAppId,
-      linuxExecutable: data.linuxExecutable,
-      linuxStartArgs: data.linuxStartArgs,
-      status: 'offline',
-      allocatedRamGb: data.allocatedRamGb || adminSettings.defaultRamAllocationGb || 6,
-      port: data.port || 25565,
-      queryPort: data.queryPort || 25565,
-      rconPort: data.rconPort || 25575,
-      targetOS: data.targetOS || selectedOS,
-      autoRestart: data.autoRestart ?? true,
-      version: data.version || adminSettings.defaultMinecraftVersion || '26.3',
-      javaVersion: data.javaVersion || adminSettings.defaultJavaVersion || 'Java 21',
-      uptimeSeconds: 0,
-      cpuUsagePercent: 0,
-      ramUsageMb: 0,
-      maxRamMb: (data.allocatedRamGb || adminSettings.defaultRamAllocationGb || 6) * 1024,
-      diskUsageMb: 1200,
-      networkInKb: 0,
-      networkOutKb: 0,
-      currentPlayers: 0,
-      maxPlayers: data.maxPlayers || 20,
-      tps: data.tps || 20.0,
-      installedMods: [],
-      configFiles: data.configFiles || {},
-      createdAt: new Date().toISOString()
-    };
-
-    setServers([newServer, ...servers]);
-    setLogsMap(prev => ({
-      ...prev,
-      [newId]: [
-        { id: 'init', timestamp: new Date().toTimeString().slice(0, 8), level: 'INFO', message: `Server-Instanz "${newServer.name}" (Minecraft ${newServer.version}) bereitgestellt auf Node 01.` }
-      ]
-    }));
-
-    // Create 30-day Prepaid contract for this server
-    const newContract: CustomerContract = {
-      id: `cnt_${Date.now().toString(36)}`,
-      customerId: currentUser.id,
-      customerName: currentUser.username,
-      serverId: newId,
-      serverName: newServer.name,
-      gameName: newServer.gameName,
-      planName: 'Manueller Test-Server',
-      monthlyPrice: 0.00,
-      startDate: new Date().toISOString().slice(0, 10),
-      expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10),
-      daysRemaining: 30,
-      autoRenew: true,
-      status: 'active',
-      location: 'Frankfurt am Main (DE)',
-      ipAddress: `185.120.44.10:${newServer.port}`
-    };
-    setContracts([newContract, ...contracts]);
-
-    setSelectedServerId(newId);
-    setCurrentNavTab('servers');
-    showToast(`Server "${newServer.name}" erfolgreich erstellt!`);
-
-    // Call backend to provision server directory and auto-install files
-    fetch('/api/servers/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ server: newServer, autoInstall: (data as any).autoInstall !== false })
-    }).catch(() => {
-      // preview environment simulation fallback
-    });
-  };
-
-  // Shop Purchase with Auto-Provisioning
   const handlePurchaseServer = (plan: ShopPlan, config: {
     serverName: string;
     location: string;
@@ -1200,7 +701,8 @@ export default function App() {
   // Switch / Login user
   const handleSelectUser = (user: UserAccount) => {
     setCurrentUser(user);
-    setCurrentUserId(user.id);
+    if (!user.id) { setServers([]); setLogsMap({}); setSelectedServerId(null); return; }
+    refreshServers().catch(error => showToast(error.message));
     showToast(`Angemeldet als ${user.username} (${user.role.toUpperCase()})`);
   };
 
@@ -1265,13 +767,9 @@ export default function App() {
         </div>
       )}
 
-      {/* Top Warning Banner for Expiring Servers / Grace Period */}
-      <ExpiryWarningBanner
-        contracts={contracts}
-        onQuickRenew={(contractId) => handleRenewContract(contractId, 30)}
-        onOpenCRM={() => setCurrentNavTab('crm')}
-      />
-
+      <div className="bg-neutral-900 border-b border-neutral-700 px-4 py-2 text-sm text-neutral-300">
+        Lokaler Manager: echte Prozesssteuerung, Dateien, Backups und Paper-Plugins. Kundenabrechnung, Remote-Nodes, SFTP, Zeitpläne und Spieler-/Prozessmetriken sind noch nicht verfügbar.
+      </div>
       {/* Maintenance Mode Banner for non-admins */}
       {adminSettings.maintenanceMode && currentUser.role !== 'admin' && (
         <div className="bg-amber-950/90 border-b border-amber-800 px-4 py-2 text-xs text-amber-200">
@@ -1289,6 +787,7 @@ export default function App() {
       <TopNav
         currentTab={currentNavTab}
         onTabChange={(tab) => {
+          if (!['servers', 'catalog'].includes(tab)) { showToast(tab === 'mods' ? 'Pluginverwaltung ist in der jeweiligen Serverinstanz verfügbar.' : 'Dieser Bereich ist noch nicht als produktive Backendfunktion implementiert.'); return; }
           setCurrentNavTab(tab);
           if (tab !== 'servers') {
             setSelectedServerId(null);
@@ -1299,11 +798,11 @@ export default function App() {
           setIsCreateModalOpen(true);
         }}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
-        onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
+        onOpenSetupWizard={() => showToast('Der Systeminstallations-Assistent ist noch nicht implementiert.')}
         activeServerCount={servers.length}
         expiringCount={expiringContractsCount}
         selectedOS={selectedOS}
-        onChangeOS={setSelectedOS}
+        onChangeOS={() => showToast('Das Betriebssystem wird vom lokalen Host bestimmt.')}
         currentUser={currentUser}
         steamMode={adminSettings.steamMode}
       />
@@ -1345,7 +844,7 @@ export default function App() {
                 setPreselectedGame(null);
                 setIsCreateModalOpen(true);
               }}
-              onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
+              onOpenSetupWizard={() => showToast('Der Systeminstallations-Assistent ist noch nicht implementiert.')}
             />
           )
         )}
@@ -1408,7 +907,7 @@ export default function App() {
             onUpdateUserRole={handleUpdateUserRole}
             onAdjustUserBalance={handleAdjustUserBalance}
             onToggleUserStatus={handleToggleUserStatus}
-            onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
+            onOpenSetupWizard={() => showToast('Der Systeminstallations-Assistent ist noch nicht implementiert.')}
           />
         )}
 

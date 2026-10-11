@@ -6,7 +6,7 @@ interface DeleteServerModalProps {
   isOpen: boolean;
   server: ServerInstance | null;
   onClose: () => void;
-  onConfirmDelete: (serverId: string, keepBackups?: boolean) => void;
+  onConfirmDelete: (serverId: string, keepBackups?: boolean) => void | Promise<void>;
 }
 
 export const DeleteServerModal: React.FC<DeleteServerModalProps> = ({
@@ -18,19 +18,21 @@ export const DeleteServerModal: React.FC<DeleteServerModalProps> = ({
   const [confirmationInput, setConfirmationInput] = useState('');
   const [keepBackups, setKeepBackups] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   if (!isOpen || !server) return null;
 
   const requiresInputMatch = confirmationInput.trim().toLowerCase() === server.name.trim().toLowerCase() || confirmationInput.trim() === 'DELETE' || confirmationInput.trim() === 'LÖSCHEN';
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     setIsDeleting(true);
-    setTimeout(() => {
-      onConfirmDelete(server.id, keepBackups);
-      setIsDeleting(false);
+    setDeleteError('');
+    try {
+      await onConfirmDelete(server.id, keepBackups);
       setConfirmationInput('');
       onClose();
-    }, 400);
+    } catch (error: any) { setDeleteError(error.message); }
+    finally { setIsDeleting(false); }
   };
 
   return (
@@ -47,8 +49,8 @@ export const DeleteServerModal: React.FC<DeleteServerModalProps> = ({
               <Trash2 className="w-5 h-5 text-rose-300" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-rose-200">Server unwiderruflich löschen</h3>
-              <p className="text-xs text-rose-300/80">Diese Aktion kann nicht rückgängig gemacht werden</p>
+              <h3 className="text-base font-bold text-rose-200">Server aus der Verwaltung entfernen</h3>
+              <p className="text-xs text-rose-300/80">Dateien werden auf dem Host zur Wiederherstellung aufbewahrt</p>
             </div>
           </div>
           <button
@@ -61,6 +63,7 @@ export const DeleteServerModal: React.FC<DeleteServerModalProps> = ({
 
         {/* Content */}
         <div className="p-5 space-y-4 text-xs">
+          {deleteError && <p role="alert" className="text-red-400">{deleteError}</p>}
           {/* Target Server Card */}
           <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-3.5 space-y-1.5">
             <div className="flex items-center justify-between">
@@ -81,7 +84,7 @@ export const DeleteServerModal: React.FC<DeleteServerModalProps> = ({
           <div className="bg-rose-950/30 border border-rose-900/30 rounded-xl p-3 flex items-start gap-2.5 text-rose-300/90 leading-relaxed">
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
             <p>
-              Alle Container-Ressourcen, temporären Dateien, Logdateien und der verknüpfte Prepaid-Vertrag werden sofort freigegeben und gelöscht.
+              Der Prozess wird gestoppt und die Instanz aus der Verwaltung entfernt. Vorhandene Dateien und Backups werden zur Wiederherstellung auf dem Host aufbewahrt.
             </p>
           </div>
 
@@ -89,12 +92,13 @@ export const DeleteServerModal: React.FC<DeleteServerModalProps> = ({
           <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-neutral-950 border border-neutral-800/80 cursor-pointer hover:bg-neutral-800/40 transition-colors">
             <input
               type="checkbox"
-              checked={keepBackups}
+              checked={true}
+              disabled
               onChange={(e) => setKeepBackups(e.target.checked)}
               className="w-4 h-4 rounded text-rose-600 bg-neutral-900 border-neutral-700 focus:ring-0 focus:ring-offset-0 cursor-pointer"
             />
             <span className="text-neutral-300 font-medium">
-              Sicherheits-Snapshot in Archiv sichern (empfohlen)
+              Vorhandene Dateien und Backups auf dem Host behalten
             </span>
           </label>
 
@@ -135,7 +139,7 @@ export const DeleteServerModal: React.FC<DeleteServerModalProps> = ({
             }`}
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>{isDeleting ? 'Wird gelöscht...' : 'Endgültig löschen'}</span>
+            <span>{isDeleting ? 'Wird gelöscht...' : 'Instanz entfernen'}</span>
           </button>
         </div>
       </div>

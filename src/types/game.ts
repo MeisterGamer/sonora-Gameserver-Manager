@@ -58,7 +58,7 @@ export interface GameDefinition {
   isCustom?: boolean;
 }
 
-export type ServerStatus = 'offline' | 'starting' | 'running' | 'stopping' | 'updating';
+export type ServerStatus = 'offline' | 'starting' | 'running' | 'stopping' | 'updating' | 'unknown';
 
 export type JavaVersion = 
   | 'Java 26'

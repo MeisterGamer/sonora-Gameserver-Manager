@@ -106,7 +106,7 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
       const data = await res.json();
       if (res.ok && data.success) {
         setInstallSuccessMsg(data.message || (server.category === 'minecraft' 
-          ? `PaperMC ${server.version || '1.21.4'} erfolgreich installiert! EULA akzeptiert.` 
+          ? `PaperMC ${data.version || server.version} installiert. EULA im Dateimanager ausdrücklich akzeptieren.`
           : `${server.gameName} erfolgreich via SteamCMD bereitgestellt!`));
         fetchDiagnostics();
       } else {

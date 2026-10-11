@@ -12,7 +12,7 @@ interface CreateServerModalProps {
   preselectedGame?: GameDefinition | null;
   currentOS: PlatformOS;
   adminSettings?: AdminSettings;
-  onCreateServer: (serverData: Partial<ServerInstance>) => void;
+  onCreateServer: (serverData: Partial<ServerInstance>) => void | Promise<void>;
 }
 
 export const CreateServerModal: React.FC<CreateServerModalProps> = ({
@@ -32,6 +32,8 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
   const [targetOS, setTargetOS] = useState<PlatformOS>(currentOS);
   const [autoRestart, setAutoRestart] = useState<boolean>(true);
   const [autoInstallFiles, setAutoInstallFiles] = useState<boolean>(true);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   // Minecraft specific
   const [mcVersion, setMcVersion] = useState<string>(currentSettings.defaultMinecraftVersion || '26.3');
@@ -76,7 +78,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!instanceName.trim() || !activeGame) return;
 
@@ -115,8 +117,11 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     };
 
     (newServer as any).autoInstall = autoInstallFiles;
-    onCreateServer(newServer);
-    onClose();
+    newServer.minecraftType = isMinecraft ? activeGame.id.replace(/^mc_/, '') : undefined;
+    setCreating(true); setCreateError('');
+    try { await onCreateServer(newServer); onClose(); }
+    catch (error: any) { setCreateError(error.message); }
+    finally { setCreating(false); }
   };
 
   return (
@@ -129,7 +134,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
               <span>Neuen Gameserver erstellen</span>
             </h2>
             <p className="text-xs text-neutral-400 mt-0.5">
-              Wähle aus über 100 Steam Games oder Minecraft aller Arten mit nativer OS-Kompatibilität.
+              Paper wird lokal unterstützt; native Steam-Adapter sind derzeit auf Linux begrenzt. Andere Engines werden ausdrücklich abgelehnt.
             </p>
           </div>
           <button
@@ -141,6 +146,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+          {createError && <p role="alert" className="text-red-400">{createError}</p>}
           {/* Game Selector */}
           <div>
             <label className="block text-neutral-300 font-medium mb-1">Spiel / Server-Software auswählen</label>
@@ -300,12 +306,13 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             <input
               type="checkbox"
               id="autoRestartCheckbox"
-              checked={autoRestart}
+              checked={false}
+              disabled
               onChange={(e) => setAutoRestart(e.target.checked)}
               className="accent-emerald-500 cursor-pointer"
             />
             <label htmlFor="autoRestartCheckbox" className="text-neutral-300 cursor-pointer">
-              Automatischer Neustart bei unerwartetem Absturz (Crash-Guard)
+              Automatische Wiederanläufe nach Abstürzen sind noch nicht implementiert
             </label>
           </div>
 
@@ -326,7 +333,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             </div>
             <p className="text-[11px] text-neutral-400 pl-6">
               {isMinecraft 
-                ? 'Lädt automatisch die offizielle PaperMC Server-JAR herunter und akzeptiert die EULA, damit der Server sofort gestartet werden kann.' 
+                ? 'Installiert die ausdrücklich gewählte Paper-Version. Minecraft-EULA danach selbst im Dateimanager akzeptieren.'
                 : activeGame.steamAppId 
                 ? `Installiert das Spiel automatisch via SteamCMD (AppID: ${activeGame.steamAppId}) direkt auf deinen Server.` 
                 : 'Initialisiert das Server-Verzeichnis und alle Standard-Konfigurationsdateien.'}
@@ -344,6 +351,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             </button>
             <button
               type="submit"
+              disabled={creating}
               className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded cursor-pointer transition-colors shadow-sm shadow-emerald-600/30"
             >
               Server jetzt bereitstellen

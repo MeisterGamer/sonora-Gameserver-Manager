@@ -135,10 +135,6 @@ export const JAVA_VERSIONS: JavaVersionOption[] = [
 ];
 
 export const MINECRAFT_VERSIONS = [
-  '26.3',
-  '26.2',
-  '26.1',
-  '26.0',
   '1.21.4',
   '1.21.3',
   '1.21.1',
@@ -150,7 +146,8 @@ export const MINECRAFT_VERSIONS = [
   '1.16.5',
   '1.12.2',
   '1.8.9',
-  '1.7.10'
+  '26.3 (Snapshot)',
+  '26.2 (Snapshot)'
 ];
 
 export const ALL_JAVA_RUNTIMES: JavaVersion[] = [

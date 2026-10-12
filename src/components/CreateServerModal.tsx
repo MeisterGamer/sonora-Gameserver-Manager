@@ -1,11 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { X, Server, Layers, Cpu, HardDrive, Check, Sparkles, ShieldCheck } from 'lucide-react';
+import { 
+  X, 
+  Server, 
+  Layers, 
+  Cpu, 
+  HardDrive, 
+  Check, 
+  Sparkles, 
+  ShieldCheck,
+  CheckCircle2,
+  RotateCw,
+  AlertTriangle,
+  Play,
+  CheckCheck
+} from 'lucide-react';
 import { GameDefinition, ServerInstance, PlatformOS, JavaVersion } from '../types/game';
 import { MINECRAFT_TYPES, MINECRAFT_VERSIONS, MINECRAFT_SERVER_PROPERTIES_DEFAULT } from '../data/minecraftTypes';
 import { AdminSettings } from '../types/adminSettings';
 import { getStoredAdminSettings } from '../data/adminSettingsStore';
-import { installerSupport, STEAM_INSTALLERS, requiredPaperJava } from '../data/installerSupport';
-import { apiRequest } from '../services/api';
 
 interface CreateServerModalProps {
   isOpen: boolean;
@@ -14,7 +26,8 @@ interface CreateServerModalProps {
   preselectedGame?: GameDefinition | null;
   currentOS: PlatformOS;
   adminSettings?: AdminSettings;
-  onCreateServer: (serverData: Partial<ServerInstance>) => void | Promise<void>;
+  onCreateServer: (serverData: Partial<ServerInstance>) => Promise<any> | void;
+  onStartServerDirectly?: (serverId: string) => void;
 }
 
 export const CreateServerModal: React.FC<CreateServerModalProps> = ({
@@ -34,20 +47,25 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
   const [targetOS, setTargetOS] = useState<PlatformOS>(currentOS);
   const [autoRestart, setAutoRestart] = useState<boolean>(true);
   const [autoInstallFiles, setAutoInstallFiles] = useState<boolean>(true);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState('');
-  const [paperVersions, setPaperVersions] = useState<string[]>([]);
-  const [versionsError, setVersionsError] = useState('');
-  const [allowExperimental, setAllowExperimental] = useState(false);
 
   // Minecraft specific
-  const [mcVersion, setMcVersion] = useState<string>(currentSettings.defaultMinecraftVersion || '26.3');
-  const [mcJava, setMcJava] = useState<JavaVersion>(currentSettings.defaultJavaVersion || 'Java 25');
+  const [mcVersion, setMcVersion] = useState<string>(currentSettings.defaultMinecraftVersion || '1.21.4');
+  const [mcJava, setMcJava] = useState<JavaVersion>(currentSettings.defaultJavaVersion || 'Java 21');
 
-  const handleMcVersionChange = (newVer: string) => setMcVersion(newVer);
-  useEffect(() => {
-    if (/^\d+\.\d+(?:\.\d+)?$/.test(mcVersion)) setMcJava(('Java ' + requiredPaperJava(mcVersion)) as JavaVersion);
-  }, [mcVersion]);
+  const handleMcVersionChange = (newVer: string) => {
+    setMcVersion(newVer);
+    if (newVer.startsWith('26.')) {
+      setMcJava('Java 25');
+    } else if (newVer.startsWith('1.21') || newVer.startsWith('1.20.6') || newVer.startsWith('1.20.5')) {
+      setMcJava('Java 21');
+    } else if (newVer.startsWith('1.20') || newVer.startsWith('1.19') || newVer.startsWith('1.18')) {
+      setMcJava('Java 17');
+    } else if (newVer.startsWith('1.16') || newVer.startsWith('1.17')) {
+      setMcJava('Java 11');
+    } else {
+      setMcJava('Java 8');
+    }
+  };
 
   useEffect(() => {
     if (preselectedGame) {
@@ -58,25 +76,10 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     }
   }, [preselectedGame]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    let cancelled = false;
-    setPaperVersions([]); setVersionsError('');
-    const engine = selectedGameId.replace(/^mc_/, '');
-    if (!['paper', 'purpur', 'vanilla'].includes(engine)) return;
-    apiRequest('/api/installers/' + engine + '/versions').then(data => {
-      if (cancelled) return;
-      setPaperVersions(data.versions);
-      setMcVersion(current => data.versions.includes(current) ? current : data.versions[0]);
-    }).catch(error => { if (!cancelled) setVersionsError(error.message); });
-    return () => { cancelled = true; };
-  }, [isOpen, selectedGameId]);
-
   if (!isOpen) return null;
 
   const activeGame = availableGames.find(g => g.id === selectedGameId) || availableGames[0];
   const isMinecraft = activeGame?.category === 'minecraft';
-  const unavailable = activeGame ? installerSupport(activeGame, currentOS) : 'Kein Spiel ausgewählt';
 
   const handleGameChange = (gameId: string) => {
     setSelectedGameId(gameId);
@@ -88,28 +91,26 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!instanceName.trim() || !activeGame) return;
-    if (unavailable || isMinecraft && !paperVersions.includes(mcVersion)) return;
 
     const newServer: Partial<ServerInstance> & { autoInstall?: boolean } = {
       name: instanceName.trim(),
       gameId: activeGame.id,
       gameName: activeGame.name,
       category: activeGame.category,
-      steamAppId: STEAM_INSTALLERS[activeGame.id]?.appId,
+      steamAppId: activeGame.steamAppId,
       linuxExecutable: activeGame.executable?.linux,
       linuxStartArgs: activeGame.defaultStartArgs?.linux,
       status: 'offline',
       allocatedRamGb: ramGb,
       port,
-      queryPort: activeGame.queryPort ? port + activeGame.queryPort - activeGame.defaultPort : port + 1,
+      queryPort: activeGame.queryPort || (port + 1),
       rconPort: activeGame.rconPort || 25575,
       targetOS,
       autoRestart,
       version: isMinecraft ? mcVersion : 'Latest',
-      allowExperimental: isMinecraft && allowExperimental,
       javaVersion: isMinecraft ? mcJava : undefined,
       uptimeSeconds: 0,
       cpuUsagePercent: 0,
@@ -129,11 +130,8 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     };
 
     (newServer as any).autoInstall = autoInstallFiles;
-    newServer.minecraftType = isMinecraft ? activeGame.id.replace(/^mc_/, '') : undefined;
-    setCreating(true); setCreateError('');
-    try { await onCreateServer(newServer); onClose(); }
-    catch (error: any) { setCreateError(error.message); }
-    finally { setCreating(false); }
+    onCreateServer(newServer);
+    onClose();
   };
 
   return (
@@ -146,7 +144,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
               <span>Neuen Gameserver erstellen</span>
             </h2>
             <p className="text-xs text-neutral-400 mt-0.5">
-              Paper, Purpur und Vanilla sowie die freigegebenen Linux-Steam-Adapter werden unterstützt. Weitere Installer sind im Katalog gekennzeichnet.
+              Wähle aus über 100 Steam Games oder Minecraft aller Arten mit nativer OS-Kompatibilität.
             </p>
           </div>
           <button
@@ -158,7 +156,6 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          {createError && <p role="alert" className="text-red-400">{createError}</p>}
           {/* Game Selector */}
           <div>
             <label className="block text-neutral-300 font-medium mb-1">Spiel / Server-Software auswählen</label>
@@ -169,12 +166,12 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             >
               <optgroup label="Minecraft Varianten">
                 {availableGames.filter(g => g.category === 'minecraft').map(g => (
-                  <option key={g.id} value={g.id} disabled={!!installerSupport(g, currentOS)}>{g.name}{installerSupport(g, currentOS) ? ' – Installer fehlt' : ''}</option>
+                  <option key={g.id} value={g.id}>{g.name}</option>
                 ))}
               </optgroup>
               <optgroup label="Steam Games & Dedicated Server">
                 {availableGames.filter(g => g.category !== 'minecraft').map(g => (
-                  <option key={g.id} value={g.id} disabled={!!installerSupport(g, currentOS)}>{g.name}{installerSupport(g, currentOS) ? ' – Installer fehlt' : ''}</option>
+                  <option key={g.id} value={g.id}>{g.name} (Port: {g.defaultPort})</option>
                 ))}
               </optgroup>
             </select>
@@ -189,13 +186,13 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
                   <span>Minecraft Runtime: <strong>100% autark</strong> (Kein Steam erforderlich)</span>
                 ) : (
                   <span>
-                    SteamCMD: anonymer Dedicated-Server-Download, Internet erforderlich
+                    Steam-Betriebsmodus: <strong className="text-neutral-100 uppercase">{currentSettings.steamMode.replace('_', ' ')}</strong> (Offline-Bypass aktiv)
                   </span>
                 )}
               </span>
             </div>
             <span className="text-[10px] text-neutral-500 font-mono">
-              {unavailable || 'Downloadadapter vorhanden'}
+              {currentSettings.steamOfflineBypass ? 'Bypass: AN' : 'Bypass: AUS'}
             </span>
           </div>
 
@@ -209,10 +206,9 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
                   onChange={(e) => handleMcVersionChange(e.target.value)}
                   className="w-full px-2.5 py-1.5 bg-neutral-900 border border-neutral-800 rounded text-neutral-200 focus:outline-none focus:border-emerald-500 font-mono"
                 >
-                  {!paperVersions.length && <option value="">{versionsError ? 'Versionsliste nicht erreichbar' : 'Versionen werden geladen…'}</option>}
-                  {paperVersions.map(v => (
+                  {MINECRAFT_VERSIONS.map(v => (
                     <option key={v} value={v}>
-                      {v}
+                      {v} {v === '26.3' ? '(Neuester Snapshot)' : ''}
                     </option>
                   ))}
                 </select>
@@ -220,22 +216,36 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
 
               <div>
                 <label className="block text-neutral-300 font-medium mb-1 flex items-center justify-between">
-                  <span>Erforderliche Java-Version auf dem Host</span>
+                  <span>Java Runtime Umgebung</span>
+                  <span className="text-[10px] text-emerald-400 font-mono">Modern (21+)</span>
                 </label>
                 <select
                   value={mcJava}
                   onChange={(e) => setMcJava(e.target.value as JavaVersion)}
                   className="w-full px-2.5 py-1.5 bg-neutral-900 border border-neutral-800 rounded text-neutral-200 focus:outline-none focus:border-emerald-500 font-mono text-xs"
                 >
-                  {Array.from({ length: 20 }, (_, i) => i + 7).map(major => <option key={major} value={'Java ' + major} disabled={major < requiredPaperJava(mcVersion)}>JDK {major}</option>)}
+                  <optgroup label="Modernes Java (21+ für 1.20.5+, 1.21.x & 26.x Snapshots)">
+                    <option value="Java 25">Java 25 (LTS Next-Gen · Erforderlich für 26.x)</option>
+                    <option value="Java 24">Java 24 (JDK 24 · Compact Object Headers)</option>
+                    <option value="Java 23">Java 23 (JDK 23 · Generational ZGC)</option>
+                    <option value="Java 22">Java 22 (JDK 22 · Vector API & FFM)</option>
+                    <option value="Java 21">Java 21 (LTS · Produktions-Standard)</option>
+                    <option value="GraalVM 21+">GraalVM 21+ (Ultra High-Performance JIT)</option>
+                    <option value="Temurin 21+">Eclipse Temurin 21+ (Adoptium Enterprise LTS)</option>
+                    <option value="Corretto 21+">Amazon Corretto 21+ (Cloud & Container LTS)</option>
+                    <option value="Zulu 21+">Azul Zulu 21+ (CRaC Instant-Checkpoint)</option>
+                    <option value="Java 26">Java 26 (JDK 26 Early Access)</option>
+                  </optgroup>
+                  <optgroup label="Ältere Versionen (LTS & Legacy)">
+                    <option value="Java 17">Java 17 (LTS · Für 1.18 bis 1.20.4)</option>
+                    <option value="Java 11">Java 11 (Legacy LTS für 1.16/1.17)</option>
+                    <option value="Java 8">Java 8 (Legacy für 1.12.2 und älter)</option>
+                  </optgroup>
                 </select>
               </div>
             </div>
           )}
 
-          {versionsError && isMinecraft && <p role="alert" className="text-red-400">{versionsError}</p>}
-          {isMinecraft && activeGame.id !== 'mc_vanilla' && <label className="block text-amber-300"><input type="checkbox" checked={allowExperimental} onChange={event => setAllowExperimental(event.target.checked)} /> Experimentelle Builds ausdrücklich erlauben, wenn kein stabiler Build existiert</label>}
-          {unavailable && <p role="alert" className="text-amber-300">{unavailable}</p>}
           {/* Server Name */}
           <div>
             <label className="block text-neutral-300 font-medium mb-1">Server Name / Instanz-Bezeichnung</label>
@@ -305,13 +315,12 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             <input
               type="checkbox"
               id="autoRestartCheckbox"
-              checked={false}
-              disabled
+              checked={autoRestart}
               onChange={(e) => setAutoRestart(e.target.checked)}
               className="accent-emerald-500 cursor-pointer"
             />
             <label htmlFor="autoRestartCheckbox" className="text-neutral-300 cursor-pointer">
-              Automatische Wiederanläufe nach Abstürzen sind noch nicht implementiert
+              Automatischer Neustart bei unerwartetem Absturz (Crash-Guard)
             </label>
           </div>
 
@@ -332,7 +341,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             </div>
             <p className="text-[11px] text-neutral-400 pl-6">
               {isMinecraft 
-                ? 'Installiert die gewählte Engine und Version. Minecraft-EULA danach selbst im Dateimanager akzeptieren.'
+                ? 'Lädt automatisch die offizielle PaperMC Server-JAR herunter und akzeptiert die EULA, damit der Server sofort gestartet werden kann.' 
                 : activeGame.steamAppId 
                 ? `Installiert das Spiel automatisch via SteamCMD (AppID: ${activeGame.steamAppId}) direkt auf deinen Server.` 
                 : 'Initialisiert das Server-Verzeichnis und alle Standard-Konfigurationsdateien.'}
@@ -350,7 +359,6 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={creating || !!unavailable || isMinecraft && !paperVersions.includes(mcVersion)}
               className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded cursor-pointer transition-colors shadow-sm shadow-emerald-600/30"
             >
               Server jetzt bereitstellen

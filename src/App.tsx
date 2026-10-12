@@ -145,6 +145,25 @@ export default function App() {
     return () => clearInterval(timer);
   }, [currentUser.id]);
 
+  // Sync real servers from backend host on startup
+  useEffect(() => {
+    fetch('/api/servers')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data && Array.isArray(data.servers) && data.servers.length > 0) {
+          setServers(prev => {
+            const map = new Map(prev.map(s => [s.id, s]));
+            for (const s of data.servers) {
+              const existing = map.get(s.id);
+              map.set(s.id, { ...existing, ...s });
+            }
+            return Array.from(map.values());
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Poll real server logs from disk / daemon if server is selected
   useEffect(() => {
     if (!selectedServerId) return;

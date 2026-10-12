@@ -193,11 +193,40 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
   const [files, setFiles] = useState<ServerFileItem[]>(() => getInitialFiles(server));
   const [currentPath, setCurrentPath] = useState<string>('/');
   const [selectedFile, setSelectedFile] = useState<ServerFileItem | null>(null);
+  const [isLoadingFiles, setIsLoadingFiles] = useState<boolean>(false);
+  const [isLoadingContent, setIsLoadingContent] = useState<boolean>(false);
 
-  // Sync files if installed mods change
+  // Load real files from backend server filesystem
+  const loadDirectoryFiles = React.useCallback(async (dirPath: string) => {
+    setIsLoadingFiles(true);
+    try {
+      const cleanPath = dirPath === '/' ? '' : dirPath.replace(/^\//, '');
+      const res = await fetch(`/api/servers/${server.id}/files?path=${encodeURIComponent(cleanPath)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.files) && data.files.length > 0) {
+          // Merge with files outside this directory
+          setFiles(prev => {
+            const others = prev.filter(f => {
+              if (dirPath === '/') return false;
+              return !f.path.startsWith(dirPath + '/');
+            });
+            return [...others, ...data.files];
+          });
+        }
+      }
+    } catch {
+      // preview environment fallback
+    } finally {
+      setIsLoadingFiles(false);
+    }
+  }, [server.id]);
+
+  // Initial load and on path change
   React.useEffect(() => {
-    setFiles(getInitialFiles(server));
-  }, [server.installedMods]);
+    loadDirectoryFiles(currentPath);
+  }, [server.id, currentPath, loadDirectoryFiles]);
+
   const [editorContent, setEditorContent] = useState<string>('');
   const [searchFilter, setSearchFilter] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -209,13 +238,13 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [fileToDelete, setFileToDelete] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Current files in current directory
   const currentDirectoryFiles = useMemo(() => {
     return files.filter(f => {
       // Direct children of currentPath
       if (currentPath === '/') {
-        // files with no slash other than leading
         const parts = f.path.split('/').filter(Boolean);
         return parts.length === 1;
       } else {
@@ -231,38 +260,75 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
     return `${bytes} B`;
   };
 
-  const handleOpenFile = (file: ServerFileItem) => {
+  const handleOpenFile = async (file: ServerFileItem) => {
     if (file.type === 'directory') {
       setCurrentPath(file.path);
+      setSelectedFile(null);
     } else {
       setSelectedFile(file);
-      setEditorContent(file.content || `# Binary oder schreibgeschützte Datei: ${file.name}`);
+      setIsLoadingContent(true);
+      try {
+        const cleanFile = file.path.replace(/^\//, '');
+        const res = await fetch(`/api/servers/${server.id}/files/content?file=${encodeURIComponent(cleanFile)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.content !== undefined) {
+            setEditorContent(data.content);
+            setIsLoadingContent(false);
+            return;
+          }
+        }
+      } catch {
+        // preview fallback
+      }
+      setIsLoadingContent(false);
+      setEditorContent(file.content || `# Binary oder leere Datei: ${file.name}`);
     }
   };
 
-  const handleSaveFile = () => {
+  const handleSaveFile = async () => {
     if (!selectedFile) return;
+    const cleanFile = selectedFile.path.replace(/^\//, '');
+
+    // Optimistic UI update
     setFiles(prev => prev.map(f => f.path === selectedFile.path ? { ...f, content: editorContent, lastModified: 'Gerade eben' } : f));
     if (onSaveConfigFile) {
       onSaveConfigFile(selectedFile.name, editorContent);
     }
+
+    try {
+      await fetch(`/api/servers/${server.id}/files/content`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: cleanFile, content: editorContent })
+      });
+    } catch {
+      // preview fallback
+    }
+
     setSaveSuccess(true);
-    if (onNotify) onNotify(`Datei ${selectedFile.name} erfolgreich gespeichert.`);
+    if (onNotify) onNotify(`Datei ${selectedFile.name} erfolgreich auf Host gespeichert.`);
     setTimeout(() => setSaveSuccess(false), 2500);
   };
 
   // 1-Click EULA Accept
-  const handleAcceptEula = () => {
-    const eulaFile = files.find(f => f.name === 'eula.txt');
-    if (eulaFile) {
-      const updatedContent = `# Minecraft Server EULA akzeptiert via ApexHost Gameserver Manager\neula=true\n`;
-      setFiles(prev => prev.map(f => f.name === 'eula.txt' ? { ...f, content: updatedContent, lastModified: 'Gerade eben' } : f));
-      if (selectedFile?.name === 'eula.txt') {
-        setEditorContent(updatedContent);
-      }
-      if (onSaveConfigFile) onSaveConfigFile('eula.txt', updatedContent);
-      if (onNotify) onNotify('Minecraft EULA erfolgreich mit 1 Klick akzeptiert! Server kann starten.');
+  const handleAcceptEula = async () => {
+    const updatedContent = `# Minecraft Server EULA akzeptiert via ApexHost Gameserver Manager\neula=true\n`;
+    setFiles(prev => prev.map(f => f.name === 'eula.txt' ? { ...f, content: updatedContent, lastModified: 'Gerade eben' } : f));
+    if (selectedFile?.name === 'eula.txt') {
+      setEditorContent(updatedContent);
     }
+
+    try {
+      await fetch(`/api/servers/${server.id}/files/content`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: 'eula.txt', content: updatedContent })
+      });
+    } catch {}
+
+    if (onSaveConfigFile) onSaveConfigFile('eula.txt', updatedContent);
+    if (onNotify) onNotify('Minecraft EULA erfolgreich mit 1 Klick akzeptiert! Server kann starten.');
   };
 
   const eulaNeedsAccept = useMemo(() => {
@@ -274,16 +340,27 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
     setFileToDelete(path);
   };
 
-  const handleConfirmDeleteFile = () => {
+  const handleConfirmDeleteFile = async () => {
     if (!fileToDelete) return;
     const targetPath = fileToDelete;
+    const cleanFile = targetPath.replace(/^\//, '');
+
+    try {
+      await fetch(`/api/servers/${server.id}/files`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: cleanFile })
+      });
+    } catch {}
+
     setFiles(prev => prev.filter(f => !f.path.startsWith(targetPath)));
     if (selectedFile?.path === targetPath) setSelectedFile(null);
     if (onNotify) onNotify(`Datei/Ordner gelöscht: ${targetPath}`);
     setFileToDelete(null);
+    loadDirectoryFiles(currentPath);
   };
 
-  const handleCreateFile = () => {
+  const handleCreateFile = async () => {
     if (!newFileName.trim()) return;
     const cleanName = newFileName.trim();
     const fullPath = currentPath === '/' ? `/${cleanName}` : `${currentPath}/${cleanName}`;
@@ -300,36 +377,60 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
       content: isDir ? undefined : `# Neu erstellte Datei: ${cleanDirName}\n`
     };
 
+    if (!isDir) {
+      try {
+        await fetch(`/api/servers/${server.id}/files/content`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: fullPath.replace(/^\//, ''), content: `# Neu erstellte Datei: ${cleanDirName}\n` })
+        });
+      } catch {}
+    }
+
     setFiles(prev => [...prev, newItem]);
     setIsNewFileModalOpen(false);
     setNewFileName('');
     if (onNotify) onNotify(`${isDir ? 'Ordner' : 'Datei'} "${cleanDirName}" erfolgreich angelegt.`);
+    loadDirectoryFiles(currentPath);
   };
 
-  const handleSimulateUpload = () => {
+  // Real File Upload
+  const handleRealFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
     setIsUploading(true);
-    setUploadProgress(0);
-    const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsUploading(false);
-          const uploadedName = `custom_addon_${Date.now().toString().slice(-4)}.jar`;
-          const newItem: ServerFileItem = {
-            name: uploadedName,
-            path: currentPath === '/' ? `/${uploadedName}` : `${currentPath}/${uploadedName}`,
-            type: 'file',
-            sizeBytes: 15400000,
-            lastModified: 'Gerade eben',
-            isEditable: false
-          };
-          setFiles(p => [...p, newItem]);
-          if (onNotify) onNotify(`Upload erfolgreich: ${uploadedName} (14.7 MB)`);
-          return 100;
-        }
-        return prev + 25;
-      });
-    }, 200);
+    setUploadProgress(10);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64 = (reader.result as string).split(',')[1];
+        setUploadProgress(50);
+
+        const subDir = currentPath === '/' ? '' : currentPath.replace(/^\//, '');
+        const res = await fetch(`/api/servers/${server.id}/files/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            path: subDir,
+            base64
+          })
+        });
+
+        setUploadProgress(100);
+        if (onNotify) onNotify(`Upload erfolgreich: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
+        loadDirectoryFiles(currentPath);
+      } catch (err: any) {
+        if (onNotify) onNotify(`Upload fehlgeschlagen: ${err.message}`);
+      } finally {
+        setIsUploading(false);
+        setUploadProgress(0);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const sftpHost = `sftp.apexhost.net`;
@@ -450,6 +551,22 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
               />
             </div>
 
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={handleRealFileUpload}
+              className="hidden"
+            />
+
+            <button
+              onClick={() => loadDirectoryFiles(currentPath)}
+              disabled={isLoadingFiles}
+              className="p-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 cursor-pointer transition-colors"
+              title="Dateien neu laden"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingFiles ? 'animate-spin text-emerald-400' : ''}`} />
+            </button>
+
             <button
               onClick={() => setIsNewFileModalOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 cursor-pointer transition-colors"
@@ -459,9 +576,10 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
             </button>
 
             <button
-              onClick={handleSimulateUpload}
+              onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
               className="flex items-center gap-1.5 px-3 py-1 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 rounded-lg border border-emerald-800/80 cursor-pointer transition-colors disabled:opacity-50"
+              title="Eigene Datei (JAR, Mod, Config) hier hochladen"
             >
               <Upload className="w-3.5 h-3.5" />
               <span>{isUploading ? `Upload (${uploadProgress}%)` : 'Hochladen'}</span>

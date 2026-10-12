@@ -20,7 +20,7 @@ export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
   defaultRamAllocationGb: 6,
   maxRamPerServerGb: 32,
   defaultJavaVersion: 'Java 21',
-  defaultMinecraftVersion: '26.3',
+  defaultMinecraftVersion: '1.21.4',
   portRangeStart: 25565,
   portRangeEnd: 29999,
 

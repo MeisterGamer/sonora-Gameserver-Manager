@@ -1,3 +1,4 @@
+import { ensureJdk, jdkHome, JDK_VERSIONS } from './backend/java';
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -25,6 +26,45 @@ try {
   }
 } catch (e) {
   console.error('[ApexHost] Could not create DATA_DIR:', e);
+}
+
+// Persistent Portable Java (JDKs) directory
+const JDKS_DIR = path.resolve(process.cwd(), '.runtime', 'jdks');
+try {
+  if (!fs.existsSync(JDKS_DIR)) {
+    fs.mkdirSync(JDKS_DIR, { recursive: true });
+  }
+} catch (e) {
+  console.error('[ApexHost] Could not create JDKS_DIR:', e);
+}
+
+// Live installation progress tracker (0-100%)
+const installProgressMap = new Map<string, {
+  serverId: string;
+  percent: number;
+  step: string;
+  message: string;
+  timestamp: number;
+}>();
+
+function setInstallProgress(serverId: string, percent: number, step: string, message: string) {
+  installProgressMap.set(serverId, { serverId, percent, step, message, timestamp: Date.now() });
+  appendLog(serverId, 'INFO', `[FORTSCHRITT ${percent}%] ${message}`);
+}
+
+function getRequiredJdkMajor(version?: string, javaVersion?: string): number {
+  if (javaVersion) {
+    const match = javaVersion.match(/\b(?:Java|JDK)\s*(\d+)\b/i);
+    if (match) return Number(match[1]);
+  }
+  if (version) {
+    const clean = version.trim();
+    if (clean.startsWith('26.') || clean.startsWith('25.')) return 25;
+    if (clean.startsWith('1.21') || clean.startsWith('1.20.6') || clean.startsWith('1.20.5')) return 21;
+    if (clean.startsWith('1.20') || clean.startsWith('1.19') || clean.startsWith('1.18')) return 17;
+    if (clean.startsWith('1.17') || clean.startsWith('1.16')) return 11;
+  }
+  return 21;
 }
 
 // Persistent server registry (data/servers.json)
@@ -212,10 +252,12 @@ async function installMinecraftServer(
   serverId: string,
   srvDir: string,
   requestedVersion?: string,
-  requestedEngine?: string
-): Promise<{ success: boolean; build: number | string; fileSizeMb: string; jarPath: string; engine: string; version: string }> {
+  requestedEngine?: string,
+  requestedJava?: string
+): Promise<{ success: boolean; build: number | string; fileSizeMb: string; jarPath: string; engine: string; version: string; javaMajor: number }> {
   appendLog(serverId, 'INFO', `========================================================================`);
-  appendLog(serverId, 'INFO', `[INSTALLATION] Initialisiere Minecraft Server-Dateien...`);
+  appendLog(serverId, 'INFO', `[INSTALLATION] Initialisiere Minecraft Server-Dateien & Java-Laufzeit...`);
+  setInstallProgress(serverId, 10, 'init', 'Bereite Serververzeichnis vor...');
 
   // Target version extraction & sanitation
   let targetVer = '26.3';
@@ -242,6 +284,7 @@ async function installMinecraftServer(
   else engine = 'paper';
 
   appendLog(serverId, 'INFO', `[ENGINE] Gewählte Server-Engine: ${engine.toUpperCase()} | Zielversion: ${targetVer}`);
+  setInstallProgress(serverId, 25, 'download_jar', `Lade Server-JAR (${engine.toUpperCase()} ${targetVer})...`);
 
   let buffer: Buffer | null = null;
   let buildNum: number | string = 'latest';
@@ -443,10 +486,48 @@ async function installMinecraftServer(
 
   const fileSizeMb = (buffer.length / (1024 * 1024)).toFixed(1);
   appendLog(serverId, 'SUCCESS', `[ERFOLG] Server-JAR (${fileSizeMb} MB, Build: ${buildNum}) erfolgreich gespeichert.`);
-  appendLog(serverId, 'SUCCESS', `[EULA] eula=true gesetzt. Der Minecraft-Server (${engine.toUpperCase()} ${targetVer}) ist nun 100% startbereit!`);
+  appendLog(serverId, 'SUCCESS', `[EULA] eula=true gesetzt.`);
+  setInstallProgress(serverId, 50, 'jar_ready', `Server-JAR (${fileSizeMb} MB) erfolgreich gespeichert.`);
+
+  // --- AUTOMATIC PORTABLE JAVA INSTALLATION ---
+  const jdkMajor = getRequiredJdkMajor(targetVer, requestedJava);
+  setInstallProgress(serverId, 55, 'check_java', `Prüfe portables Java (JDK ${jdkMajor}) für ${engine.toUpperCase()} ${targetVer}...`);
+  appendLog(serverId, 'INFO', `[JAVA RUNTIME] Prüfe portables Java (JDK ${jdkMajor}) in .runtime/jdks...`);
+
+  const portableJavaHome = path.join(JDKS_DIR, `jdk-${jdkMajor}`);
+  const portableJavaBin = path.join(portableJavaHome, 'bin', 'java');
+
+  if (fs.existsSync(portableJavaBin)) {
+    setInstallProgress(serverId, 90, 'java_ready', `Portables JDK ${jdkMajor} ist bereits einsatzbereit.`);
+    appendLog(serverId, 'SUCCESS', `[JAVA RUNTIME] Portables JDK ${jdkMajor} bereits vorhanden (${portableJavaBin}).`);
+  } else {
+    setInstallProgress(serverId, 60, 'download_java', `Lade portables JDK ${jdkMajor} für Linux x64 herunter...`);
+    appendLog(serverId, 'INFO', `[JAVA RUNTIME] Lade portables OpenJDK ${jdkMajor} herunter und richte es ein...`);
+    try {
+      await ensureJdk(JDKS_DIR, jdkMajor, (percent, msg) => {
+        const overall = 60 + Math.floor(percent * 0.3);
+        setInstallProgress(serverId, overall, 'download_java', msg);
+      });
+      setInstallProgress(serverId, 92, 'java_ready', `Portables JDK ${jdkMajor} erfolgreich eingerichtet & verifiziert.`);
+      appendLog(serverId, 'SUCCESS', `[JAVA RUNTIME] Portables JDK ${jdkMajor} erfolgreich eingerichtet: ${portableJavaBin}`);
+    } catch (jdkErr: any) {
+      appendLog(serverId, 'WARN', `[JAVA HINWEIS] Portables JDK ${jdkMajor} Download-Hinweis: ${jdkErr.message}. Fallback auf Host-Java.`);
+    }
+  }
+
+  // Create standalone start.sh referencing portable java
+  try {
+    const startShPath = path.join(srvDir, 'start.sh');
+    const startShContent = `#!/usr/bin/env bash\n# Sonora Gameserver Start Script\nexport JAVA_HOME="${portableJavaHome}"\nexport PATH="$JAVA_HOME/bin:$PATH"\nexec "${portableJavaBin}" -Xmx4G -Xms1G -XX:+UseG1GC -jar "${primaryJarName}" nogui "$@"\n`;
+    fs.writeFileSync(startShPath, startShContent, 'utf8');
+    fs.chmodSync(startShPath, 0o755);
+  } catch {}
+
+  setInstallProgress(serverId, 100, 'done', `Gameserver (${engine.toUpperCase()} ${targetVer}) und Java ${jdkMajor} sind startbereit!`);
+  appendLog(serverId, 'SUCCESS', `[FERTIG] Instanz vollständig eingerichtet und 100% startbereit!`);
   appendLog(serverId, 'INFO', `========================================================================`);
 
-  return { success: true, build: buildNum, fileSizeMb, jarPath: primaryPath, engine, version: targetVer };
+  return { success: true, build: buildNum, fileSizeMb, jarPath: primaryPath, engine, version: targetVer, javaMajor: jdkMajor };
 }
 
 // Helper: Install Steam Dedicated Server via SteamCMD
@@ -749,31 +830,54 @@ app.post('/api/servers/:id/power', async (req, res) => {
         fs.writeFileSync(propsPath, `server-port=${port}\nmotd=§aApexHost Minecraft Server§r\nonline-mode=true\nmax-players=20\n`, 'utf8');
       }
 
-      // Check Java on host
-      const javaCheck = await detectJava();
-      if (!javaCheck.installed) {
-        appendLog(serverId, 'ERROR', `========================================================================`);
-        appendLog(serverId, 'ERROR', `[KRITISCHER FEHLER] Java Runtime (JDK/JRE) ist auf dem Host NICHT installiert!`);
-        appendLog(serverId, 'WARN',  `Um Minecraft ausführen zu können, installiere Java 21 auf deinem Ubuntu-Server:`);
-        appendLog(serverId, 'INFO',  `> Befehl: sudo apt update && sudo apt install -y openjdk-21-jre-headless`);
-        appendLog(serverId, 'ERROR', `========================================================================`);
-        return res.status(400).json({
-          success: false,
-          error: 'Java 21 ist auf diesem Dedicated Server nicht installiert.',
-          solution: 'sudo apt update && sudo apt install -y openjdk-21-jre-headless',
-          code: 'JAVA_MISSING'
-        });
+      // 1. Resolve Portable Java JDK
+      const currentRegistry = getServerRegistry();
+      const currentSrv = currentRegistry.find(s => s.id === serverId);
+      const chosenJava = currentSrv?.javaVersion || req.body.javaVersion;
+      const jdkMajor = getRequiredJdkMajor(version, chosenJava);
+      const portableJavaHome = path.join(JDKS_DIR, `jdk-${jdkMajor}`);
+      let javaBin = 'java';
+      let runtimeEnv: Record<string, string> = { ...process.env };
+
+      if (fs.existsSync(path.join(portableJavaHome, 'bin', 'java'))) {
+        javaBin = path.join(portableJavaHome, 'bin', 'java');
+        runtimeEnv.JAVA_HOME = portableJavaHome;
+        runtimeEnv.PATH = `${path.join(portableJavaHome, 'bin')}:${process.env.PATH || ''}`;
+        appendLog(serverId, 'INFO', `[JAVA RUNTIME] Verwende portables JDK ${jdkMajor}: ${javaBin}`);
+      } else {
+        appendLog(serverId, 'INFO', `[JAVA RUNTIME] Portables JDK ${jdkMajor} wird für den Start bereitgestellt...`);
+        try {
+          const installedPath = await ensureJdk(JDKS_DIR, jdkMajor);
+          javaBin = installedPath;
+          runtimeEnv.JAVA_HOME = portableJavaHome;
+          runtimeEnv.PATH = `${path.join(portableJavaHome, 'bin')}:${process.env.PATH || ''}`;
+          appendLog(serverId, 'SUCCESS', `[JAVA RUNTIME] Portables JDK ${jdkMajor} einsatzbereit: ${javaBin}`);
+        } catch (jdkErr: any) {
+          appendLog(serverId, 'WARN', `Portables JDK ${jdkMajor} nicht verfügbar (${jdkErr.message}). Prüfe Host-Java...`);
+          const javaCheck = await detectJava();
+          if (javaCheck.installed) {
+            javaBin = 'java';
+            appendLog(serverId, 'INFO', `Verwende Host-Java (${javaCheck.version}).`);
+          } else {
+            appendLog(serverId, 'ERROR', `Weder portables JDK ${jdkMajor} noch Host-Java ist verfügbar.`);
+            return res.status(400).json({
+              success: false,
+              error: `Portables JDK ${jdkMajor} konnte nicht geladen werden (${jdkErr.message}) und Host-Java ist nicht installiert.`,
+              code: 'JAVA_MISSING'
+            });
+          }
+        }
       }
 
-      // Check for JAR file - AUTO-INSTALL IF MISSING!
-      const potentialJars = ['paper.jar', 'server.jar', 'purpur.jar', 'fabric-server-launch.jar'];
+      // 2. Check for JAR file - AUTO-INSTALL IF MISSING!
+      const potentialJars = ['paper.jar', 'server.jar', 'purpur.jar', 'fabric-server-launch.jar', 'neoforge-server.jar', 'forge-server.jar', 'spigot.jar'];
       let foundJar = potentialJars.find(j => fs.existsSync(path.join(srvDir, j)));
 
       if (!foundJar) {
         const mcEngine = minecraftType || 'paper';
         appendLog(serverId, 'WARN', `[AUTO-INSTALL] Keine Server-JAR gefunden. Starte sofortige automatische Installation (${mcEngine.toUpperCase()})...`);
         try {
-          const autoRes = await installMinecraftServer(serverId, srvDir, version, mcEngine);
+          const autoRes = await installMinecraftServer(serverId, srvDir, version, mcEngine, chosenJava);
           foundJar = path.basename(autoRes.jarPath) || 'server.jar';
         } catch (downloadErr: any) {
           appendLog(serverId, 'ERROR', `Automatischer Download fehlgeschlagen: ${downloadErr.message}`);
@@ -788,8 +892,8 @@ app.post('/api/servers/:id/power', async (req, res) => {
 
       // Spawn Java process
       try {
-        appendLog(serverId, 'INFO', `Führe aus: java -Xmx${ramGb}G -Xms1G -jar ${foundJar} nogui`);
-        const child = spawn('java', [
+        appendLog(serverId, 'INFO', `Führe aus: ${javaBin} -Xmx${ramGb}G -Xms1G -jar ${foundJar} nogui`);
+        const child = spawn(javaBin, [
           `-Xmx${ramGb}G`,
           `-Xms1G`,
           '-XX:+UseG1GC',
@@ -799,7 +903,7 @@ app.post('/api/servers/:id/power', async (req, res) => {
           'nogui'
         ], {
           cwd: srvDir,
-          env: { ...process.env }
+          env: runtimeEnv
         });
 
         if (!child.pid) {
@@ -971,19 +1075,26 @@ app.post('/api/servers/:id/install', async (req, res) => {
     fs.mkdirSync(srvDir, { recursive: true });
   }
 
+  setInstallProgress(serverId, 5, 'init', 'Starte Installation...');
+
   try {
     if (category === 'minecraft' || (!steamAppId && category !== 'survival' && category !== 'fps')) {
       const targetEngine = minecraftType || engine || 'paper';
-      const result = await installMinecraftServer(serverId, srvDir, version, targetEngine);
+      const currentServers = getServerRegistry();
+      const currentSrv = currentServers.find(s => s.id === serverId);
+      const reqJava = req.body.javaVersion || currentSrv?.javaVersion;
+      const result = await installMinecraftServer(serverId, srvDir, version, targetEngine, reqJava);
       return res.json({ message: `Minecraft ${targetEngine.toUpperCase()} Server erfolgreich installiert`, ...result });
     } else {
       if (!steamAppId) {
+        setInstallProgress(serverId, 0, 'error', 'Keine steamAppId für Steam-Spiel übergeben');
         return res.status(400).json({ success: false, error: 'Keine steamAppId für Steam-Spiel übergeben' });
       }
       const success = await installSteamGameServer(serverId, srvDir, Number(steamAppId));
       return res.json({ success, message: success ? 'Steam Gameserver erfolgreich installiert' : 'Steam Installation fehlgeschlagen' });
     }
   } catch (err: any) {
+    setInstallProgress(serverId, 0, 'error', `Installation fehlgeschlagen: ${err.message}`);
     appendLog(serverId, 'ERROR', `Installation fehlgeschlagen: ${err.message}`);
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -1001,10 +1112,14 @@ app.get('/api/servers', (_req, res) => {
       const srvDir = path.join(DATA_DIR, srv.id);
       const hasJar = fs.existsSync(path.join(srvDir, 'paper.jar')) || fs.existsSync(path.join(srvDir, 'server.jar'));
       const hasExec = !!findGameExecutable(srvDir, srv.linuxExecutable);
+      const progress = installProgressMap.get(srv.id);
+      const isInstalling = !!(progress && progress.percent < 100 && progress.step !== 'done' && progress.step !== 'error');
+
       return {
         ...srv,
-        status: isRunning ? 'running' : srv.status === 'starting' ? 'starting' : 'offline',
+        status: isRunning ? 'running' : isInstalling ? 'updating' : srv.status === 'starting' ? 'starting' : 'offline',
         isInstalled: hasJar || hasExec,
+        installProgress: progress,
         pid: procInfo ? procInfo.pid : null
       };
     });
@@ -1047,7 +1162,7 @@ app.post('/api/servers/create', async (req, res) => {
       if (server.category === 'minecraft' || (!server.steamAppId && server.category !== 'survival' && server.category !== 'fps')) {
         // Await synchronous download so JAR is 100% on disk before finishing
         const engineType = server.minecraftType || (server.gameId && server.gameId.startsWith('mc_') ? server.gameId.replace('mc_', '') : 'paper');
-        installResult = await installMinecraftServer(serverId, srvDir, server.version, engineType);
+        installResult = await installMinecraftServer(serverId, srvDir, server.version, engineType, server.javaVersion);
       } else if (server.steamAppId) {
         // Steam games take longer, initiate SteamCMD and log live
         installSteamGameServer(serverId, srvDir, Number(server.steamAppId)).catch(err => {
@@ -1487,6 +1602,77 @@ app.get('/api/live/steam/workshop', async (req, res) => {
     console.error('Steam proxy error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// --- PORTABLE JAVA ENDPOINTS ---
+app.get('/api/java/versions', (_req, res) => {
+  try {
+    const list = JDK_VERSIONS.map(major => {
+      const javaBin = path.join(JDKS_DIR, `jdk-${major}`, 'bin', 'java');
+      const isInstalled = fs.existsSync(javaBin);
+      return {
+        major,
+        available: true,
+        installed: isInstalled,
+        version: `${major}.0`
+      };
+    });
+    res.json({ success: true, versions: list });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/java/install', async (req, res) => {
+  const { major } = req.body;
+  const numMajor = Number(major);
+  if (!numMajor || !JDK_VERSIONS.includes(numMajor)) {
+    return res.status(400).json({ success: false, error: 'Ungültige JDK-Version (erwartet Zahl zwischen 7 und 26)' });
+  }
+  try {
+    const javaBin = await ensureJdk(JDKS_DIR, numMajor);
+    res.json({ success: true, major: numMajor, path: javaBin, message: `Portables JDK ${numMajor} erfolgreich installiert.` });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/servers/:id/java', async (req, res) => {
+  const serverId = req.params.id;
+  const { javaVersion } = req.body;
+  if (!javaVersion) return res.status(400).json({ error: 'javaVersion erforderlich' });
+  const major = getRequiredJdkMajor(undefined, javaVersion);
+  if (activeProcesses.has(serverId)) {
+    return res.status(409).json({ error: 'Server läuft. Vor dem JDK-Wechsel bitte stoppen.' });
+  }
+  appendLog(serverId, 'INFO', `[JAVA] Richte ${javaVersion} (JDK ${major}) ein...`);
+  try {
+    await ensureJdk(JDKS_DIR, major);
+    const servers = getServerRegistry();
+    const idx = servers.findIndex(s => s.id === serverId);
+    if (idx >= 0) {
+      servers[idx].javaVersion = `Java ${major}`;
+      saveServerRegistry(servers);
+    }
+    appendLog(serverId, 'SUCCESS', `[JAVA] ${javaVersion} erfolgreich als Standard für diese Instanz gesetzt.`);
+    res.json({ success: true, javaVersion: `Java ${major}` });
+  } catch (err: any) {
+    appendLog(serverId, 'ERROR', `[JAVA FEHLER] Konnte JDK ${major} nicht einrichten: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- INSTALLATION PROGRESS ENDPOINT ---
+app.get('/api/servers/:id/install/progress', (req, res) => {
+  const serverId = req.params.id;
+  const progress = installProgressMap.get(serverId) || {
+    serverId,
+    percent: 100,
+    step: 'idle',
+    message: 'Bereit',
+    timestamp: Date.now()
+  };
+  res.json({ success: true, progress });
 });
 
 // Mount Vite middleware in development or serve static in production

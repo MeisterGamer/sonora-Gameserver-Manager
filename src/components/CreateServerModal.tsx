@@ -47,6 +47,9 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
   const [targetOS, setTargetOS] = useState<PlatformOS>(currentOS);
   const [autoRestart, setAutoRestart] = useState<boolean>(true);
   const [autoInstallFiles, setAutoInstallFiles] = useState<boolean>(true);
+  const [isProvisioning, setIsProvisioning] = useState<boolean>(false);
+  const [provisionProgress, setProvisionProgress] = useState<number>(15);
+  const [provisionStepText, setProvisionStepText] = useState<string>('Bereite Server vor...');
 
   // Minecraft specific
   const [mcVersion, setMcVersion] = useState<string>(currentSettings.defaultMinecraftVersion || '1.21.4');
@@ -91,7 +94,9 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [provisionError, setProvisionError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!instanceName.trim() || !activeGame) return;
 
@@ -99,7 +104,10 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
       ? (activeGame.id.startsWith('mc_') ? activeGame.id.replace('mc_', '') : 'paper')
       : undefined;
 
+    const generatedId = 'srv_' + Date.now().toString(36);
+
     const newServer: Partial<ServerInstance> & { autoInstall?: boolean; minecraftType?: string } = {
+      id: generatedId,
       name: instanceName.trim(),
       gameId: activeGame.id,
       gameName: activeGame.name,
@@ -135,8 +143,56 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     };
 
     (newServer as any).autoInstall = autoInstallFiles;
-    onCreateServer(newServer);
-    onClose();
+
+    if (autoInstallFiles) {
+      setIsProvisioning(true);
+      setProvisionProgress(15);
+      setProvisionError(null);
+      setProvisionStepText(
+        isMinecraft
+          ? `Initialisiere ${mcEngine?.toUpperCase()} (${mcVersion}) & portables ${mcJava}...`
+          : `Starte SteamCMD Installation für ${activeGame.name}...`
+      );
+
+      // Real progress polling from server backend
+      let isDone = false;
+      const pollTimer = setInterval(async () => {
+        if (isDone) return;
+        try {
+          const res = await fetch(`/api/servers/${generatedId}/install/progress`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.progress) {
+              setProvisionProgress(data.progress.percent || 15);
+              if (data.progress.message) {
+                setProvisionStepText(data.progress.message);
+              }
+              if (data.progress.step === 'error') {
+                setProvisionError(data.progress.message);
+              }
+            }
+          }
+        } catch {}
+      }, 500);
+
+      try {
+        await onCreateServer(newServer);
+        isDone = true;
+        clearInterval(pollTimer);
+        setProvisionProgress(100);
+        setProvisionStepText('Instanz & portables Java 100% startbereit!');
+        setTimeout(() => {
+          onClose();
+        }, 1200);
+      } catch (err: any) {
+        isDone = true;
+        clearInterval(pollTimer);
+        setProvisionError(err.message || 'Fehler beim Erstellen des Servers');
+      }
+    } else {
+      onCreateServer(newServer);
+      onClose();
+    }
   };
 
   return (
@@ -146,20 +202,188 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
           <div>
             <h2 className="text-base font-bold text-neutral-100 flex items-center gap-2">
               <Server className="w-5 h-5 text-emerald-400" />
-              <span>Neuen Gameserver erstellen</span>
+              <span>{isProvisioning ? 'Gameserver wird eingerichtet' : 'Neuen Gameserver erstellen'}</span>
             </h2>
             <p className="text-xs text-neutral-400 mt-0.5">
-              Wähle aus über 100 Steam Games oder Minecraft aller Arten mit nativer OS-Kompatibilität.
+              {isProvisioning 
+                ? 'Automatischer Download der Server-Software & portablen Java-Laufzeitumgebung' 
+                : 'Wähle aus über 100 Steam Games oder Minecraft aller Arten mit nativer OS-Kompatibilität.'}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 text-neutral-400 hover:text-neutral-200 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {!isProvisioning && (
+            <button
+              onClick={onClose}
+              className="p-1.5 text-neutral-400 hover:text-neutral-200 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
+        {/* PROVISIONING / INSTALLATION PROGRESS VIEW */}
+        {isProvisioning ? (
+          <div className="space-y-6 py-2">
+            <div className="flex items-center justify-center pt-2">
+              <div className="relative">
+                <div className="w-20 h-20 rounded-2xl bg-emerald-950/60 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-900/30">
+                  {provisionProgress >= 100 ? (
+                    <CheckCircle2 className="w-10 h-10 text-emerald-400 animate-in zoom-in-75 duration-300" />
+                  ) : provisionError ? (
+                    <AlertTriangle className="w-10 h-10 text-rose-400 animate-bounce" />
+                  ) : (
+                    <RotateCw className="w-10 h-10 text-emerald-400 animate-spin" />
+                  )}
+                </div>
+                <div className="absolute -bottom-2 -right-2 px-2 py-0.5 bg-neutral-950 border border-neutral-800 rounded-full text-[11px] font-mono font-bold text-emerald-400">
+                  {provisionProgress}%
+                </div>
+              </div>
+            </div>
+
+            <div className="text-center space-y-1">
+              <h3 className="text-sm font-bold text-neutral-100">
+                {provisionError 
+                  ? 'Installations-Fehler aufgetreten' 
+                  : provisionProgress >= 100 
+                  ? 'Server erfolgreich eingerichtet!' 
+                  : `Installiere "${instanceName}"...`}
+              </h3>
+              <p className={`text-xs ${provisionError ? 'text-rose-400 font-medium' : 'text-emerald-400/90 font-mono animate-pulse'}`}>
+                {provisionError || provisionStepText}
+              </p>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="space-y-1.5">
+              <div className="h-3 w-full bg-neutral-950 border border-neutral-800 rounded-full overflow-hidden p-0.5">
+                <div 
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    provisionError 
+                      ? 'bg-rose-500' 
+                      : 'bg-gradient-to-r from-emerald-600 via-teal-500 to-emerald-400'
+                  }`}
+                  style={{ width: `${Math.max(5, provisionProgress)}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-neutral-400 px-1 font-mono">
+                <span>Fortschritt</span>
+                <span>{provisionProgress} / 100%</span>
+              </div>
+            </div>
+
+            {/* Installation Steps Checklist */}
+            <div className="bg-neutral-950 border border-neutral-800/80 rounded-xl p-3.5 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between text-neutral-400 pb-1.5 border-b border-neutral-800/60 font-semibold text-[11px]">
+                <span>Installationsschritte</span>
+                <span>Status</span>
+              </div>
+
+              {/* Step 1: Initialisierung */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {provisionProgress >= 20 ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <div className="w-4 h-4 rounded-full border border-neutral-600 shrink-0 flex items-center justify-center text-[10px] text-neutral-400">1</div>
+                  )}
+                  <span className={provisionProgress >= 20 ? 'text-neutral-200' : 'text-neutral-400'}>
+                    Server-Verzeichnis & Konfiguration initialisieren
+                  </span>
+                </div>
+                <span className="text-[11px] font-mono text-emerald-400">
+                  {provisionProgress >= 20 ? 'Abgeschlossen' : 'Bereit...'}
+                </span>
+              </div>
+
+              {/* Step 2: Server-JAR / Engine */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {provisionProgress >= 50 ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : provisionProgress >= 20 ? (
+                    <RotateCw className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+                  ) : (
+                    <div className="w-4 h-4 rounded-full border border-neutral-600 shrink-0 flex items-center justify-center text-[10px] text-neutral-400">2</div>
+                  )}
+                  <span className={provisionProgress >= 50 ? 'text-neutral-200' : provisionProgress >= 20 ? 'text-amber-300 font-medium' : 'text-neutral-400'}>
+                    {isMinecraft ? `Server-JAR laden (${selectedGameId.replace('mc_', '').toUpperCase()} ${mcVersion})` : 'SteamCMD Datenpaket laden'}
+                  </span>
+                </div>
+                <span className="text-[11px] font-mono">
+                  {provisionProgress >= 50 ? <span className="text-emerald-400">Heruntergeladen</span> : provisionProgress >= 20 ? <span className="text-amber-400">Lädt...</span> : <span className="text-neutral-500">Warten...</span>}
+                </span>
+              </div>
+
+              {/* Step 3: Portable Java */}
+              {isMinecraft && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {provisionProgress >= 90 ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    ) : provisionProgress >= 50 ? (
+                      <RotateCw className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+                    ) : (
+                      <div className="w-4 h-4 rounded-full border border-neutral-600 shrink-0 flex items-center justify-center text-[10px] text-neutral-400">3</div>
+                    )}
+                    <span className={provisionProgress >= 90 ? 'text-neutral-200' : provisionProgress >= 50 ? 'text-amber-300 font-medium' : 'text-neutral-400'}>
+                      Portables OpenJDK einrichten ({mcJava} Linux x64)
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-mono">
+                    {provisionProgress >= 90 ? <span className="text-emerald-400">Einsatzbereit</span> : provisionProgress >= 50 ? <span className="text-amber-400">Download & Setup...</span> : <span className="text-neutral-500">Warten...</span>}
+                  </span>
+                </div>
+              )}
+
+              {/* Step 4: Fertigstellung */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {provisionProgress >= 100 ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <div className="w-4 h-4 rounded-full border border-neutral-600 shrink-0 flex items-center justify-center text-[10px] text-neutral-400">{isMinecraft ? 4 : 3}</div>
+                  )}
+                  <span className={provisionProgress >= 100 ? 'text-neutral-200 font-medium' : 'text-neutral-400'}>
+                    Startskript erzeugen & EULA akzeptieren
+                  </span>
+                </div>
+                <span className="text-[11px] font-mono text-neutral-500">
+                  {provisionProgress >= 100 ? <span className="text-emerald-400">Startbereit!</span> : 'Ausstehend'}
+                </span>
+              </div>
+            </div>
+
+            {/* Bottom buttons during provisioning */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-800">
+              {provisionError ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsProvisioning(false)}
+                    className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded text-xs cursor-pointer"
+                  >
+                    Zurück zum Formular
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-3 py-1.5 bg-rose-900/60 hover:bg-rose-800 text-rose-200 rounded text-xs cursor-pointer"
+                  >
+                    Schließen
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3 py-1.5 bg-neutral-800/80 hover:bg-neutral-800 text-neutral-300 hover:text-neutral-100 rounded text-xs transition-colors cursor-pointer"
+                >
+                  Im Hintergrund fortsetzen
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           {/* Game Selector */}
           <div>

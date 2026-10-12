@@ -117,6 +117,15 @@ export interface ServerInstance {
   installedMods: InstalledMod[];
   configFiles: Record<string, string>;
   createdAt: string;
+  installProgress?: InstallProgress;
+}
+
+export interface InstallProgress {
+  serverId: string;
+  percent: number;
+  step: string;
+  message: string;
+  timestamp: number;
 }
 
 export interface ModVersionItem {

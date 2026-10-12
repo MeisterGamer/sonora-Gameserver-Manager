@@ -54,8 +54,36 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
   const [hostDiag, setHostDiag] = useState<any>(null);
   const [isDiagnosing, setIsDiagnosing] = useState(false);
   const [isInstallingServer, setIsInstallingServer] = useState(false);
+  const [installProgress, setInstallProgress] = useState<{
+    percent: number;
+    step: string;
+    message: string;
+  } | null>(null);
   const [installSuccessMsg, setInstallSuccessMsg] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Poll live installation progress when installing
+  useEffect(() => {
+    let timer: any = null;
+    if (isInstallingServer) {
+      const poll = async () => {
+        try {
+          const res = await fetch(`/api/servers/${server.id}/install/progress`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.progress) {
+              setInstallProgress(data.progress);
+            }
+          }
+        } catch {}
+      };
+      poll();
+      timer = setInterval(poll, 750);
+    } else {
+      setInstallProgress(null);
+    }
+    return () => clearInterval(timer);
+  }, [isInstallingServer, server.id]);
 
   // Command History (Up / Down arrow key cycling)
   const [history, setHistory] = useState<string[]>([]);
@@ -92,6 +120,7 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
   const handleInstallServer = async () => {
     setIsInstallingServer(true);
     setInstallSuccessMsg(null);
+    setInstallProgress({ percent: 15, step: 'init', message: 'Starte Download- und Einrichtungs-Daemon...' });
     try {
       const res = await fetch(`/api/servers/${server.id}/install`, { 
         method: 'POST',
@@ -105,9 +134,10 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
         })
       });
       const data = await res.json();
-      if (res.ok && data.success) {
+      if (res.ok && (data.success || data.jarPath)) {
+        setInstallProgress({ percent: 100, step: 'done', message: 'Vollständig installiert und bereit!' });
         setInstallSuccessMsg(data.message || (server.category === 'minecraft' 
-          ? `PaperMC ${data.version || server.version} installiert. EULA im Dateimanager ausdrücklich akzeptieren.`
+          ? `Server-JAR (${server.minecraftType?.toUpperCase() || 'PAPER'} ${data.version || server.version}) und portables Java erfolgreich eingerichtet!`
           : `${server.gameName} erfolgreich via SteamCMD bereitgestellt!`));
         fetchDiagnostics();
       } else {
@@ -116,7 +146,9 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
     } catch (e: any) {
       alert(`Fehler bei der Installation: ${e.message}`);
     } finally {
-      setIsInstallingServer(false);
+      setTimeout(() => {
+        setIsInstallingServer(false);
+      }, 1000);
     }
   };
 
@@ -517,6 +549,42 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
         }
         return null;
       })()}
+
+      {/* Live Installation Progress Banner */}
+      {isInstallingServer && (
+        <div className="mx-3 my-2 p-3.5 bg-neutral-900 border border-emerald-500/60 rounded-xl space-y-2.5 shadow-xl shadow-emerald-950/40">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-bold text-neutral-100 flex items-center gap-2">
+              <RotateCw className="w-4 h-4 text-emerald-400 animate-spin" />
+              <span>
+                {server.category === 'minecraft'
+                  ? `Installiere ${server.minecraftType?.toUpperCase() || 'Minecraft'} (${server.version}) & portables Java...`
+                  : `Installiere ${server.gameName} via SteamCMD...`}
+              </span>
+            </span>
+            <span className="font-mono text-emerald-400 font-bold text-sm bg-emerald-950/80 px-2.5 py-0.5 rounded border border-emerald-800">
+              {installProgress?.percent || 25}%
+            </span>
+          </div>
+
+          {/* Animated Progress Bar */}
+          <div className="w-full bg-neutral-950 rounded-full h-3 overflow-hidden p-0.5 border border-neutral-800">
+            <div
+              className="bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-400 h-full rounded-full transition-all duration-300 ease-out shadow-sm"
+              style={{ width: `${Math.max(8, installProgress?.percent || 25)}%` }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] text-neutral-400">
+            <span className="font-medium text-neutral-200">
+              {installProgress?.message || 'Lade Komponenten herunter und richte Laufzeitumgebung ein...'}
+            </span>
+            <span className="font-mono text-[10px] text-neutral-400 bg-neutral-800 px-2 py-0.5 rounded">
+              Schritt: {installProgress?.step || 'INSTALLING'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Terminal Output Area */}
       <div 

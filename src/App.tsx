@@ -304,7 +304,7 @@ export default function App() {
     const detectedType = data.minecraftType || (data.gameId?.startsWith('mc_') ? data.gameId.replace('mc_', '') : (isMc ? 'paper' : undefined));
     const server = {
       ...data,
-      id: 'srv_' + Date.now().toString(36),
+      id: data.id || ('srv_' + Date.now().toString(36)),
       category: isMc ? 'minecraft' : (data.category || 'survival'),
       targetOS: selectedOS,
       allocatedRamGb: data.allocatedRamGb || 4,

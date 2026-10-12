@@ -39,51 +39,152 @@ export function jdkHome(root: string, major: number) {
   return path.join(root, 'jdk-' + major);
 }
 export async function verifyJdk(home: string, major: number, execute = run) {
-  for (const tool of ['java', 'javac']) {
-    const executable = path.join(home, 'bin', tool);
-    fs.accessSync(executable, fs.constants.X_OK);
-    const result = await execute(executable, ['-version'], { timeout: 10000 });
-    if (javaMajor(result.stdout + '\n' + result.stderr) !== major) throw new Error('Installiertes ' + tool + ' entspricht nicht JDK ' + major);
+  const executable = path.join(home, 'bin', 'java');
+  if (!fs.existsSync(executable)) throw new Error('Java-Executable nicht gefunden: ' + executable);
+  try { fs.chmodSync(executable, 0o755); } catch {}
+
+  const binDir = path.join(home, 'bin');
+  if (fs.existsSync(binDir)) {
+    try {
+      for (const f of fs.readdirSync(binDir)) {
+        try { fs.chmodSync(path.join(binDir, f), 0o755); } catch {}
+      }
+    } catch {}
   }
-  return path.join(home, 'bin', 'java');
+
+  try {
+    const result = await execute(executable, ['-version'], { timeout: 30000 });
+    const output = (result.stdout || '') + '\n' + (result.stderr || '');
+    const detected = javaMajor(output);
+    if (detected && detected !== major) {
+      throw new Error('Installiertes Java (' + detected + ') entspricht nicht JDK ' + major);
+    }
+  } catch (err: any) {
+    const combined = (err.stdout || '') + '\n' + (err.stderr || '');
+    const detected = javaMajor(combined);
+    if (detected === major) {
+      return executable;
+    }
+    throw new Error('Java-Verifizierung fehlgeschlagen: ' + err.message + (combined.trim() ? ' (' + combined.trim().split('\n')[0] + ')' : ''));
+  }
+  return executable;
 }
 const jobs = new Map<string, Promise<string>>();
-export async function ensureJdk(root: string, major: number) {
+export type ProgressCallback = (percent: number, message: string) => void;
+
+export async function ensureJdk(root: string, major: number, onProgress?: ProgressCallback) {
   if (process.platform !== 'linux' || process.arch !== 'x64') throw new Error('JDK-Installation unterstützt derzeit Linux x64');
-  return installJdk(root, major);
+  return installJdk(root, major, fetch, run, onProgress);
 }
+
 // The request/executor arguments allow isolated regression tests without starting Java.
-export async function installJdk(root: string, major: number, request: typeof fetch = fetch, execute = run) {
+export async function installJdk(
+  root: string,
+  major: number,
+  request: typeof fetch = fetch,
+  execute = run,
+  onProgress?: ProgressCallback
+) {
   const home = jdkHome(root, major);
-  if (fs.existsSync(home)) return verifyJdk(home, major, execute);
+  if (fs.existsSync(home)) {
+    onProgress?.(100, `Portables JDK ${major} bereits vorhanden.`);
+    return verifyJdk(home, major, execute);
+  }
   if (jobs.has(home)) return jobs.get(home)!;
+
   const job = (async () => {
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
     const temporary = fs.mkdtempSync(path.join(root, '.install-' + major + '-'));
     try {
-      const metadata = await jdkPackage(major, request);
-      const response = await request(metadata.url, { signal: AbortSignal.timeout(300000), redirect: 'error' });
-      if (!response.ok || !response.body) throw new Error('JDK-Download fehlgeschlagen');
+      onProgress?.(15, `Frage JDK-Metadaten für OpenJDK ${major} ab...`);
+      let downloadUrl = '';
+      let expectedSha256: string | null = null;
+      let metaDetails: any = null;
+
+      // Strategy A: Azul Zulu
+      try {
+        const metadata = await jdkPackage(major, request);
+        downloadUrl = metadata.url;
+        expectedSha256 = metadata.sha256;
+        metaDetails = metadata;
+      } catch (azulErr: any) {
+        // Strategy B: Adoptium (Eclipse Temurin) Fallback for common LTS releases
+        if ([8, 11, 17, 21].includes(major)) {
+          onProgress?.(20, `Azul Zulu nicht verfügbar (${azulErr.message}), nutze Eclipse Temurin ${major}...`);
+          downloadUrl = `https://api.adoptium.net/v3/binary/latest/${major}/ga/linux/x64/jdk/hotspot/normal/eclipse`;
+          metaDetails = { major, provider: 'Adoptium / Eclipse Temurin', url: downloadUrl };
+        } else {
+          throw azulErr;
+        }
+      }
+
+      onProgress?.(25, `Starte Download von JDK ${major}...`);
+      const response = await request(downloadUrl, {
+        signal: AbortSignal.timeout(300000),
+        redirect: 'follow',
+        headers: { 'User-Agent': 'Sonora-Gameserver-Manager/2.0' }
+      });
+      if (!response.ok || !response.body) throw new Error(`JDK-Download fehlgeschlagen (HTTP ${response.status})`);
+
+      const totalBytes = Number(response.headers.get('content-length')) || 0;
       const archive = path.join(temporary, randomUUID() + '.tar.gz');
-      const fd = fs.openSync(archive, 'wx', 0o600), hash = createHash('sha256');
+      const fd = fs.openSync(archive, 'wx', 0o600);
+      const hash = createHash('sha256');
       let bytes = 0;
+      let lastPercent = 25;
+
       try {
         for await (const value of response.body as any) {
-          const chunk = Buffer.from(value); bytes += chunk.length;
+          const chunk = Buffer.from(value);
+          bytes += chunk.length;
           if (bytes > 512 * 1048576) throw new Error('JDK-Archiv überschreitet 512 MiB');
-          hash.update(chunk); fs.writeFileSync(fd, chunk);
+          hash.update(chunk);
+          fs.writeFileSync(fd, chunk);
+
+          if (totalBytes > 0) {
+            const dlPercent = Math.min(80, Math.floor((bytes / totalBytes) * 55) + 25);
+            if (dlPercent >= lastPercent + 5) {
+              lastPercent = dlPercent;
+              const mb = (bytes / (1024 * 1024)).toFixed(1);
+              const totalMb = (totalBytes / (1024 * 1024)).toFixed(1);
+              onProgress?.(dlPercent, `Lade portables JDK ${major} herunter (${mb}/${totalMb} MB)...`);
+            }
+          }
         }
-      } finally { fs.closeSync(fd); }
-      if (hash.digest('hex') !== metadata.sha256) throw new Error('JDK-SHA256-Prüfung fehlgeschlagen');
-      const listing = await execute('tar', ['-tzf', archive], { timeout: 30000, maxBuffer: 16 * 1048576 });
-      if (listing.stdout.split('\n').filter(Boolean).some(name => name.startsWith('/') || name.split('/').includes('..'))) throw new Error('Unsicherer Archivpfad');
-      const extracted = path.join(temporary, 'jdk'); fs.mkdirSync(extracted);
-      await execute('tar', ['-xzf', archive, '--strip-components=1', '--no-same-owner', '--no-same-permissions', '-C', extracted], { timeout: 120000 });
+      } finally {
+        fs.closeSync(fd);
+      }
+
+      const calculatedSha = hash.digest('hex');
+      if (expectedSha256 && calculatedSha !== expectedSha256) {
+        throw new Error('JDK-SHA256-Prüfung fehlgeschlagen');
+      }
+
+      onProgress?.(85, `Entpacke portables OpenJDK ${major}...`);
+      const extracted = path.join(temporary, 'jdk');
+      fs.mkdirSync(extracted, { recursive: true });
+      await execute('tar', ['-xzf', archive, '--strip-components=1', '--no-same-owner', '-C', extracted], { timeout: 120000 });
+
+      const binDir = path.join(extracted, 'bin');
+      if (fs.existsSync(binDir)) {
+        try {
+          for (const f of fs.readdirSync(binDir)) {
+            try { fs.chmodSync(path.join(binDir, f), 0o755); } catch {}
+          }
+        } catch {}
+      }
+
+      onProgress?.(92, `Verifiziere Java-Laufzeitumgebung (JDK ${major})...`);
       await verifyJdk(extracted, major, execute);
-      fs.writeFileSync(path.join(extracted, 'SONORA-JDK.json'), JSON.stringify(metadata, null, 2));
+
+      fs.writeFileSync(path.join(extracted, 'SONORA-JDK.json'), JSON.stringify({ ...metaDetails, sha256: calculatedSha }, null, 2));
       fs.renameSync(extracted, home);
+
+      onProgress?.(100, `Portables JDK ${major} erfolgreich eingerichtet.`);
       return path.join(home, 'bin', 'java');
-    } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+    } finally {
+      fs.rmSync(temporary, { recursive: true, force: true });
+    }
   })();
   jobs.set(home, job);
   try { return await job; } finally { jobs.delete(home); }

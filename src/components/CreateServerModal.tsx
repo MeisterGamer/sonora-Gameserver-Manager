@@ -95,11 +95,16 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     e.preventDefault();
     if (!instanceName.trim() || !activeGame) return;
 
-    const newServer: Partial<ServerInstance> & { autoInstall?: boolean } = {
+    const mcEngine = isMinecraft
+      ? (activeGame.id.startsWith('mc_') ? activeGame.id.replace('mc_', '') : 'paper')
+      : undefined;
+
+    const newServer: Partial<ServerInstance> & { autoInstall?: boolean; minecraftType?: string } = {
       name: instanceName.trim(),
       gameId: activeGame.id,
       gameName: activeGame.name,
       category: activeGame.category,
+      minecraftType: mcEngine,
       steamAppId: activeGame.steamAppId,
       linuxExecutable: activeGame.executable?.linux,
       linuxStartArgs: activeGame.defaultStartArgs?.linux,

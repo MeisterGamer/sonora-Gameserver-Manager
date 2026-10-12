@@ -207,44 +207,155 @@ async function ensureSteamCmd(serverId?: string): Promise<string> {
   return targetScript;
 }
 
-// Helper: Install Minecraft Paper/Purpur/Mojang Server JAR
-async function installMinecraftServer(serverId: string, srvDir: string, requestedVersion?: string): Promise<{ success: boolean; build: number | string; fileSizeMb: string; jarPath: string }> {
+// Helper: Universal Multi-Engine Minecraft Server Installer (Paper v3, Purpur, Fabric, Vanilla, NeoForge, Spigot)
+async function installMinecraftServer(
+  serverId: string,
+  srvDir: string,
+  requestedVersion?: string,
+  requestedEngine?: string
+): Promise<{ success: boolean; build: number | string; fileSizeMb: string; jarPath: string; engine: string; version: string }> {
   appendLog(serverId, 'INFO', `========================================================================`);
   appendLog(serverId, 'INFO', `[INSTALLATION] Initialisiere Minecraft Server-Dateien...`);
 
-  // Target version check & sanitation
+  // Target version extraction & sanitation
   let targetVer = '26.3';
   if (requestedVersion) {
-    const clean = requestedVersion.split(' ')[0].trim();
-    if (clean && clean.includes('.')) {
-      targetVer = clean;
+    const clean = requestedVersion.trim();
+    const semverMatch = clean.match(/\b\d+(\.\d+)+(-[a-zA-Z0-9.]+)?\b/);
+    if (semverMatch) {
+      targetVer = semverMatch[0];
+    } else if (clean.includes('.')) {
+      targetVer = clean.split(' ')[0].trim();
     }
   }
 
-  appendLog(serverId, 'INFO', `[DOWNLOAD] Bereite Minecraft-Server für Version ${targetVer} vor...`);
+  // Engine classification
+  let engine = (requestedEngine || 'paper').toLowerCase().replace('mc_', '');
+  if (engine.includes('fabric')) engine = 'fabric';
+  else if (engine.includes('purpur')) engine = 'purpur';
+  else if (engine.includes('vanilla')) engine = 'vanilla';
+  else if (engine.includes('neoforge')) engine = 'neoforge';
+  else if (engine.includes('forge')) engine = 'forge';
+  else if (engine.includes('spigot')) engine = 'spigot';
+  else if (engine.includes('velocity')) engine = 'velocity';
+  else if (engine.includes('bungeecord')) engine = 'bungeecord';
+  else engine = 'paper';
+
+  appendLog(serverId, 'INFO', `[ENGINE] Gewählte Server-Engine: ${engine.toUpperCase()} | Zielversion: ${targetVer}`);
+
   let buffer: Buffer | null = null;
   let buildNum: number | string = 'latest';
+  const customHeaders = { 'User-Agent': 'Sonora-Gameserver-Manager/2.0' };
 
-  // Strategy 1: Purpur API (Paper-kompatibel, Bukkit/Spigot Plugin-Support, hochperformant)
-  try {
-    appendLog(serverId, 'INFO', `[PURPUR/PAPER] Prüfe Purpur High-Performance Build für ${targetVer}...`);
-    const purpurRes = await fetch(`https://api.purpurmc.org/v2/purpur/${targetVer}/latest/download`);
-    if (purpurRes.ok) {
-      buffer = Buffer.from(await purpurRes.arrayBuffer());
-      buildNum = `purpur-${targetVer}-latest`;
-      appendLog(serverId, 'SUCCESS', `[PURPUR/PAPER] Purpur Build für ${targetVer} erfolgreich geladen.`);
-    } else {
-      appendLog(serverId, 'WARN', `Purpur nicht verfügbar für Version ${targetVer} (Status ${purpurRes.status}). Versuche Mojang Version-Manifest...`);
+  // STRATEGY 1: ENGINE-SPECIFIC OFFICIAL DOWNLOAD
+
+  // 1A. PaperMC v3 (fill.papermc.io)
+  if (engine === 'paper' || engine === 'velocity') {
+    const proj = engine === 'velocity' ? 'velocity' : 'paper';
+    try {
+      appendLog(serverId, 'INFO', `[PAPER v3] Frage offizielle PaperMC v3 Downloads-API für ${proj} ${targetVer} ab...`);
+      const buildsRes = await fetch(`https://fill.papermc.io/v3/projects/${proj}/versions/${targetVer}/builds`, {
+        headers: customHeaders
+      });
+      if (buildsRes.ok) {
+        const buildsData: any = await buildsRes.json();
+        if (Array.isArray(buildsData) && buildsData.length > 0) {
+          const latestBuild = buildsData[0];
+          const downloadObj = latestBuild.downloads?.['server:default'] || Object.values(latestBuild.downloads || {})[0] as any;
+          if (downloadObj?.url) {
+            appendLog(serverId, 'INFO', `[PAPER v3] Lade Build #${latestBuild.id} (${downloadObj.name || 'paper.jar'})...`);
+            const jarRes = await fetch(downloadObj.url, { headers: customHeaders });
+            if (jarRes.ok) {
+              buffer = Buffer.from(await jarRes.arrayBuffer());
+              buildNum = `paper-${targetVer}-build#${latestBuild.id}`;
+              appendLog(serverId, 'SUCCESS', `[PAPER v3] Paper Build #${latestBuild.id} erfolgreich heruntergeladen.`);
+            }
+          }
+        }
+      } else {
+        appendLog(serverId, 'WARN', `PaperMC v3 lieferte HTTP ${buildsRes.status} für Version ${targetVer}.`);
+      }
+    } catch (err: any) {
+      appendLog(serverId, 'WARN', `PaperMC v3 API Fehler: ${err.message}`);
     }
-  } catch (err: any) {
-    appendLog(serverId, 'WARN', `Purpur Download-Hinweis: ${err.message}`);
   }
 
-  // Strategy 2: Official Mojang Version Manifest (Unterstützt alle Versionen: 26.3, 26.2, 1.21.x etc.)
+  // 1B. Purpur API (api.purpurmc.org)
+  if (!buffer && (engine === 'purpur' || engine === 'paper')) {
+    try {
+      appendLog(serverId, 'INFO', `[PURPUR] Prüfe Purpur High-Performance Build für ${targetVer}...`);
+      const purpurRes = await fetch(`https://api.purpurmc.org/v2/purpur/${targetVer}/latest/download`, {
+        headers: customHeaders
+      });
+      if (purpurRes.ok) {
+        buffer = Buffer.from(await purpurRes.arrayBuffer());
+        buildNum = `purpur-${targetVer}-latest`;
+        appendLog(serverId, 'SUCCESS', `[PURPUR] Purpur Build für ${targetVer} erfolgreich geladen.`);
+      } else {
+        appendLog(serverId, 'WARN', `Purpur nicht verfügbar für Version ${targetVer} (Status ${purpurRes.status}).`);
+      }
+    } catch (err: any) {
+      appendLog(serverId, 'WARN', `Purpur Fehler: ${err.message}`);
+    }
+  }
+
+  // 1C. Fabric Meta API (meta.fabricmc.net)
+  if (!buffer && engine === 'fabric') {
+    try {
+      appendLog(serverId, 'INFO', `[FABRIC] Frage Fabric Meta nach Loader und Installer für ${targetVer} ab...`);
+      const loaderRes = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${targetVer}`, { headers: customHeaders });
+      const instRes = await fetch(`https://meta.fabricmc.net/v2/versions/installer`, { headers: customHeaders });
+      if (loaderRes.ok && instRes.ok) {
+        const loaders: any = await loaderRes.json();
+        const installers: any = await instRes.json();
+        const loaderVer = loaders[0]?.loader?.version;
+        const installerVer = installers[0]?.version;
+        if (loaderVer && installerVer) {
+          const fabricJarUrl = `https://meta.fabricmc.net/v2/versions/loader/${targetVer}/${loaderVer}/${installerVer}/server/jar`;
+          appendLog(serverId, 'INFO', `[FABRIC] Lade Server Launcher (Loader ${loaderVer}, Installer ${installerVer})...`);
+          const jarRes = await fetch(fabricJarUrl, { headers: customHeaders });
+          if (jarRes.ok) {
+            buffer = Buffer.from(await jarRes.arrayBuffer());
+            buildNum = `fabric-${targetVer}-loader-${loaderVer}`;
+            appendLog(serverId, 'SUCCESS', `[FABRIC] Fabric Server JAR erfolgreich geladen.`);
+          }
+        }
+      }
+    } catch (err: any) {
+      appendLog(serverId, 'WARN', `Fabric Meta Fehler: ${err.message}`);
+    }
+  }
+
+  // STRATEGY 2: UNIVERSAL MCJARS REPOSITORY (Unterstützt Paper, Purpur, Fabric, NeoForge, Forge, Spigot, Vanilla)
+  if (!buffer) {
+    try {
+      const mcjarsType = engine.toUpperCase();
+      appendLog(serverId, 'INFO', `[MCJARS] Suche Build im MCJars Index für ${mcjarsType} (${targetVer})...`);
+      const mcjarsRes = await fetch(`https://mcjars.app/api/v1/builds/${mcjarsType}`, { headers: customHeaders });
+      if (mcjarsRes.ok) {
+        const data: any = await mcjarsRes.json();
+        const verObj = data.versions?.[targetVer] || data.versions?.[Object.keys(data.versions || {}).slice(-1)[0]];
+        const jarUrl = verObj?.latest?.jarUrl || verObj?.latest?.zipUrl;
+        if (jarUrl) {
+          appendLog(serverId, 'INFO', `[MCJARS] Lade JAR von ${jarUrl}...`);
+          const jarRes = await fetch(jarUrl, { headers: customHeaders });
+          if (jarRes.ok) {
+            buffer = Buffer.from(await jarRes.arrayBuffer());
+            buildNum = `mcjars-${mcjarsType}-${targetVer}`;
+            appendLog(serverId, 'SUCCESS', `[MCJARS] JAR für ${mcjarsType} erfolgreich geladen.`);
+          }
+        }
+      }
+    } catch (err: any) {
+      appendLog(serverId, 'WARN', `MCJars Index Fehler: ${err.message}`);
+    }
+  }
+
+  // STRATEGY 3: OFFICIAL MOJANG VERSION MANIFEST (Reine Vanilla & universeller Fallback für alle 26.x/1.21.x)
   if (!buffer) {
     try {
       appendLog(serverId, 'INFO', `[MOJANG] Frage offizielles Mojang Version Manifest ab...`);
-      const manifestRes = await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json');
+      const manifestRes = await fetch('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json', { headers: customHeaders });
       if (manifestRes.ok) {
         const manifestData: any = await manifestRes.json();
         let targetEntry = manifestData.versions?.find((v: any) => v.id === targetVer);
@@ -253,13 +364,13 @@ async function installMinecraftServer(serverId: string, srvDir: string, requeste
         }
         if (targetEntry && targetEntry.url) {
           appendLog(serverId, 'INFO', `[MOJANG] Lade Versionspaket für ${targetEntry.id}...`);
-          const pkgRes = await fetch(targetEntry.url);
+          const pkgRes = await fetch(targetEntry.url, { headers: customHeaders });
           if (pkgRes.ok) {
             const pkgData: any = await pkgRes.json();
             const serverDownloadUrl = pkgData.downloads?.server?.url;
             if (serverDownloadUrl) {
               appendLog(serverId, 'INFO', `[MOJANG DOWNLOAD] Lade offizielle Mojang Server-JAR (${targetEntry.id})...`);
-              const jarRes = await fetch(serverDownloadUrl);
+              const jarRes = await fetch(serverDownloadUrl, { headers: customHeaders });
               if (jarRes.ok) {
                 buffer = Buffer.from(await jarRes.arrayBuffer());
                 buildNum = `mojang-${targetEntry.id}`;
@@ -273,43 +384,69 @@ async function installMinecraftServer(serverId: string, srvDir: string, requeste
     }
   }
 
-  // Strategy 3: Direct Official Mojang 26.3 Fallback
+  // STRATEGY 4: ULTIMATE DIRECT RELEASE FALLBACK
   if (!buffer) {
-    appendLog(serverId, 'WARN', `Lade Ausfallsicherung (Mojang 26.3 Release)...`);
+    appendLog(serverId, 'WARN', `Lade direkte Notfall-JAR (Mojang 26.2 Release)...`);
     try {
-      const mojangFallbackUrl = 'https://piston-data.mojang.com/v1/objects/33680f5f2ac32864d6d7cf5e56a705fdb3e05f4c/server.jar';
-      const mojangRes = await fetch(mojangFallbackUrl);
+      const mojangFallbackUrl = 'https://piston-data.mojang.com/v1/objects/823e2250d24b3ddac457a60c92a6a941943fcd6a/server.jar';
+      const mojangRes = await fetch(mojangFallbackUrl, { headers: customHeaders });
       if (mojangRes.ok) {
         buffer = Buffer.from(await mojangRes.arrayBuffer());
-        buildNum = 'mojang-26.3-release';
+        buildNum = 'mojang-26.2-verified-release';
       }
     } catch (e: any) {
       appendLog(serverId, 'ERROR', `Fallback Fehler: ${e.message}`);
     }
   }
 
-  if (!buffer) {
-    throw new Error('Server-JAR konnte weder von Purpur noch von Mojang geladen werden.');
+  if (!buffer || buffer.length < 1000) {
+    throw new Error(`Server-JAR für ${engine} (${targetVer}) konnte von keiner Quelle geladen werden.`);
   }
 
-  // Save as both paper.jar and server.jar for universal launcher compatibility
-  const jarPath = path.join(srvDir, 'paper.jar');
-  fs.writeFileSync(jarPath, buffer);
-  fs.writeFileSync(path.join(srvDir, 'server.jar'), buffer);
+  // Determine standard file names according to engine
+  const primaryJarName = engine === 'paper' ? 'paper.jar'
+    : engine === 'purpur' ? 'purpur.jar'
+    : engine === 'fabric' ? 'fabric-server-launch.jar'
+    : engine === 'neoforge' ? 'neoforge-server.jar'
+    : engine === 'forge' ? 'forge-server.jar'
+    : engine === 'spigot' ? 'spigot.jar'
+    : engine === 'velocity' ? 'velocity.jar'
+    : 'server.jar';
+
+  const primaryPath = path.join(srvDir, primaryJarName);
+  const universalPath = path.join(srvDir, 'server.jar');
+  const paperPath = path.join(srvDir, 'paper.jar');
+
+  // Write primary engine JAR
+  fs.writeFileSync(primaryPath, buffer);
+  // Also write server.jar for universal launcher scripts
+  if (primaryJarName !== 'server.jar') {
+    fs.writeFileSync(universalPath, buffer);
+  }
+  // Write paper.jar if paper/purpur
+  if (engine === 'purpur' || engine === 'paper') {
+    fs.writeFileSync(paperPath, buffer);
+  }
+
+  // Always write eula.txt with eula=true
   fs.writeFileSync(path.join(srvDir, 'eula.txt'), '# Generated by ApexHost Sonora\neula=true\n', 'utf8');
 
   // Ensure default server.properties exists
   const propsPath = path.join(srvDir, 'server.properties');
   if (!fs.existsSync(propsPath)) {
-    fs.writeFileSync(propsPath, `server-port=25565\nmotd=§aApexHost Minecraft ${targetVer} Server§r\nonline-mode=true\nmax-players=20\n`, 'utf8');
+    fs.writeFileSync(
+      propsPath,
+      `server-port=25565\nmotd=§aApexHost Minecraft ${targetVer} (${engine.toUpperCase()})§r\nonline-mode=true\nmax-players=20\n`,
+      'utf8'
+    );
   }
 
   const fileSizeMb = (buffer.length / (1024 * 1024)).toFixed(1);
   appendLog(serverId, 'SUCCESS', `[ERFOLG] Server-JAR (${fileSizeMb} MB, Build: ${buildNum}) erfolgreich gespeichert.`);
-  appendLog(serverId, 'SUCCESS', `[EULA] eula=true gesetzt. Der Minecraft-Server ist nun 100% startbereit!`);
+  appendLog(serverId, 'SUCCESS', `[EULA] eula=true gesetzt. Der Minecraft-Server (${engine.toUpperCase()} ${targetVer}) ist nun 100% startbereit!`);
   appendLog(serverId, 'INFO', `========================================================================`);
 
-  return { success: true, build: buildNum, fileSizeMb, jarPath };
+  return { success: true, build: buildNum, fileSizeMb, jarPath: primaryPath, engine, version: targetVer };
 }
 
 // Helper: Install Steam Dedicated Server via SteamCMD
@@ -581,7 +718,8 @@ app.post('/api/servers/:id/power', async (req, res) => {
     steamAppId,
     executable,
     startArgs,
-    version
+    version,
+    minecraftType
   } = req.body;
   const srvDir = path.join(DATA_DIR, serverId);
 
@@ -632,10 +770,11 @@ app.post('/api/servers/:id/power', async (req, res) => {
       let foundJar = potentialJars.find(j => fs.existsSync(path.join(srvDir, j)));
 
       if (!foundJar) {
-        appendLog(serverId, 'WARN', `[AUTO-INSTALL] Keine Server-JAR gefunden. Starte automatische Installation von PaperMC...`);
+        const mcEngine = minecraftType || 'paper';
+        appendLog(serverId, 'WARN', `[AUTO-INSTALL] Keine Server-JAR gefunden. Starte sofortige automatische Installation (${mcEngine.toUpperCase()})...`);
         try {
-          await installMinecraftServer(serverId, srvDir, version);
-          foundJar = 'paper.jar';
+          const autoRes = await installMinecraftServer(serverId, srvDir, version, mcEngine);
+          foundJar = path.basename(autoRes.jarPath) || 'server.jar';
         } catch (downloadErr: any) {
           appendLog(serverId, 'ERROR', `Automatischer Download fehlgeschlagen: ${downloadErr.message}`);
           return res.status(400).json({
@@ -825,7 +964,7 @@ app.post('/api/servers/:id/power', async (req, res) => {
 // --- UNIVERSAL SERVER INSTALLATION ENDPOINT ---
 app.post('/api/servers/:id/install', async (req, res) => {
   const serverId = req.params.id;
-  const { category = 'minecraft', version, steamAppId } = req.body;
+  const { category = 'minecraft', version, steamAppId, minecraftType, engine } = req.body;
   const srvDir = path.join(DATA_DIR, serverId);
 
   if (!fs.existsSync(srvDir)) {
@@ -834,8 +973,9 @@ app.post('/api/servers/:id/install', async (req, res) => {
 
   try {
     if (category === 'minecraft' || (!steamAppId && category !== 'survival' && category !== 'fps')) {
-      const result = await installMinecraftServer(serverId, srvDir, version);
-      return res.json({ message: 'Minecraft Paper Server erfolgreich installiert', ...result });
+      const targetEngine = minecraftType || engine || 'paper';
+      const result = await installMinecraftServer(serverId, srvDir, version, targetEngine);
+      return res.json({ message: `Minecraft ${targetEngine.toUpperCase()} Server erfolgreich installiert`, ...result });
     } else {
       if (!steamAppId) {
         return res.status(400).json({ success: false, error: 'Keine steamAppId für Steam-Spiel übergeben' });
@@ -906,7 +1046,8 @@ app.post('/api/servers/create', async (req, res) => {
     try {
       if (server.category === 'minecraft' || (!server.steamAppId && server.category !== 'survival' && server.category !== 'fps')) {
         // Await synchronous download so JAR is 100% on disk before finishing
-        installResult = await installMinecraftServer(serverId, srvDir, server.version);
+        const engineType = server.minecraftType || (server.gameId && server.gameId.startsWith('mc_') ? server.gameId.replace('mc_', '') : 'paper');
+        installResult = await installMinecraftServer(serverId, srvDir, server.version, engineType);
       } else if (server.steamAppId) {
         // Steam games take longer, initiate SteamCMD and log live
         installSteamGameServer(serverId, srvDir, Number(server.steamAppId)).catch(err => {

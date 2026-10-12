@@ -196,7 +196,16 @@ export default function App() {
 
   const runPower = async (id: string, action: string) => {
     try {
-      const data = await apiRequest('/api/servers/' + id + '/power', 'POST', { action });
+      const srv = servers.find(s => s.id === id);
+      const data = await apiRequest('/api/servers/' + id + '/power', 'POST', {
+        action,
+        version: srv?.version,
+        minecraftType: srv?.minecraftType,
+        category: srv?.category,
+        port: srv?.port,
+        ramGb: srv?.allocatedRamGb,
+        steamAppId: srv?.steamAppId
+      });
       await refreshServers();
       showToast(data.message || 'Aktion bestätigt: ' + action + ' (' + data.status + ')');
     } catch (error: any) { showToast(error.message); await refreshServers().catch(() => {}); }
@@ -291,15 +300,35 @@ export default function App() {
 
 
   const handleCreateNewServer = async (data: Partial<ServerInstance>) => {
-    const server = { ...data, id: 'srv_' + Date.now().toString(36), category: data.category || 'minecraft',
-      targetOS: selectedOS, allocatedRamGb: data.allocatedRamGb || 4, port: data.port || 25565,
-      version: data.version || '1.21.4', minecraftType: data.minecraftType || (data.category === 'minecraft' ? 'paper' : undefined),
-      status: 'offline', uptimeSeconds: 0, installedMods: [], configFiles: {} };
+    const isMc = data.category === 'minecraft' || data.gameId?.startsWith('mc_');
+    const detectedType = data.minecraftType || (data.gameId?.startsWith('mc_') ? data.gameId.replace('mc_', '') : (isMc ? 'paper' : undefined));
+    const server = {
+      ...data,
+      id: 'srv_' + Date.now().toString(36),
+      category: isMc ? 'minecraft' : (data.category || 'survival'),
+      targetOS: selectedOS,
+      allocatedRamGb: data.allocatedRamGb || 4,
+      port: data.port || 25565,
+      version: data.version || '1.21.4',
+      minecraftType: detectedType,
+      status: 'offline',
+      uptimeSeconds: 0,
+      installedMods: [],
+      configFiles: {}
+    };
     try {
-      const result = await apiRequest('/api/servers/create', 'POST', { server, autoInstall: (data as any).autoInstall === true });
-      await refreshServers(); setSelectedServerId(result.serverId); setCurrentNavTab('servers');
-      showToast(result.installationError ? 'Instanz angelegt; Installation fehlgeschlagen: ' + result.installationError : result.requiresInstall ? 'Instanz angelegt. Spieldateien installieren und EULA ausdrücklich akzeptieren.' : 'Instanz und Spieldateien angelegt. Minecraft-EULA ausdrücklich akzeptieren; der Server ist gestoppt.');
-    } catch (error: any) { showToast(error.message); throw error; }
+      const result = await apiRequest('/api/servers/create', 'POST', {
+        server,
+        autoInstall: (data as any).autoInstall !== false
+      });
+      await refreshServers();
+      setSelectedServerId(result.serverId);
+      setCurrentNavTab('servers');
+      showToast(result.error ? `Server angelegt, aber Hinweis: ${result.error}` : `Gameserver "${server.name}" erfolgreich mit Spieldateien bereitgestellt!`);
+    } catch (error: any) {
+      showToast(error.message);
+      throw error;
+    }
   };
 
 
@@ -375,6 +404,9 @@ export default function App() {
     };
 
     setServers([provisionedServer, ...servers]);
+    apiRequest('/api/servers/create', 'POST', { server: provisionedServer, autoInstall: true })
+      .then(() => refreshServers())
+      .catch(() => {});
     setLogsMap(prev => ({
       ...prev,
       [newServerId]: [

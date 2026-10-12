@@ -99,6 +99,7 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
         body: JSON.stringify({
           category: server.category,
           version: server.version,
+          minecraftType: server.minecraftType,
           steamAppId: server.steamAppId,
           port: server.port
         })

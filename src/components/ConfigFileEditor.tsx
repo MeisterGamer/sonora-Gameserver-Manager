@@ -13,16 +13,17 @@ export const ConfigFileEditor: React.FC<ConfigFileEditorProps> = ({
   onSaveConfigFile,
   onOpenJavaModal
 }) => {
-  const fileNames = Object.keys(server.configFiles);
+  const configFiles = server.configFiles || {};
+  const fileNames = Object.keys(configFiles);
   const [selectedFile, setSelectedFile] = useState<string>(fileNames[0] || 'server.properties');
-  const [fileContent, setFileContent] = useState<string>(server.configFiles[selectedFile] || '');
+  const [fileContent, setFileContent] = useState<string>(configFiles[selectedFile] || '');
   const [mode, setMode] = useState<'gui' | 'raw'>('gui');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Sync if selected file changes
   const handleSelectFile = (name: string) => {
     setSelectedFile(name);
-    setFileContent(server.configFiles[name] || '');
+    setFileContent(configFiles[name] || '');
     setSavedSuccess(false);
   };
 

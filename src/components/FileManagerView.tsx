@@ -72,7 +72,7 @@ function getInitialFiles(server: ServerInstance): ServerFileItem[] {
         sizeBytes: 2450, 
         lastModified: now, 
         isEditable: true,
-        content: server.configFiles['server.properties'] || `server-port=${server.port}\nquery.port=${server.queryPort}\nmotd=§aApexHost Minecraft ${server.version} Server§r\nmax-players=${server.maxPlayers}\nonline-mode=true\npvp=true\ndifficulty=hard\nview-distance=10\nsimulation-distance=8\nwhite-list=false\nenable-rcon=true\nrcon.port=25575\nrcon.password=SuperSecretRcon2026` 
+        content: (server.configFiles && server.configFiles['server.properties']) || `server-port=${server.port}\nquery.port=${server.queryPort}\nmotd=§aApexHost Minecraft ${server.version} Server§r\nmax-players=${server.maxPlayers}\nonline-mode=true\npvp=true\ndifficulty=hard\nview-distance=10\nsimulation-distance=8\nwhite-list=false\nenable-rcon=true\nrcon.port=25575\nrcon.password=SuperSecretRcon2026` 
       },
       { 
         name: 'eula.txt', 

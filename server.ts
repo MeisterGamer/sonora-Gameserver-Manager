@@ -1,4 +1,5 @@
 import { ensureJdk, jdkHome, JDK_VERSIONS } from './backend/java';
+import { configureAuth } from './backend/auth';
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -17,6 +18,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// Initialize authentication with persistent credentials in data/
+configureAuth(app, path.resolve(process.cwd(), 'data'));
 
 // Persistent servers root directory on the host
 const DATA_DIR = process.env.APEXHOST_DATA_DIR || path.resolve(process.cwd(), 'data', 'servers');
@@ -837,7 +841,7 @@ app.post('/api/servers/:id/power', async (req, res) => {
       const jdkMajor = getRequiredJdkMajor(version, chosenJava);
       const portableJavaHome = path.join(JDKS_DIR, `jdk-${jdkMajor}`);
       let javaBin = 'java';
-      let runtimeEnv: Record<string, string> = { ...process.env };
+      let runtimeEnv: NodeJS.ProcessEnv = { ...process.env };
 
       if (fs.existsSync(path.join(portableJavaHome, 'bin', 'java'))) {
         javaBin = path.join(portableJavaHome, 'bin', 'java');
@@ -1105,7 +1109,7 @@ app.get('/api/servers', (_req, res) => {
   try {
     let servers = getServerRegistry();
 
-    // Attach real runtime status & files
+    // Attach real runtime status & complete defaults
     const result = servers.map(srv => {
       const isRunning = activeProcesses.has(srv.id);
       const procInfo = activeProcesses.get(srv.id);
@@ -1114,8 +1118,36 @@ app.get('/api/servers', (_req, res) => {
       const hasExec = !!findGameExecutable(srvDir, srv.linuxExecutable);
       const progress = installProgressMap.get(srv.id);
       const isInstalling = !!(progress && progress.percent < 100 && progress.step !== 'done' && progress.step !== 'error');
+      const isMc = srv.category === 'minecraft' || (srv.gameId && srv.gameId.startsWith('mc_'));
 
       return {
+        id: srv.id,
+        name: srv.name || 'Gameserver',
+        category: srv.category || (isMc ? 'minecraft' : 'survival'),
+        gameName: srv.gameName || (isMc ? 'Minecraft Server' : 'Dedicated Server'),
+        gameId: srv.gameId || (isMc ? 'mc_paper' : 'steam_generic'),
+        allocatedRamGb: srv.allocatedRamGb || 4,
+        port: srv.port || 25565,
+        queryPort: srv.queryPort || ((srv.port || 25565) + 1),
+        rconPort: srv.rconPort || 25575,
+        targetOS: srv.targetOS || 'linux',
+        autoRestart: srv.autoRestart ?? true,
+        version: srv.version || '1.21.4',
+        minecraftType: srv.minecraftType || (isMc ? 'paper' : undefined),
+        javaVersion: srv.javaVersion || (isMc ? 'Java 21' : undefined),
+        uptimeSeconds: srv.uptimeSeconds || 0,
+        cpuUsagePercent: srv.cpuUsagePercent || 0,
+        ramUsageMb: srv.ramUsageMb || 0,
+        maxRamMb: srv.maxRamMb || ((srv.allocatedRamGb || 4) * 1024),
+        diskUsageMb: srv.diskUsageMb || 500,
+        networkInKb: srv.networkInKb || 0,
+        networkOutKb: srv.networkOutKb || 0,
+        currentPlayers: srv.currentPlayers || 0,
+        maxPlayers: srv.maxPlayers || (isMc ? 20 : 32),
+        tps: srv.tps || (isMc ? 20.0 : 60.0),
+        installedMods: Array.isArray(srv.installedMods) ? srv.installedMods : [],
+        configFiles: (srv.configFiles && typeof srv.configFiles === 'object') ? srv.configFiles : {},
+        createdAt: srv.createdAt || new Date().toISOString(),
         ...srv,
         status: isRunning ? 'running' : isInstalling ? 'updating' : srv.status === 'starting' ? 'starting' : 'offline',
         isInstalled: hasJar || hasExec,
@@ -1175,7 +1207,35 @@ app.post('/api/servers/create', async (req, res) => {
     }
   }
 
+  const isMc = server.category === 'minecraft' || (server.gameId && server.gameId.startsWith('mc_'));
   const finalServer = {
+    id: serverId,
+    name: server.name || 'Gameserver',
+    category: server.category || (isMc ? 'minecraft' : 'survival'),
+    gameName: server.gameName || (isMc ? 'Minecraft Server' : 'Dedicated Server'),
+    gameId: server.gameId || (isMc ? 'mc_paper' : 'steam_generic'),
+    allocatedRamGb: server.allocatedRamGb || 4,
+    port: server.port || 25565,
+    queryPort: server.queryPort || ((server.port || 25565) + 1),
+    rconPort: server.rconPort || 25575,
+    targetOS: server.targetOS || 'linux',
+    autoRestart: server.autoRestart ?? true,
+    version: server.version || '1.21.4',
+    minecraftType: server.minecraftType || (isMc ? 'paper' : undefined),
+    javaVersion: server.javaVersion || (isMc ? 'Java 21' : undefined),
+    uptimeSeconds: 0,
+    cpuUsagePercent: 0,
+    ramUsageMb: 0,
+    maxRamMb: (server.allocatedRamGb || 4) * 1024,
+    diskUsageMb: 500,
+    networkInKb: 0,
+    networkOutKb: 0,
+    currentPlayers: 0,
+    maxPlayers: server.maxPlayers || (isMc ? 20 : 32),
+    tps: isMc ? 20.0 : 60.0,
+    installedMods: Array.isArray(server.installedMods) ? server.installedMods : [],
+    configFiles: (server.configFiles && typeof server.configFiles === 'object') ? server.configFiles : {},
+    createdAt: server.createdAt || new Date().toISOString(),
     ...server,
     isInstalled: true,
     status: 'offline'

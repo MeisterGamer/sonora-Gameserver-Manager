@@ -80,6 +80,7 @@ import { CRMView } from './components/CRMView';
 import { ExpiryWarningBanner } from './components/ExpiryWarningBanner';
 import { DeleteServerModal } from './components/DeleteServerModal';
 import { SetupWizardModal, SetupWizardResult } from './components/SetupWizardModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 export default function App() {
   const [servers, setServers] = useState<ServerInstance[]>([]);
@@ -132,8 +133,15 @@ export default function App() {
     const requireLogin = () => setIsLoginModalOpen(true);
     window.addEventListener('sonora-login-required', requireLogin);
     apiRequest('/api/auth/session').then(data => {
-      setCurrentUser(data.user); setIsLoginModalOpen(false);
-    }).catch(() => {});
+      if (data && data.user) {
+        setCurrentUser(data.user);
+        setIsLoginModalOpen(false);
+      } else {
+        setIsLoginModalOpen(true);
+      }
+    }).catch(() => {
+      setIsLoginModalOpen(true);
+    });
     return () => window.removeEventListener('sonora-login-required', requireLogin);
   }, []);
   useEffect(() => {
@@ -302,19 +310,39 @@ export default function App() {
   const handleCreateNewServer = async (data: Partial<ServerInstance>) => {
     const isMc = data.category === 'minecraft' || data.gameId?.startsWith('mc_');
     const detectedType = data.minecraftType || (data.gameId?.startsWith('mc_') ? data.gameId.replace('mc_', '') : (isMc ? 'paper' : undefined));
-    const server = {
-      ...data,
-      id: data.id || ('srv_' + Date.now().toString(36)),
+    const serverId = data.id || ('srv_' + Date.now().toString(36));
+    const server: ServerInstance = {
+      id: serverId,
+      name: data.name || 'Gameserver',
       category: isMc ? 'minecraft' : (data.category || 'survival'),
-      targetOS: selectedOS,
+      gameName: data.gameName || (isMc ? 'Minecraft Server' : 'Dedicated Server'),
+      gameId: data.gameId || (isMc ? 'mc_paper' : 'steam_generic'),
+      targetOS: data.targetOS || selectedOS,
       allocatedRamGb: data.allocatedRamGb || 4,
       port: data.port || 25565,
+      queryPort: data.queryPort || ((data.port || 25565) + 1),
+      rconPort: data.rconPort || 25575,
       version: data.version || '1.21.4',
       minecraftType: detectedType,
+      javaVersion: data.javaVersion || (isMc ? 'Java 21' : undefined),
+      steamAppId: data.steamAppId,
+      linuxExecutable: data.linuxExecutable,
+      linuxStartArgs: data.linuxStartArgs,
+      autoRestart: data.autoRestart ?? true,
       status: 'offline',
       uptimeSeconds: 0,
-      installedMods: [],
-      configFiles: {}
+      cpuUsagePercent: 0,
+      ramUsageMb: 0,
+      maxRamMb: (data.allocatedRamGb || 4) * 1024,
+      diskUsageMb: 500,
+      networkInKb: 0,
+      networkOutKb: 0,
+      currentPlayers: 0,
+      maxPlayers: data.maxPlayers || (isMc ? 20 : 32),
+      tps: isMc ? 20.0 : 60.0,
+      installedMods: data.installedMods || [],
+      configFiles: data.configFiles || {},
+      createdAt: new Date().toISOString()
     };
     try {
       const result = await apiRequest('/api/servers/create', 'POST', {
@@ -322,7 +350,7 @@ export default function App() {
         autoInstall: (data as any).autoInstall !== false
       });
       await refreshServers();
-      setSelectedServerId(result.serverId);
+      setSelectedServerId(result.serverId || serverId);
       setCurrentNavTab('servers');
       showToast(result.error ? `Server angelegt, aber Hinweis: ${result.error}` : `Gameserver "${server.name}" erfolgreich mit Spieldateien bereitgestellt!`);
     } catch (error: any) {
@@ -863,6 +891,7 @@ export default function App() {
 
       {/* Main Content Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+        <ErrorBoundary fallbackTitle="Fehler beim Laden dieser Ansicht" onReset={() => setSelectedServerId(null)}>
         {currentNavTab === 'servers' && (
           selectedServer ? (
             <ServerDetail
@@ -980,6 +1009,7 @@ export default function App() {
         {currentNavTab === 'crossplatform' && (
           <CrossPlatformView selectedServer={selectedServer || servers[0]} />
         )}
+        </ErrorBoundary>
       </main>
 
       {/* Footer */}
@@ -999,46 +1029,56 @@ export default function App() {
       </footer>
 
       {/* Modals */}
-      <CreateServerModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        availableGames={availableGames}
-        preselectedGame={preselectedGame}
-        currentOS={selectedOS}
-        adminSettings={adminSettings}
-        onCreateServer={handleCreateNewServer}
-      />
+      {isCreateModalOpen && (
+        <CreateServerModal
+          isOpen={isCreateModalOpen}
+          onClose={() => setIsCreateModalOpen(false)}
+          availableGames={availableGames}
+          preselectedGame={preselectedGame}
+          currentOS={selectedOS}
+          adminSettings={adminSettings}
+          onCreateServer={handleCreateNewServer}
+        />
+      )}
 
-      <CustomGameModal
-        isOpen={isCustomGameModalOpen}
-        onClose={() => setIsCustomGameModalOpen(false)}
-        onSave={handleSaveCustomGame}
-      />
+      {isCustomGameModalOpen && (
+        <CustomGameModal
+          isOpen={isCustomGameModalOpen}
+          onClose={() => setIsCustomGameModalOpen(false)}
+          onSave={handleSaveCustomGame}
+        />
+      )}
 
-      <LoginModal
-        isOpen={isLoginModalOpen}
-        onClose={() => setIsLoginModalOpen(false)}
-        users={users}
-        currentUser={currentUser}
-        onSelectUser={handleSelectUser}
-        onRegisterUser={handleRegisterUser}
-      />
+      {isLoginModalOpen && (
+        <LoginModal
+          isOpen={isLoginModalOpen}
+          onClose={() => setIsLoginModalOpen(false)}
+          users={users}
+          currentUser={currentUser}
+          onSelectUser={handleSelectUser}
+          onRegisterUser={handleRegisterUser}
+        />
+      )}
 
-      <DeleteServerModal
-        isOpen={Boolean(serverToDelete)}
-        server={serverToDelete}
-        onClose={() => setServerToDelete(null)}
-        onConfirmDelete={handleConfirmDeleteServer}
-      />
+      {serverToDelete && (
+        <DeleteServerModal
+          isOpen={Boolean(serverToDelete)}
+          server={serverToDelete}
+          onClose={() => setServerToDelete(null)}
+          onConfirmDelete={handleConfirmDeleteServer}
+        />
+      )}
 
-      <SetupWizardModal
-        isOpen={isSetupWizardOpen}
-        onClose={() => setIsSetupWizardOpen(false)}
-        currentSettings={adminSettings}
-        currentOS={selectedOS}
-        currentUser={currentUser}
-        onCompleteSetup={handleCompleteSetupWizard}
-      />
+      {isSetupWizardOpen && (
+        <SetupWizardModal
+          isOpen={isSetupWizardOpen}
+          onClose={() => setIsSetupWizardOpen(false)}
+          currentSettings={adminSettings}
+          currentOS={selectedOS}
+          currentUser={currentUser}
+          onCompleteSetup={handleCompleteSetupWizard}
+        />
+      )}
     </div>
   );
 }

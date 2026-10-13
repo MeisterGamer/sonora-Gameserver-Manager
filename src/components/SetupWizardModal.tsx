@@ -83,8 +83,6 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
   currentUser,
   onCompleteSetup
 }) => {
-  if (!isOpen) return null;
-
   const [currentStep, setCurrentStep] = useState<number>(1);
   const totalSteps = 6;
 
@@ -122,7 +120,7 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
   // Step 4: Admin Account & Security
   const [adminUsername, setAdminUsername] = useState(currentUser.username || 'AdminOwner');
   const [adminEmail, setAdminEmail] = useState(currentUser.email || 'admin@apexhost.cloud');
-  const [adminPassword, setAdminPassword] = useState('ApexSecureAdmin2026!');
+  const [adminPassword, setAdminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [enable2FA, setEnable2FA] = useState(false);
   const [welcomeBonus, setWelcomeBonus] = useState(25);
@@ -141,6 +139,8 @@ export const SetupWizardModal: React.FC<SetupWizardModalProps> = ({
   const [installLogs, setInstallLogs] = useState<string[]>([]);
   const [isCompleted, setIsCompleted] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  if (!isOpen) return null;
 
   // Re-run system check
   const handleRescanSystem = () => {

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { User, Shield, Key, Users, Plus, Trash2, Check, Lock, Copy, RefreshCw } from 'lucide-react';
+import { User, Shield, Key, Users, Plus, Trash2, Check, Lock, Copy, RefreshCw, AlertTriangle } from 'lucide-react';
 import { UserAccount, SubUser, PermissionKey } from '../types/auth';
 import { ServerInstance } from '../types/game';
+import { apiRequest } from '../services/api';
 
 interface UserControlViewProps {
   currentUser: UserAccount;
@@ -25,6 +26,39 @@ export const UserControlView: React.FC<UserControlViewProps> = ({
   const [activeTab, setActiveTab] = useState<'profile' | 'subusers' | 'api'>('subusers');
   const [copiedToken, setCopiedToken] = useState(false);
   const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [currentPwd, setCurrentPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [pwdError, setPwdError] = useState('');
+  const [pwdBusy, setPwdBusy] = useState(false);
+
+  const handleChangePassword = async () => {
+    if (!currentPwd || !newPwd) {
+      setPwdError('Bitte aktuelles und neues Passwort eingeben.');
+      return;
+    }
+    if (newPwd.length < 8) {
+      setPwdError('Das neue Passwort muss mindestens 8 Zeichen lang sein.');
+      return;
+    }
+    setPwdError('');
+    setPasswordSuccess(false);
+    setPwdBusy(true);
+    try {
+      const res = await apiRequest('/api/auth/change-password', 'POST', {
+        currentPassword: currentPwd,
+        newPassword: newPwd
+      });
+      if (res.success) {
+        setPasswordSuccess(true);
+        setCurrentPwd('');
+        setNewPwd('');
+      }
+    } catch (err: any) {
+      setPwdError(err.message || 'Passwort konnte nicht geändert werden.');
+    } finally {
+      setPwdBusy(false);
+    }
+  };
 
   // New SubUser modal state
   const [showAddSubUserModal, setShowAddSubUserModal] = useState(false);
@@ -235,22 +269,33 @@ export const UserControlView: React.FC<UserControlViewProps> = ({
               <input
                 type="password"
                 placeholder="Aktuelles Passwort"
-                className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded text-neutral-200"
+                value={currentPwd}
+                onChange={e => setCurrentPwd(e.target.value)}
+                className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded text-neutral-200 font-mono"
               />
               <input
                 type="password"
-                placeholder="Neues Passwort"
-                className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded text-neutral-200"
+                placeholder="Neues Passwort (mind. 8 Zeichen)"
+                value={newPwd}
+                onChange={e => setNewPwd(e.target.value)}
+                className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded text-neutral-200 font-mono"
               />
+              {pwdError && (
+                <p role="alert" className="text-xs text-rose-400 bg-rose-950/40 p-2 rounded border border-rose-800/50">
+                  {pwdError}
+                </p>
+              )}
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setPasswordSuccess(true)}
-                  className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded cursor-pointer transition-colors"
+                  type="button"
+                  disabled={pwdBusy}
+                  onClick={handleChangePassword}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded cursor-pointer transition-colors"
                 >
-                  Passwort speichern
+                  {pwdBusy ? 'Wird gespeichert…' : 'Passwort aktualisieren'}
                 </button>
                 {passwordSuccess && (
-                  <span className="text-xs text-emerald-400 flex items-center gap-1">
+                  <span className="text-xs text-emerald-400 flex items-center gap-1 font-medium">
                     <Check className="w-3.5 h-3.5" /> Passwort erfolgreich aktualisiert
                   </span>
                 )}

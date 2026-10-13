@@ -50,6 +50,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
   const [isProvisioning, setIsProvisioning] = useState<boolean>(false);
   const [provisionProgress, setProvisionProgress] = useState<number>(15);
   const [provisionStepText, setProvisionStepText] = useState<string>('Bereite Server vor...');
+  const [provisionError, setProvisionError] = useState<string | null>(null);
 
   // Minecraft specific
   const [mcVersion, setMcVersion] = useState<string>(currentSettings.defaultMinecraftVersion || '1.21.4');
@@ -94,8 +95,6 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
     }
   };
 
-  const [provisionError, setProvisionError] = useState<string | null>(null);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!instanceName.trim() || !activeGame) return;
@@ -136,8 +135,8 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
       maxPlayers: isMinecraft ? 20 : 32,
       tps: isMinecraft ? 20.0 : 60.0,
       installedMods: [],
-      configFiles: activeGame.configFiles.reduce((acc, f) => {
-        acc[f.name] = f.defaultContent;
+      configFiles: (activeGame?.configFiles || []).reduce((acc, f) => {
+        if (f && f.name) acc[f.name] = f.defaultContent || '';
         return acc;
       }, {} as Record<string, string>)
     };
@@ -415,13 +414,13 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
                   <span>Minecraft Runtime: <strong>100% autark</strong> (Kein Steam erforderlich)</span>
                 ) : (
                   <span>
-                    Steam-Betriebsmodus: <strong className="text-neutral-100 uppercase">{currentSettings.steamMode.replace('_', ' ')}</strong> (Offline-Bypass aktiv)
+                    Steam-Betriebsmodus: <strong className="text-neutral-100 uppercase">{currentSettings?.steamMode ? currentSettings.steamMode.replace('_', ' ') : 'OFFLINE'}</strong> (Offline-Bypass aktiv)
                   </span>
                 )}
               </span>
             </div>
             <span className="text-[10px] text-neutral-500 font-mono">
-              {currentSettings.steamOfflineBypass ? 'Bypass: AN' : 'Bypass: AUS'}
+              {currentSettings?.steamOfflineBypass ? 'Bypass: AN' : 'Bypass: AUS'}
             </span>
           </div>
 
@@ -571,7 +570,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             <p className="text-[11px] text-neutral-400 pl-6">
               {isMinecraft 
                 ? 'Lädt automatisch die offizielle PaperMC Server-JAR herunter und akzeptiert die EULA, damit der Server sofort gestartet werden kann.' 
-                : activeGame.steamAppId 
+                : activeGame?.steamAppId 
                 ? `Installiert das Spiel automatisch via SteamCMD (AppID: ${activeGame.steamAppId}) direkt auf deinen Server.` 
                 : 'Initialisiert das Server-Verzeichnis und alle Standard-Konfigurationsdateien.'}
             </p>
@@ -594,6 +593,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

@@ -23,8 +23,6 @@ export const CustomModUploadModal: React.FC<CustomModUploadModalProps> = ({
   onClose,
   onInstallUploadedMod
 }) => {
-  if (!isOpen) return null;
-
   const [fileName, setFileName] = useState('');
   const [modName, setModName] = useState('');
   const [fileSize, setFileSize] = useState('3.8 MB');
@@ -32,6 +30,8 @@ export const CustomModUploadModal: React.FC<CustomModUploadModalProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState('');
+
+  if (!isOpen) return null;
 
   const handleSimulateFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

@@ -111,13 +111,29 @@ export const ServerList: React.FC<ServerListProps> = ({
     }
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (srv: ServerInstance) => {
+    if (srv.installProgress && srv.installProgress.percent < 100) {
+      return (
+        <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
+          <RotateCw className="w-3 h-3 text-amber-400 animate-spin" />
+          <span>Installation ({srv.installProgress.percent}%)</span>
+        </span>
+      );
+    }
+    const status = srv.status;
     switch (status) {
       case 'running':
         return (
           <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span>Online</span>
+          </span>
+        );
+      case 'updating':
+        return (
+          <span className="flex items-center gap-1.5 text-xs text-sky-400 font-medium">
+            <RotateCw className="w-3 h-3 text-sky-400 animate-spin" />
+            <span>Wird aktualisiert...</span>
           </span>
         );
       case 'starting':
@@ -353,7 +369,7 @@ export const ServerList: React.FC<ServerListProps> = ({
                         >
                           {server.name}
                         </button>
-                        {getStatusBadge(server.status)}
+                        {getStatusBadge(server)}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400 mt-1">
@@ -367,6 +383,24 @@ export const ServerList: React.FC<ServerListProps> = ({
                         <span>·</span>
                         <span className="font-mono text-emerald-400/90 font-medium">v{server.version}</span>
                       </div>
+
+                      {server.installProgress && server.installProgress.percent < 100 && (
+                        <div className="mt-2 w-full max-w-md bg-neutral-950 border border-amber-500/40 rounded-lg p-2 space-y-1.5 animate-in fade-in">
+                          <div className="flex items-center justify-between text-[11px] font-mono">
+                            <span className="text-amber-300 font-semibold flex items-center gap-1.5 truncate">
+                              <RotateCw className="w-3 h-3 animate-spin text-amber-400 shrink-0" />
+                              <span className="truncate">{server.installProgress.message || 'Wird eingerichtet...'}</span>
+                            </span>
+                            <span className="text-amber-400 font-bold ml-2 shrink-0">{server.installProgress.percent}%</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-neutral-900 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 rounded-full transition-all duration-300"
+                              style={{ width: `${Math.max(5, server.installProgress.percent)}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 

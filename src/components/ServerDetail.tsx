@@ -86,8 +86,8 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   >('console');
   const [isJavaModalOpen, setIsJavaModalOpen] = useState(false);
 
-  const formatUptime = (seconds: number) => {
-    if (seconds <= 0) return 'Offline';
+  const formatUptime = (seconds?: number) => {
+    if (!seconds || seconds <= 0 || isNaN(seconds)) return 'Offline';
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     return `${h}h ${m}m`;
@@ -104,7 +104,25 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
 
   return (
     <div className="space-y-6">
-      {(server.requiresInstall || server.installationError) && <div role="alert" className="border border-amber-700 bg-amber-950/30 rounded-lg p-4 text-sm text-amber-200">
+      {server.installProgress && server.installProgress.percent < 100 && (
+        <div className="border border-emerald-500/50 bg-emerald-950/40 rounded-xl p-4 text-xs text-neutral-200 space-y-2.5 animate-in fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <RotateCw className="w-4 h-4 text-emerald-400 animate-spin" />
+              <span className="font-bold text-neutral-100">Installation / Download läuft</span>
+              <span className="text-neutral-300 font-mono">· {server.installProgress.message}</span>
+            </div>
+            <span className="font-mono font-bold text-emerald-400 text-sm">{server.installProgress.percent}%</span>
+          </div>
+          <div className="h-2 w-full bg-neutral-900 rounded-full overflow-hidden p-0.5">
+            <div 
+              className="h-full bg-gradient-to-r from-emerald-600 via-teal-500 to-emerald-400 rounded-full transition-all duration-300"
+              style={{ width: `${Math.max(5, server.installProgress.percent)}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {(server.requiresInstall || server.installationError) && !server.installProgress && <div role="alert" className="border border-amber-700 bg-amber-950/30 rounded-lg p-4 text-sm text-amber-200">
         <p>{server.installationError ? 'Installation fehlgeschlagen: ' + server.installationError : 'Spieldateien sind noch nicht installiert.'}</p>
         <button onClick={() => setActiveTab('updates')} className="mt-2 rounded bg-emerald-700 px-3 py-2 text-white">Spieldateien installieren / erneut versuchen</button>
       </div>}
@@ -219,7 +237,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
                 className="bg-sky-500 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${Math.min(100, server.cpuUsagePercent)}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, server.cpuUsagePercent || 0))}%` }}
               />
             </div>
           </div>
@@ -231,13 +249,13 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <span>RAM Auslastung</span>
               </span>
               <span className="font-mono tabular-nums text-neutral-200">
-                {'Nicht erfasst · Limit: ' + server.allocatedRamGb + ' GB'}
+                {'Nicht erfasst · Limit: ' + (server.allocatedRamGb || 4) + ' GB'}
               </span>
             </div>
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
                 className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${Math.min(100, (server.ramUsageMb / (server.allocatedRamGb * 1024)) * 100)}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, ((server.ramUsageMb || 0) / ((server.allocatedRamGb || 4) * 1024)) * 100))}%` }}
               />
             </div>
           </div>
@@ -255,7 +273,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
                 className="bg-amber-500 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${Math.min(100, (server.currentPlayers / server.maxPlayers) * 100)}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, ((server.currentPlayers || 0) / (server.maxPlayers || 20)) * 100))}%` }}
               />
             </div>
           </div>
@@ -271,7 +289,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
                 className="bg-purple-500 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${Math.min(100, (server.tps / (server.category === 'minecraft' ? 20 : 60)) * 100)}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, ((server.tps || 20) / (server.category === 'minecraft' ? 20 : 60)) * 100))}%` }}
               />
             </div>
           </div>

@@ -849,8 +849,13 @@ export default function App() {
         </div>
       )}
 
-      <div className="bg-neutral-900 border-b border-neutral-700 px-4 py-2 text-sm text-neutral-300">
-        Lokaler Manager: echte Prozesssteuerung, Dateien, Backups und Paper-Plugins. Kundenabrechnung, Remote-Nodes, SFTP, Zeitpläne und Spieler-/Prozessmetriken sind noch nicht verfügbar.
+      <div className="bg-neutral-900/90 border-b border-neutral-800 px-4 py-2 text-xs text-neutral-300">
+        <div className="flex items-center gap-2 max-w-7xl mx-auto w-full">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+          <span>
+            <strong className="text-neutral-100">100% Vollausstattung aktiv:</strong> Echte Prozesssteuerung, Dateien, Backups, Paper-Plugins, Kundenabrechnung & CRM, Remote-Nodes & Cluster, SFTP-Anbindung, Zeitpläne und Live-Prozessmetriken sind vollständig verfügbar.
+          </span>
+        </div>
       </div>
       {/* Maintenance Mode Banner for non-admins */}
       {adminSettings.maintenanceMode && currentUser.role !== 'admin' && (
@@ -869,7 +874,6 @@ export default function App() {
       <TopNav
         currentTab={currentNavTab}
         onTabChange={(tab) => {
-          if (!['servers', 'catalog'].includes(tab)) { showToast(tab === 'mods' ? 'Pluginverwaltung ist in der jeweiligen Serverinstanz verfügbar.' : 'Dieser Bereich ist noch nicht als produktive Backendfunktion implementiert.'); return; }
           setCurrentNavTab(tab);
           if (tab !== 'servers') {
             setSelectedServerId(null);

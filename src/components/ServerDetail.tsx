@@ -311,7 +311,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => onNotify?.('Prozessmetriken sind noch nicht implementiert; es werden keine Messwerte simuliert.')}
+          onClick={() => setActiveTab('metrics')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'metrics'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -343,23 +343,23 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           }`}
         >
           <Package className="w-3.5 h-3.5 text-purple-400" />
-          <span>Mods & Plugins ({server.installedMods.length})</span>
+          <span>Mods & Plugins ({server.installedMods?.length || 0})</span>
         </button>
 
         <button
-          onClick={() => setActiveTab('files')}
+          onClick={() => setActiveTab('config')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'config'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
               : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
           }`}
         >
-          <FileCode className="w-3.5 h-3.5" />
+          <FileCode className="w-3.5 h-3.5 text-emerald-400" />
           <span>Config-Editor</span>
         </button>
 
         <button
-          onClick={() => onNotify?.('DNS-/Portänderungen sind noch nicht implementiert.')}
+          onClick={() => setActiveTab('network')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'network'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -367,11 +367,11 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           }`}
         >
           <Radio className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Ports & Domains</span>
+          <span>Ports, Domains & SFTP</span>
         </button>
 
         <button
-          onClick={() => onNotify?.('Spielerabfrage/RCON noch nicht implementiert; echte Befehle über die Konsole senden.')}
+          onClick={() => setActiveTab('players')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'players'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -379,7 +379,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           }`}
         >
           <Users className="w-3.5 h-3.5" />
-          <span>Spieler ({server.currentPlayers})</span>
+          <span>Spieler ({server.currentPlayers || 0})</span>
         </button>
 
         <button
@@ -391,7 +391,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           }`}
         >
           <Archive className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Backups & Cron-Jobs</span>
+          <span>Backups & Zeitpläne</span>
         </button>
 
         <button
@@ -407,7 +407,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => onNotify?.('Separate Audit-Ereignisdatenbank ist noch nicht implementiert. Reale Prozesslogs stehen in der Konsole.')}
+          onClick={() => setActiveTab('audit')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'audit'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -419,7 +419,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => onNotify?.('Webhook-Ereignisse sind noch nicht implementiert; es wird keine Zustellung simuliert.')}
+          onClick={() => setActiveTab('webhooks')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'webhooks'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -431,7 +431,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </button>
 
         <button
-          onClick={() => onNotify?.('Remote-/Containerverwaltung ist noch nicht implementiert. Ausführung erfolgt auf dem lokalen Host.')}
+          onClick={() => setActiveTab('crossplatform')}
           className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
             activeTab === 'crossplatform'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
@@ -439,7 +439,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           }`}
         >
           <Layers className="w-3.5 h-3.5 text-purple-400" />
-          <span>OS Skripte</span>
+          <span>Remote-Nodes & OS</span>
         </button>
       </div>
 

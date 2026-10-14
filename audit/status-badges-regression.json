@@ -1,0 +1,19 @@
+{
+  "checks": [
+    "ServerList has Installation Failed badge text",
+    "ServerList has Installing... badge text",
+    "ServerList imports AlertCircle and AlertTriangle",
+    "ServerList has progress bar for installing servers",
+    "ServerList has error message and retry button in item card",
+    "ServerDetail has renderStatusBadge helper",
+    "ServerDetail has Installation Failed badge in header",
+    "ServerDetail has Installing... badge in header",
+    "ServerDetail has handleRetryInstall action",
+    "ServerDetail has prominent Installation Failed banner",
+    "ServerDetail has real-time Installing banner",
+    "server.ts computes isInstalling flag",
+    "server.ts computes isInstallFailed flag",
+    "server.ts exports isInstalling and isInstallFailed"
+  ],
+  "passed": true
+}

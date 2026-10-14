@@ -23,7 +23,9 @@ import {
   DownloadCloud,
   ShieldAlert,
   Bell,
-  Coffee
+  Coffee,
+  AlertCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { ServerInstance, LogMessage, ModItem, JavaVersion } from '../types/game';
 import { ConsoleView } from './ConsoleView';
@@ -85,12 +87,43 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
     'console' | 'metrics' | 'files' | 'mods' | 'config' | 'network' | 'players' | 'backups' | 'updates' | 'audit' | 'webhooks' | 'crossplatform'
   >('console');
   const [isJavaModalOpen, setIsJavaModalOpen] = useState(false);
+  const [isRetryingInstall, setIsRetryingInstall] = useState(false);
 
   const formatUptime = (seconds?: number) => {
     if (!seconds || seconds <= 0 || isNaN(seconds)) return 'Offline';
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     return `${h}h ${m}m`;
+  };
+
+  const isFailed = server.installProgress?.step === 'error' || server.isInstallFailed || !!server.installationError;
+  const isInstalling = (!isFailed && server.installProgress && server.installProgress.percent < 100 && server.installProgress.step !== 'done') || (server.isInstalling && !isFailed);
+
+  const handleRetryInstall = async () => {
+    setIsRetryingInstall(true);
+    try {
+      const res = await fetch(`/api/servers/${server.id}/install`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: server.category,
+          version: server.version,
+          minecraftType: server.minecraftType,
+          steamAppId: server.steamAppId,
+          port: server.port
+        })
+      });
+      const data = await res.json();
+      if (res.ok && (data.success || data.jarPath)) {
+        onNotify?.(data.message || 'Installation gestartet.');
+      } else {
+        onNotify?.('Fehler: ' + (data.error || 'Installation fehlgeschlagen'));
+      }
+    } catch (e: any) {
+      onNotify?.('Netzwerkfehler: ' + e.message);
+    } finally {
+      setIsRetryingInstall(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -102,30 +135,143 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
     }
   };
 
+  const renderStatusBadge = () => {
+    if (isFailed) {
+      return (
+        <span 
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/40 shadow-sm shadow-rose-950/40 uppercase tracking-wider"
+          title={server.installationError || server.installProgress?.message || 'Installation fehlgeschlagen'}
+        >
+          <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+          <span>Installation Failed</span>
+        </span>
+      );
+    }
+
+    if (isInstalling) {
+      const pct = server.installProgress?.percent ?? 15;
+      return (
+        <span 
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/40 shadow-sm shadow-amber-950/40 animate-pulse uppercase tracking-wider"
+          title={server.installProgress?.message || 'Server-Dateien werden eingerichtet...'}
+        >
+          <RotateCw className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" />
+          <span>Installing... {pct}%</span>
+        </span>
+      );
+    }
+
+    return (
+      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border uppercase tracking-wider ${getStatusColor(server.status)}`}>
+        {server.status}
+      </span>
+    );
+  };
+
   return (
     <div className="space-y-6">
-      {server.installProgress && server.installProgress.percent < 100 && (
-        <div className="border border-emerald-500/50 bg-emerald-950/40 rounded-xl p-4 text-xs text-neutral-200 space-y-2.5 animate-in fade-in">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <RotateCw className="w-4 h-4 text-emerald-400 animate-spin" />
-              <span className="font-bold text-neutral-100">Installation / Download läuft</span>
-              <span className="text-neutral-300 font-mono">· {server.installProgress.message}</span>
+      {/* 1. Installing Banner */}
+      {isInstalling && server.installProgress && (
+        <div className="border border-amber-500/50 bg-amber-950/30 rounded-xl p-4 text-xs text-neutral-200 space-y-2.5 animate-in fade-in shadow-md shadow-amber-950/30">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0">
+                <RotateCw className="w-4 h-4 text-amber-400 animate-spin" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-neutral-100 text-sm">Deployment & Installation läuft</span>
+                  <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    Installing...
+                  </span>
+                </div>
+                <p className="text-neutral-300 text-xs truncate mt-0.5 font-mono">
+                  {server.installProgress.message || 'Lade Spieldateien herunter und konfiguriere Laufzeitumgebung...'}
+                </p>
+              </div>
             </div>
-            <span className="font-mono font-bold text-emerald-400 text-sm">{server.installProgress.percent}%</span>
+            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+              <span className="font-mono font-bold text-amber-400 text-base">{server.installProgress.percent}%</span>
+            </div>
           </div>
-          <div className="h-2 w-full bg-neutral-900 rounded-full overflow-hidden p-0.5">
+          <div className="h-2 w-full bg-neutral-900 rounded-full overflow-hidden p-0.5 border border-neutral-800">
             <div 
-              className="h-full bg-gradient-to-r from-emerald-600 via-teal-500 to-emerald-400 rounded-full transition-all duration-300"
+              className="h-full bg-gradient-to-r from-amber-500 via-yellow-400 to-emerald-400 rounded-full transition-all duration-300 shadow-sm"
               style={{ width: `${Math.max(5, server.installProgress.percent)}%` }}
             />
           </div>
         </div>
       )}
-      {(server.requiresInstall || server.installationError) && !server.installProgress && <div role="alert" className="border border-amber-700 bg-amber-950/30 rounded-lg p-4 text-sm text-amber-200">
-        <p>{server.installationError ? 'Installation fehlgeschlagen: ' + server.installationError : 'Spieldateien sind noch nicht installiert.'}</p>
-        <button onClick={() => setActiveTab('updates')} className="mt-2 rounded bg-emerald-700 px-3 py-2 text-white">Spieldateien installieren / erneut versuchen</button>
-      </div>}
+
+      {/* 2. Installation Failed Banner */}
+      {isFailed && (
+        <div role="alert" className="border border-rose-500/50 bg-rose-950/30 rounded-xl p-4 text-xs text-neutral-200 space-y-3 animate-in fade-in shadow-md shadow-rose-950/30">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-rose-500/20 border border-rose-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                <AlertCircle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-bold text-rose-200 text-sm">Installation fehlgeschlagen</h3>
+                  <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                    Installation Failed
+                  </span>
+                </div>
+                <p className="text-rose-300/90 text-xs leading-relaxed font-mono break-words bg-neutral-950/60 p-2.5 rounded border border-rose-900/50">
+                  {server.installationError || server.installProgress?.message || 'Die Spieldateien konnten nicht erfolgreich eingerichtet werden.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-rose-900/40">
+            <button
+              onClick={handleRetryInstall}
+              disabled={isRetryingInstall}
+              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-sm flex items-center gap-1.5"
+            >
+              <RotateCw className={`w-3.5 h-3.5 ${isRetryingInstall ? 'animate-spin' : ''}`} />
+              <span>{isRetryingInstall ? 'Wird gestartet...' : 'Installation jetzt wiederholen'}</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('updates')}
+              className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg text-xs font-medium cursor-pointer transition-colors flex items-center gap-1.5"
+            >
+              <DownloadCloud className="w-3.5 h-3.5" />
+              <span>Im Update-Manager ansehen</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('console')}
+              className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg text-xs font-medium cursor-pointer transition-colors flex items-center gap-1.5"
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span>Fehlerprotokoll in Konsole öffnen</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Uninstalled Notice (not failed, not installing) */}
+      {!isFailed && !isInstalling && server.requiresInstall && (
+        <div role="alert" className="border border-amber-700/60 bg-amber-950/25 rounded-xl p-4 text-xs text-amber-200 space-y-2 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <DownloadCloud className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="font-semibold text-neutral-100">Spieldateien sind noch nicht installiert</span>
+          </div>
+          <p className="text-neutral-400 text-xs">
+            Für diese Server-Instanz wurden noch keine Binärdateien eingerichtet. Starte die Installation, um den Server online zu schalten.
+          </p>
+          <button 
+            onClick={() => setActiveTab('updates')} 
+            className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer transition-colors shadow-sm shadow-emerald-600/20"
+          >
+            <DownloadCloud className="w-3.5 h-3.5" />
+            <span>Spieldateien jetzt einrichten</span>
+          </button>
+        </div>
+      )}
+
       {/* Top Header Bar */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -141,9 +287,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-lg font-bold text-neutral-100 tracking-tight">{server.name}</h1>
-                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded border uppercase tracking-wider ${getStatusColor(server.status)}`}>
-                  {server.status}
-                </span>
+                {renderStatusBadge()}
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400 mt-1">
                 <span className="font-medium text-neutral-300">{server.gameName}</span>

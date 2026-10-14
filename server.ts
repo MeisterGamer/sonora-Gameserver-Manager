@@ -1518,7 +1518,10 @@ app.get('/api/servers', (_req, res) => {
                      fs.existsSync(path.join(srvDir, 'spigot.jar'));
       const hasExec = !!findGameExecutable(srvDir, srv.linuxExecutable);
       const progress = installProgressMap.get(srv.id);
+      const isInstalled = hasJar || hasExec;
       const isInstalling = !!(progress && progress.percent < 100 && progress.step !== 'done' && progress.step !== 'error');
+      const isInstallFailed = progress?.step === 'error' || (!isInstalled && !!srv.installationError);
+      const installError = progress?.step === 'error' ? progress.message : srv.installationError || undefined;
       const isMc = srv.category === 'minecraft' || (srv.gameId && srv.gameId.startsWith('mc_'));
 
       return {
@@ -1551,8 +1554,12 @@ app.get('/api/servers', (_req, res) => {
         createdAt: srv.createdAt || new Date().toISOString(),
         ...srv,
         status: isRunning ? 'running' : isInstalling ? 'updating' : srv.status === 'starting' ? 'starting' : 'offline',
-        isInstalled: hasJar || hasExec,
+        isInstalled,
+        isInstalling,
+        isInstallFailed,
+        installationError: installError,
         installProgress: progress,
+        requiresInstall: !isInstalled && !isInstalling,
         pid: procInfo ? procInfo.pid : null
       };
     });

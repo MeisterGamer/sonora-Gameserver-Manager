@@ -95,6 +95,9 @@ export interface ServerInstance {
   autoRestart: boolean;
   version: string;
   requiresInstall?: boolean;
+  isInstalled?: boolean;
+  isInstalling?: boolean;
+  isInstallFailed?: boolean;
   installationError?: string;
   installedBuild?: number;
   allowExperimental?: boolean;

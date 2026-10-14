@@ -18,7 +18,10 @@ import {
   Filter,
   CheckCircle2,
   HardDrive,
-  Sparkles
+  Sparkles,
+  AlertCircle,
+  AlertTriangle,
+  DownloadCloud
 } from 'lucide-react';
 import { ServerInstance } from '../types/game';
 
@@ -112,26 +115,55 @@ export const ServerList: React.FC<ServerListProps> = ({
   };
 
   const getStatusBadge = (srv: ServerInstance) => {
-    if (srv.installProgress && srv.installProgress.percent < 100) {
+    const isFailed = srv.installProgress?.step === 'error' || srv.isInstallFailed || !!srv.installationError;
+    const isInstalling = (!isFailed && srv.installProgress && srv.installProgress.percent < 100 && srv.installProgress.step !== 'done') || (srv.isInstalling && !isFailed);
+
+    if (isFailed) {
       return (
-        <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
-          <RotateCw className="w-3 h-3 text-amber-400 animate-spin" />
-          <span>Installation ({srv.installProgress.percent}%)</span>
+        <span 
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/40 shadow-sm shadow-rose-950/30"
+          title={srv.installationError || srv.installProgress?.message || 'Installation fehlgeschlagen'}
+        >
+          <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+          <span>Installation Failed</span>
         </span>
       );
     }
+
+    if (isInstalling) {
+      const pct = srv.installProgress?.percent ?? 15;
+      return (
+        <span 
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/40 shadow-sm shadow-amber-950/30 animate-pulse"
+          title={srv.installProgress?.message || 'Server-Dateien werden eingerichtet...'}
+        >
+          <RotateCw className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" />
+          <span>Installing... {pct}%</span>
+        </span>
+      );
+    }
+
+    if (srv.requiresInstall && !srv.isInstalled) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-orange-500/10 text-orange-300 border border-orange-500/30">
+          <DownloadCloud className="w-3 h-3 text-orange-400 shrink-0" />
+          <span>Nicht installiert</span>
+        </span>
+      );
+    }
+
     const status = srv.status;
     switch (status) {
       case 'running':
         return (
-          <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span>Online</span>
           </span>
         );
       case 'updating':
         return (
-          <span className="flex items-center gap-1.5 text-xs text-sky-400 font-medium">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-semibold text-sky-400 bg-sky-500/10 border border-sky-500/20">
             <RotateCw className="w-3 h-3 text-sky-400 animate-spin" />
             <span>Wird aktualisiert...</span>
           </span>
@@ -139,15 +171,15 @@ export const ServerList: React.FC<ServerListProps> = ({
       case 'starting':
       case 'stopping':
         return (
-          <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
             <span className="capitalize">{status}</span>
           </span>
         );
       default:
         return (
-          <span className="flex items-center gap-1.5 text-xs text-neutral-500 font-medium">
-            <span className="w-2 h-2 rounded-full bg-neutral-600" />
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium text-neutral-400 bg-neutral-800/40 border border-neutral-700/50">
+            <span className="w-1.5 h-1.5 rounded-full bg-neutral-500" />
             <span>Offline</span>
           </span>
         );
@@ -384,23 +416,56 @@ export const ServerList: React.FC<ServerListProps> = ({
                         <span className="font-mono text-emerald-400/90 font-medium">v{server.version}</span>
                       </div>
 
-                      {server.installProgress && server.installProgress.percent < 100 && (
-                        <div className="mt-2 w-full max-w-md bg-neutral-950 border border-amber-500/40 rounded-lg p-2 space-y-1.5 animate-in fade-in">
-                          <div className="flex items-center justify-between text-[11px] font-mono">
-                            <span className="text-amber-300 font-semibold flex items-center gap-1.5 truncate">
-                              <RotateCw className="w-3 h-3 animate-spin text-amber-400 shrink-0" />
-                              <span className="truncate">{server.installProgress.message || 'Wird eingerichtet...'}</span>
-                            </span>
-                            <span className="text-amber-400 font-bold ml-2 shrink-0">{server.installProgress.percent}%</span>
-                          </div>
-                          <div className="h-1.5 w-full bg-neutral-900 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 rounded-full transition-all duration-300"
-                              style={{ width: `${Math.max(5, server.installProgress.percent)}%` }}
-                            />
-                          </div>
-                        </div>
-                      )}
+                      {/* Real-time installation or error box */}
+                      {(() => {
+                        const isFailed = server.installProgress?.step === 'error' || server.isInstallFailed || !!server.installationError;
+                        const isInstalling = (!isFailed && server.installProgress && server.installProgress.percent < 100 && server.installProgress.step !== 'done') || (server.isInstalling && !isFailed);
+
+                        if (isInstalling && server.installProgress) {
+                          return (
+                            <div className="mt-2.5 w-full max-w-md bg-neutral-950 border border-amber-500/40 rounded-lg p-2.5 space-y-1.5 animate-in fade-in shadow-sm shadow-amber-950/20">
+                              <div className="flex items-center justify-between text-[11px] font-mono">
+                                <span className="text-amber-300 font-semibold flex items-center gap-1.5 truncate">
+                                  <RotateCw className="w-3.5 h-3.5 animate-spin text-amber-400 shrink-0" />
+                                  <span className="truncate">{server.installProgress.message || 'Wird eingerichtet...'}</span>
+                                </span>
+                                <span className="text-amber-400 font-bold ml-2 shrink-0">{server.installProgress.percent}%</span>
+                              </div>
+                              <div className="h-1.5 w-full bg-neutral-900 rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 rounded-full transition-all duration-300"
+                                  style={{ width: `${Math.max(5, server.installProgress.percent)}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        if (isFailed) {
+                          return (
+                            <div className="mt-2.5 w-full max-w-lg bg-rose-950/30 border border-rose-500/40 rounded-lg p-2.5 flex items-center justify-between gap-3 text-xs animate-in fade-in shadow-sm shadow-rose-950/20">
+                              <div className="flex items-center gap-2 text-rose-300 min-w-0">
+                                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                                <span className="truncate text-[11px] font-medium">
+                                  {server.installationError || server.installProgress?.message || 'Installation fehlgeschlagen. Bitte erneut versuchen.'}
+                                </span>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectServer(server);
+                                }}
+                                className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/40 rounded text-[11px] font-semibold cursor-pointer transition-colors shrink-0 flex items-center gap-1"
+                              >
+                                <RotateCw className="w-3 h-3" />
+                                <span>Details & Neuversuch</span>
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        return null;
+                      })()}
                     </div>
                   </div>
 

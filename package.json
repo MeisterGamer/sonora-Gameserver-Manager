@@ -12,7 +12,7 @@
     "clean": "node scripts/clean.mjs",
     "lint": "tsc --noEmit",
     "admin:reset": "tsx scripts/reset-admin.ts",
-    "test": "node audit/frontend-regression.mjs && node audit/installer-regression.mjs && node audit/java-regression.mjs && node audit/launch-regression.mjs && node audit/forge-neoforge-regression.mjs"
+    "test": "node audit/frontend-regression.mjs && node audit/installer-regression.mjs && node audit/java-regression.mjs && node audit/launch-regression.mjs && node audit/forge-neoforge-regression.mjs && node audit/status-badges-regression.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

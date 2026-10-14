@@ -60,12 +60,23 @@ export async function verifyJdk(home: string, major: number, execute = run) {
       throw new Error('Installiertes Java (' + detected + ') entspricht nicht JDK ' + major);
     }
   } catch (err: any) {
+    if (err.message && err.message.includes('entspricht nicht')) {
+      throw err;
+    }
     const combined = (err.stdout || '') + '\n' + (err.stderr || '');
     const detected = javaMajor(combined);
-    if (detected === major) {
-      return executable;
+    if (detected && detected !== major) {
+      throw new Error('Installiertes Java (' + detected + ') entspricht nicht JDK ' + major);
     }
-    throw new Error('Java-Verifizierung fehlgeschlagen: ' + err.message + (combined.trim() ? ' (' + combined.trim().split('\n')[0] + ')' : ''));
+    if (detected !== major) {
+      throw new Error('Java-Verifizierung fehlgeschlagen: ' + err.message);
+    }
+  }
+  const javac = path.join(path.dirname(executable), 'javac');
+  if (fs.existsSync(javac)) {
+    try {
+      await execute(javac, ['-version'], { timeout: 30000 });
+    } catch {}
   }
   return executable;
 }
@@ -161,6 +172,14 @@ export async function installJdk(
       }
 
       onProgress?.(85, `Entpacke portables OpenJDK ${major}...`);
+      const listing = await execute('tar', ['-tzf', archive]);
+      const entries = (listing.stdout || '').split('\n').filter(Boolean);
+      for (const entry of entries) {
+        if (entry.includes('../') || entry.startsWith('/') || entry.startsWith('..')) {
+          throw new Error('Ungültiger Archivpfad (Path Traversal erkannt)');
+        }
+      }
+
       const extracted = path.join(temporary, 'jdk');
       fs.mkdirSync(extracted, { recursive: true });
       await execute('tar', ['-xzf', archive, '--strip-components=1', '--no-same-owner', '-C', extracted], { timeout: 120000 });

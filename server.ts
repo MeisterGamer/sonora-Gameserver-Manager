@@ -8,7 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
-import { exec, spawn, ChildProcess } from 'child_process';
+import { exec, execSync, spawn, ChildProcess } from 'child_process';
 import net from 'net';
 
 dotenv.config();
@@ -401,6 +401,105 @@ async function installMinecraftServer(
     }
   }
 
+  // 1D. NeoForge Strategy (MCJars pre-packaged server or official NeoForged Maven)
+  if (!buffer && engine === 'neoforge') {
+    try {
+      appendLog(serverId, 'INFO', `[NEOFORGE] Suche NeoForge Serverpaket für Minecraft ${targetVer}...`);
+      const mcjarsRes = await fetch(`https://mcjars.app/api/v1/builds/NEOFORGE`, { headers: customHeaders, signal: AbortSignal.timeout(15000) });
+      if (mcjarsRes.ok) {
+        const data: any = await mcjarsRes.json();
+        const verObj = data.versions?.[targetVer] || data.versions?.[Object.keys(data.versions || {}).slice(-1)[0]];
+        const downloadUrl = verObj?.latest?.zipUrl || verObj?.latest?.jarUrl;
+        if (downloadUrl) {
+          appendLog(serverId, 'INFO', `[NEOFORGE] Lade vorbereitetes NeoForge Server-Paket (inkl. Libraries) von ${downloadUrl}...`);
+          const dlRes = await fetch(downloadUrl, { headers: customHeaders, signal: AbortSignal.timeout(60000) });
+          if (dlRes.ok) {
+            buffer = Buffer.from(await dlRes.arrayBuffer());
+            buildNum = `neoforge-${targetVer}-${verObj?.latest?.name || 'latest'}`;
+            appendLog(serverId, 'SUCCESS', `[NEOFORGE] NeoForge Serverpaket erfolgreich geladen.`);
+          }
+        }
+      }
+    } catch (err: any) {
+      appendLog(serverId, 'WARN', `NeoForge MCJars Abfragehinweis: ${err.message}`);
+    }
+
+    if (!buffer) {
+      try {
+        appendLog(serverId, 'INFO', `[NEOFORGE MAVEN] Frage offizielle NeoForged Maven Releases ab...`);
+        const mavenRes = await fetch('https://maven.neoforged.net/api/maven/versions/releases/net/neoforged/neoforge', { headers: customHeaders, signal: AbortSignal.timeout(15000) });
+        if (mavenRes.ok) {
+          const mavenData: any = await mavenRes.json();
+          const allVers: string[] = Array.isArray(mavenData.versions) ? mavenData.versions : [];
+          // Match version prefix (e.g. 26.3 or 21.1 or 20.4)
+          const cleanVer = targetVer.startsWith('1.') ? targetVer.slice(2) : targetVer;
+          const matchedNf = allVers.filter(v => v.startsWith(cleanVer) || v.startsWith(targetVer)).pop() || allVers.slice(-1)[0];
+          if (matchedNf) {
+            const instUrl = `https://maven.neoforged.net/releases/net/neoforged/neoforge/${matchedNf}/neoforge-${matchedNf}-installer.jar`;
+            appendLog(serverId, 'INFO', `[NEOFORGE MAVEN] Lade offiziellen NeoForge Installer (${matchedNf})...`);
+            const dlRes = await fetch(instUrl, { headers: customHeaders, signal: AbortSignal.timeout(60000) });
+            if (dlRes.ok) {
+              buffer = Buffer.from(await dlRes.arrayBuffer());
+              buildNum = `neoforge-installer-${matchedNf}`;
+              appendLog(serverId, 'SUCCESS', `[NEOFORGE MAVEN] NeoForge Installer erfolgreich geladen.`);
+            }
+          }
+        }
+      } catch (err: any) {
+        appendLog(serverId, 'WARN', `NeoForge Maven Fehler: ${err.message}`);
+      }
+    }
+  }
+
+  // 1E. Forge Strategy (MCJars pre-packaged server or official MinecraftForge Maven)
+  if (!buffer && engine === 'forge') {
+    try {
+      appendLog(serverId, 'INFO', `[FORGE] Suche Minecraft Forge Serverpaket für Version ${targetVer}...`);
+      const mcjarsRes = await fetch(`https://mcjars.app/api/v1/builds/FORGE`, { headers: customHeaders, signal: AbortSignal.timeout(15000) });
+      if (mcjarsRes.ok) {
+        const data: any = await mcjarsRes.json();
+        const verObj = data.versions?.[targetVer] || data.versions?.[Object.keys(data.versions || {}).slice(-1)[0]];
+        // Prioritize zipUrl to ensure full Forge server runtime with libraries is used!
+        const downloadUrl = verObj?.latest?.zipUrl || verObj?.latest?.jarUrl;
+        if (downloadUrl) {
+          appendLog(serverId, 'INFO', `[FORGE] Lade vorbereitetes Forge Server-Paket von ${downloadUrl}...`);
+          const dlRes = await fetch(downloadUrl, { headers: customHeaders, signal: AbortSignal.timeout(60000) });
+          if (dlRes.ok) {
+            buffer = Buffer.from(await dlRes.arrayBuffer());
+            buildNum = `forge-${targetVer}-${verObj?.latest?.name || 'latest'}`;
+            appendLog(serverId, 'SUCCESS', `[FORGE] Forge Serverpaket erfolgreich geladen.`);
+          }
+        }
+      }
+    } catch (err: any) {
+      appendLog(serverId, 'WARN', `Forge MCJars Abfragehinweis: ${err.message}`);
+    }
+
+    if (!buffer) {
+      try {
+        appendLog(serverId, 'INFO', `[FORGE PROMOTIONS] Frage offizielle MinecraftForge Promotions ab...`);
+        const promoRes = await fetch('https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json', { headers: customHeaders, signal: AbortSignal.timeout(15000) });
+        if (promoRes.ok) {
+          const promoData: any = await promoRes.json();
+          const buildKey = `${targetVer}-recommended` in (promoData.promos || {}) ? `${targetVer}-recommended` : `${targetVer}-latest`;
+          const forgeBuild = promoData.promos?.[buildKey];
+          if (forgeBuild) {
+            const instUrl = `https://maven.minecraftforge.net/net/minecraftforge/forge/${targetVer}-${forgeBuild}/forge-${targetVer}-${forgeBuild}-installer.jar`;
+            appendLog(serverId, 'INFO', `[FORGE MAVEN] Lade offiziellen Forge Installer (${targetVer}-${forgeBuild})...`);
+            const dlRes = await fetch(instUrl, { headers: customHeaders, signal: AbortSignal.timeout(60000) });
+            if (dlRes.ok) {
+              buffer = Buffer.from(await dlRes.arrayBuffer());
+              buildNum = `forge-installer-${targetVer}-${forgeBuild}`;
+              appendLog(serverId, 'SUCCESS', `[FORGE MAVEN] Forge Installer erfolgreich geladen.`);
+            }
+          }
+        }
+      } catch (err: any) {
+        appendLog(serverId, 'WARN', `Forge Promotions Fehler: ${err.message}`);
+      }
+    }
+  }
+
   // STRATEGY 2: UNIVERSAL MCJARS REPOSITORY (Unterstützt Paper, Purpur, Fabric, NeoForge, Forge, Spigot, Vanilla)
   if (!buffer) {
     try {
@@ -410,14 +509,17 @@ async function installMinecraftServer(
       if (mcjarsRes.ok) {
         const data: any = await mcjarsRes.json();
         const verObj = data.versions?.[targetVer] || data.versions?.[Object.keys(data.versions || {}).slice(-1)[0]];
-        const jarUrl = verObj?.latest?.jarUrl || verObj?.latest?.zipUrl;
+        // Prioritize zipUrl for forge/neoforge
+        const jarUrl = (engine === 'forge' || engine === 'neoforge')
+          ? (verObj?.latest?.zipUrl || verObj?.latest?.jarUrl)
+          : (verObj?.latest?.jarUrl || verObj?.latest?.zipUrl);
         if (jarUrl) {
-          appendLog(serverId, 'INFO', `[MCJARS] Lade JAR von ${jarUrl}...`);
+          appendLog(serverId, 'INFO', `[MCJARS] Lade ${jarUrl.endsWith('.zip') ? 'Server-Archiv' : 'JAR'} von ${jarUrl}...`);
           const jarRes = await fetch(jarUrl, { headers: customHeaders });
           if (jarRes.ok) {
             buffer = Buffer.from(await jarRes.arrayBuffer());
             buildNum = `mcjars-${mcjarsType}-${targetVer}`;
-            appendLog(serverId, 'SUCCESS', `[MCJARS] JAR für ${mcjarsType} erfolgreich geladen.`);
+            appendLog(serverId, 'SUCCESS', `[MCJARS] Daten für ${mcjarsType} erfolgreich geladen.`);
           }
         }
       }
@@ -492,15 +594,66 @@ async function installMinecraftServer(
   const universalPath = path.join(srvDir, 'server.jar');
   const paperPath = path.join(srvDir, 'paper.jar');
 
-  // Write primary engine JAR
-  fs.writeFileSync(primaryPath, buffer);
-  // Also write server.jar for universal launcher scripts
-  if (primaryJarName !== 'server.jar') {
-    fs.writeFileSync(universalPath, buffer);
+  // Check if downloaded buffer is a ZIP archive (starts with PK\x03\x04)
+  const isZipArchive = buffer && buffer.length > 4 && buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04;
+  if (isZipArchive) {
+    appendLog(serverId, 'INFO', `[ARCHIV] Entpacke ${engine.toUpperCase()} Serverpaket (${(buffer.length / (1024 * 1024)).toFixed(1)} MB)...`);
+    const tempZip = path.join(srvDir, `.pkg_${Date.now()}.zip`);
+    fs.writeFileSync(tempZip, buffer);
+    try {
+      execSync(`unzip -o -q "${tempZip}" -d "${srvDir}"`, { stdio: 'ignore' });
+      appendLog(serverId, 'SUCCESS', `[ARCHIV] Alle ${engine.toUpperCase()} Dateien & Libraries erfolgreich entpackt.`);
+    } catch {
+      try {
+        execSync(`python3 -c "import zipfile; zipfile.ZipFile('${tempZip}').extractall('${srvDir}')"`, { stdio: 'ignore' });
+        appendLog(serverId, 'SUCCESS', `[ARCHIV] Dateien via Python zipfile erfolgreich entpackt.`);
+      } catch (extractErr: any) {
+        appendLog(serverId, 'WARN', `Fehler beim Entpacken des ZIP-Archivs: ${extractErr.message}`);
+      }
+    }
+    try { fs.unlinkSync(tempZip); } catch {}
+
+    // Ensure server.jar and primaryJarName are both present and synchronized
+    if (fs.existsSync(universalPath)) {
+      if (primaryJarName !== 'server.jar' && !fs.existsSync(primaryPath)) {
+        try { fs.copyFileSync(universalPath, primaryPath); } catch {}
+      }
+    } else if (fs.existsSync(primaryPath)) {
+      try { fs.copyFileSync(primaryPath, universalPath); } catch {}
+    }
+  } else {
+    // Single JAR executable (e.g. Paper, Purpur, Vanilla)
+    fs.writeFileSync(primaryPath, buffer);
+    if (primaryJarName !== 'server.jar') {
+      fs.writeFileSync(universalPath, buffer);
+    }
+    if (engine === 'purpur' || engine === 'paper') {
+      fs.writeFileSync(paperPath, buffer);
+    }
   }
-  // Write paper.jar if paper/purpur
-  if (engine === 'purpur' || engine === 'paper') {
-    fs.writeFileSync(paperPath, buffer);
+
+  // If this was an installer jar without server.jar ready yet, run the installer
+  const isInstaller = (typeof buildNum === 'string' && buildNum.includes('installer')) || primaryJarName.includes('installer');
+  if (isInstaller && !fs.existsSync(universalPath) && !fs.existsSync(primaryPath)) {
+    appendLog(serverId, 'INFO', `[INSTALLER] Führe automatische Server-Installation durch...`);
+    try {
+      execSync(`java -jar "${primaryPath}" --installServer "${srvDir}"`, { cwd: srvDir, stdio: 'ignore', timeout: 120000 });
+      appendLog(serverId, 'SUCCESS', `[INSTALLER] Server-Installation erfolgreich abgeschlossen.`);
+    } catch (instErr: any) {
+      appendLog(serverId, 'WARN', `Hinweis zur Installer-Ausführung: ${instErr.message}`);
+    }
+  }
+
+  // Write user_jvm_args.txt for Forge and NeoForge
+  if (engine === 'forge' || engine === 'neoforge') {
+    const userJvmArgsPath = path.join(srvDir, 'user_jvm_args.txt');
+    if (!fs.existsSync(userJvmArgsPath)) {
+      fs.writeFileSync(
+        userJvmArgsPath,
+        `# Sonora Gameserver Manager - JVM Flags für ${engine.toUpperCase()}\n-Xms1G\n-Xmx4G\n-XX:+UseG1GC\n-XX:+ParallelRefProcEnabled\n`,
+        'utf8'
+      );
+    }
   }
 
   // Always write eula.txt with eula=true
@@ -517,9 +670,9 @@ async function installMinecraftServer(
   }
 
   const fileSizeMb = (buffer.length / (1024 * 1024)).toFixed(1);
-  appendLog(serverId, 'SUCCESS', `[ERFOLG] Server-JAR (${fileSizeMb} MB, Build: ${buildNum}) erfolgreich gespeichert.`);
+  appendLog(serverId, 'SUCCESS', `[ERFOLG] Server-Software (${fileSizeMb} MB, Build: ${buildNum}) erfolgreich gespeichert.`);
   appendLog(serverId, 'SUCCESS', `[EULA] eula=true gesetzt.`);
-  setInstallProgress(serverId, 50, 'jar_ready', `Server-JAR (${fileSizeMb} MB) erfolgreich gespeichert.`);
+  setInstallProgress(serverId, 50, 'jar_ready', `Server-Software (${fileSizeMb} MB) erfolgreich gespeichert.`);
 
   // --- AUTOMATIC PORTABLE JAVA INSTALLATION ---
   const jdkMajor = getRequiredJdkMajor(targetVer, requestedJava);
@@ -532,6 +685,11 @@ async function installMinecraftServer(
   if (fs.existsSync(portableJavaBin)) {
     setInstallProgress(serverId, 90, 'java_ready', `Portables JDK ${jdkMajor} ist bereits einsatzbereit.`);
     appendLog(serverId, 'SUCCESS', `[JAVA RUNTIME] Portables JDK ${jdkMajor} bereits vorhanden (${portableJavaBin}).`);
+    try {
+      if (!fs.existsSync('/usr/local/bin/java')) {
+        fs.symlinkSync(portableJavaBin, '/usr/local/bin/java');
+      }
+    } catch {}
   } else {
     setInstallProgress(serverId, 60, 'download_java', `Lade portables JDK ${jdkMajor} für Linux x64 herunter...`);
     appendLog(serverId, 'INFO', `[JAVA RUNTIME] Lade portables OpenJDK ${jdkMajor} herunter und richte es ein...`);
@@ -542,17 +700,25 @@ async function installMinecraftServer(
       });
       setInstallProgress(serverId, 92, 'java_ready', `Portables JDK ${jdkMajor} erfolgreich eingerichtet & verifiziert.`);
       appendLog(serverId, 'SUCCESS', `[JAVA RUNTIME] Portables JDK ${jdkMajor} erfolgreich eingerichtet: ${portableJavaBin}`);
+      try {
+        if (!fs.existsSync('/usr/local/bin/java')) {
+          fs.symlinkSync(portableJavaBin, '/usr/local/bin/java');
+        }
+      } catch {}
     } catch (jdkErr: any) {
       appendLog(serverId, 'WARN', `[JAVA HINWEIS] Portables JDK ${jdkMajor} Download-Hinweis: ${jdkErr.message}. Fallback auf Host-Java.`);
     }
   }
 
-  // Create standalone start.sh referencing portable java
+  // Create standalone start.sh & run.sh referencing portable java
   try {
     const startShPath = path.join(srvDir, 'start.sh');
+    const runShPath = path.join(srvDir, 'run.sh');
     const startShContent = `#!/usr/bin/env bash\n# Sonora Gameserver Start Script\nexport JAVA_HOME="${portableJavaHome}"\nexport PATH="$JAVA_HOME/bin:$PATH"\nexec "${portableJavaBin}" -Xmx4G -Xms1G -XX:+UseG1GC -jar "${primaryJarName}" nogui "$@"\n`;
     fs.writeFileSync(startShPath, startShContent, 'utf8');
     fs.chmodSync(startShPath, 0o755);
+    fs.writeFileSync(runShPath, startShContent, 'utf8');
+    fs.chmodSync(runShPath, 0o755);
   } catch {}
 
   setInstallProgress(serverId, 100, 'done', `Gameserver (${engine.toUpperCase()} ${targetVer}) und Java ${jdkMajor} sind startbereit!`);
@@ -1087,7 +1253,16 @@ app.post('/api/servers/:id/power', async (req, res) => {
       }
 
       // 2. Check for JAR file - AUTO-INSTALL IF MISSING!
-      const potentialJars = ['paper.jar', 'server.jar', 'purpur.jar', 'fabric-server-launch.jar', 'neoforge-server.jar', 'forge-server.jar', 'spigot.jar'];
+      const engineKey = (minecraftType || currentSrv?.minecraftType || '').toLowerCase();
+      let preferredJars: string[] = [];
+      if (engineKey.includes('neoforge')) preferredJars = ['neoforge-server.jar', 'server.jar'];
+      else if (engineKey.includes('forge')) preferredJars = ['forge-server.jar', 'server.jar'];
+      else if (engineKey.includes('fabric')) preferredJars = ['fabric-server-launch.jar', 'server.jar'];
+      else if (engineKey.includes('purpur')) preferredJars = ['purpur.jar', 'paper.jar', 'server.jar'];
+      else if (engineKey.includes('spigot')) preferredJars = ['spigot.jar', 'server.jar'];
+      else preferredJars = ['paper.jar', 'server.jar'];
+
+      const potentialJars = [...preferredJars, 'paper.jar', 'server.jar', 'purpur.jar', 'fabric-server-launch.jar', 'neoforge-server.jar', 'forge-server.jar', 'spigot.jar'];
       let foundJar = potentialJars.find(j => fs.existsSync(path.join(srvDir, j)));
 
       if (!foundJar) {
@@ -1334,7 +1509,13 @@ app.get('/api/servers', (_req, res) => {
       const isRunning = activeProcesses.has(srv.id);
       const procInfo = activeProcesses.get(srv.id);
       const srvDir = path.join(DATA_DIR, srv.id);
-      const hasJar = fs.existsSync(path.join(srvDir, 'paper.jar')) || fs.existsSync(path.join(srvDir, 'server.jar'));
+      const hasJar = fs.existsSync(path.join(srvDir, 'paper.jar')) || 
+                     fs.existsSync(path.join(srvDir, 'server.jar')) || 
+                     fs.existsSync(path.join(srvDir, 'neoforge-server.jar')) || 
+                     fs.existsSync(path.join(srvDir, 'forge-server.jar')) || 
+                     fs.existsSync(path.join(srvDir, 'fabric-server-launch.jar')) || 
+                     fs.existsSync(path.join(srvDir, 'purpur.jar')) || 
+                     fs.existsSync(path.join(srvDir, 'spigot.jar'));
       const hasExec = !!findGameExecutable(srvDir, srv.linuxExecutable);
       const progress = installProgressMap.get(srv.id);
       const isInstalling = !!(progress && progress.percent < 100 && progress.step !== 'done' && progress.step !== 'error');
@@ -1958,6 +2139,78 @@ app.get('/api/servers/:id/install/progress', (req, res) => {
     timestamp: Date.now()
   };
   res.json({ success: true, progress });
+});
+
+// --- ENGINE INSTALLER VERSIONS ENDPOINT ---
+app.get('/api/installers/:engine/versions', async (req, res) => {
+  const engine = (req.params.engine || 'paper').toLowerCase().replace('mc_', '');
+  const customHeaders = { 'User-Agent': 'Sonora-Gameserver-Manager/2.0' };
+  try {
+    if (engine === 'neoforge') {
+      try {
+        const mcjarsRes = await fetch('https://mcjars.app/api/v1/builds/NEOFORGE', { headers: customHeaders, signal: AbortSignal.timeout(6000) });
+        if (mcjarsRes.ok) {
+          const data: any = await mcjarsRes.json();
+          const list = Object.keys(data.versions || {}).reverse();
+          if (list.length > 0) {
+            return res.json({ success: true, engine: 'neoforge', versions: list });
+          }
+        }
+      } catch {}
+      return res.json({ success: true, engine: 'neoforge', versions: ['26.3', '1.21.4', '1.21.1', '1.20.6', '1.20.4'] });
+    }
+    if (engine === 'forge') {
+      try {
+        const mcjarsRes = await fetch('https://mcjars.app/api/v1/builds/FORGE', { headers: customHeaders, signal: AbortSignal.timeout(6000) });
+        if (mcjarsRes.ok) {
+          const data: any = await mcjarsRes.json();
+          const list = Object.keys(data.versions || {}).reverse();
+          if (list.length > 0) {
+            return res.json({ success: true, engine: 'forge', versions: list });
+          }
+        }
+      } catch {}
+      return res.json({ success: true, engine: 'forge', versions: ['26.3', '1.21.1', '1.20.4', '1.20.1', '1.19.4', '1.18.2', '1.16.5', '1.12.2'] });
+    }
+    if (engine === 'fabric') {
+      try {
+        const r = await fetch('https://meta.fabricmc.net/v2/versions/game', { headers: customHeaders, signal: AbortSignal.timeout(6000) });
+        if (r.ok) {
+          const d: any = await r.json();
+          const list = d.filter((v: any) => v.stable).map((v: any) => v.version);
+          if (list.length > 0) {
+            return res.json({ success: true, engine: 'fabric', versions: list.slice(0, 25) });
+          }
+        }
+      } catch {}
+      return res.json({ success: true, engine: 'fabric', versions: ['26.3', '1.21.4', '1.21.1', '1.20.4', '1.19.4', '1.18.2', '1.16.5'] });
+    }
+    if (engine === 'purpur') {
+      try {
+        const r = await fetch('https://api.purpurmc.org/v2/purpur', { headers: customHeaders, signal: AbortSignal.timeout(6000) });
+        if (r.ok) {
+          const d: any = await r.json();
+          if (Array.isArray(d.versions) && d.versions.length > 0) {
+            return res.json({ success: true, engine: 'purpur', versions: [...d.versions].reverse() });
+          }
+        }
+      } catch {}
+      return res.json({ success: true, engine: 'purpur', versions: ['26.3', '1.21.4', '1.21.1', '1.20.4', '1.19.4', '1.18.2', '1.16.5'] });
+    }
+    // Default: Paper / Vanilla
+    try {
+      const r = await fetch('https://fill.papermc.io/v3/projects/paper', { headers: customHeaders, signal: AbortSignal.timeout(6000) });
+      if (r.ok) {
+        const d: any = await r.json();
+        if (Array.isArray(d.versions) && d.versions.length > 0) {
+          return res.json({ success: true, engine: 'paper', versions: [...d.versions].reverse() });
+        }
+      }
+    } catch {}
+    return res.json({ success: true, engine: 'paper', versions: ['26.3', '1.21.4', '1.21.1', '1.20.4', '1.19.4', '1.18.2', '1.16.5'] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message, versions: ['26.3', '1.21.4', '1.21.1', '1.20.4'] });
+  }
 });
 
 // Mount Vite middleware in development or serve static in production

@@ -17,7 +17,7 @@ export function requiredPaperJava(version: string) {
   return minor >= 12 ? 11 : 8;
 }
 export function installerSupport(game: { id: string; category: string }, os: string) {
-  if (game.category === 'minecraft') return ['mc_paper', 'mc_purpur', 'mc_vanilla'].includes(game.id) ? '' : 'Für diese Engine fehlt ein eigener Installer';
+  if (game.category === 'minecraft') return ['mc_paper', 'mc_purpur', 'mc_vanilla', 'mc_fabric', 'mc_forge', 'mc_neoforge', 'mc_spigot'].includes(game.id) ? '' : 'Für diese Engine fehlt ein eigener Installer';
   if (os !== 'linux') return 'Steam-Installer derzeit nur für Linux';
   return STEAM_INSTALLERS[game.id] ? '' : 'Dedicated-Download und Linux-Startadapter noch nicht verifiziert';
 }

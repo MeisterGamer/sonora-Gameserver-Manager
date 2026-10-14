@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "Network/start failure has no fabricated success",
+    "Stop failure is reported instead of simulated exit",
+    "UI restart requests atomic backend restart",
+    "UI kill actually calls backend",
+    "Failed create does not invent/select an instance",
+    "Login sends password and preserves rejected state",
+    "File save failure cannot show saved confirmation"
+  ],
+  "servicesStarted": false,
+  "browsersStarted": false
+}

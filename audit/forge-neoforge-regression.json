@@ -1,0 +1,20 @@
+{
+  "checks": [
+    "installerSupport accepts mc_forge",
+    "installerSupport accepts mc_neoforge",
+    "installerSupport accepts mc_fabric",
+    "installerSupport accepts mc_paper",
+    "Forge definition exists in MINECRAFT_TYPES",
+    "Forge supports mods",
+    "Forge has 26.3 and 1.20.1 in versions",
+    "NeoForge definition exists in MINECRAFT_TYPES",
+    "NeoForge supports mods",
+    "NeoForge has 26.3 and 1.21.4 in versions",
+    "Server jar exists in srvDir",
+    "Libraries directory exists in srvDir",
+    "user_jvm_args.txt is present for Forge/NeoForge",
+    "start.sh is executable",
+    "NeoForge finds neoforge-server.jar or server.jar"
+  ],
+  "passed": true
+}

@@ -1,0 +1,30 @@
+{
+  "checks": [
+    "paper uses matching JAR and selected JDK",
+    "paper exports the same arguments as actual backend launch",
+    "paper Windows launch uses explicit JAVA_HOME and correct JAR",
+    "purpur uses matching JAR and selected JDK",
+    "purpur exports the same arguments as actual backend launch",
+    "purpur Windows launch uses explicit JAVA_HOME and correct JAR",
+    "vanilla uses matching JAR and selected JDK",
+    "vanilla exports the same arguments as actual backend launch",
+    "vanilla Windows launch uses explicit JAVA_HOME and correct JAR",
+    "Linux switches to script directory before launch",
+    "Linux derives installation root without opt",
+    "Selected JDK 26 is retained in exported script",
+    "Server name cannot inject shell commands",
+    "EULA is required before exported Linux start",
+    "Fractional RAM is represented in MiB",
+    "Standalone service uses real installation folder",
+    "Generated game WorkingDirectory is an unquoted absolute path",
+    "Unknown installation path never generates a false unit",
+    "Incompatible runtime rejected Java 21",
+    "Incompatible runtime rejected Java 27",
+    "Incompatible runtime rejected Zulu 21+",
+    "Native launcher uses verified executable and quoted arguments",
+    "Valheim has per-instance saves and library path",
+    "Unsupported native adapter fails explicitly",
+    "Unverified Docker deployment has no fake Java 21 image"
+  ],
+  "processesStarted": false
+}

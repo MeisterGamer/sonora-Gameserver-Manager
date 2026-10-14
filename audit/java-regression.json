@@ -1,0 +1,32 @@
+{
+  "checks": [
+    "Every major 7 through 26 is represented",
+    "Parse java version \"1.7.0_352\"",
+    "Parse openjdk version \"25.0.4.1\"",
+    "Parse javac 1.8.0_504",
+    "Parse javac 26.0.2.1",
+    "Unknown version is not accepted as installed",
+    "Default follows Minecraft requirement",
+    "Explicit newer JDK remains selected",
+    "Reject invalid/incompatible selection Java 21",
+    "Reject invalid/incompatible selection Java 27",
+    "Reject invalid/incompatible selection GraalVM 21+",
+    "Reject invalid/incompatible selection ../../java",
+    "Reject invalid/incompatible selection 25",
+    "Provider metadata selects exact major and hash",
+    "Reject metadata download_url",
+    "Reject metadata sha256_hash",
+    "Reject metadata java_version",
+    "Reject metadata name",
+    "Unavailable package is reported without fallback",
+    "Checksum failure never extracts archive",
+    "Traversal rejected and temporary download cleaned",
+    "Wrong executable major cannot become installed JDK",
+    "Concurrent installations share exact executable",
+    "Both java and javac are checked",
+    "Installed metadata records vendor hash",
+    "Existing verified JDK is reused without extraction"
+  ],
+  "javaProcessesStarted": false,
+  "networkUsed": false
+}

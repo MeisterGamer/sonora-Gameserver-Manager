@@ -204,7 +204,7 @@ export default function App() {
 
   const runPower = async (id: string, action: string) => {
     try {
-      const srv = servers.find(s => s.id === id);
+      const srv = typeof servers !== 'undefined' ? servers?.find(s => s.id === id) : undefined;
       const data = await apiRequest('/api/servers/' + id + '/power', 'POST', {
         action,
         version: srv?.version,

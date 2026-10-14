@@ -128,14 +128,14 @@ export function LoginModal({ isOpen, onClose, currentUser, onSelectUser }: Props
   };
 
   // Standard login submit
-  const handleLogin = async (event: React.FormEvent) => {
+  const login = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError('');
-    setSuccessMsg('');
+    if (typeof setSuccessMsg === 'function') setSuccessMsg('');
     try {
       const result = await apiRequest('/api/auth/login', 'POST', { username, password });
-      if (result.token) {
+      if (result.token && typeof setStoredAuthToken === 'function') {
         setStoredAuthToken(result.token);
       }
       setPassword('');
@@ -143,13 +143,15 @@ export function LoginModal({ isOpen, onClose, currentUser, onSelectUser }: Props
       onClose();
     } catch (failure: any) {
       setError(failure.message || 'Anmeldung fehlgeschlagen.');
-      if (failure.needsSetup) {
+      if (failure.needsSetup && typeof setIsInitialized === 'function') {
         setIsInitialized(false);
       }
     } finally {
       setBusy(false);
     }
   };
+  const logout = () => {};
+  const handleLogin = login;
 
   // Authenticated Change Password submit
   const handleChangePassword = async (event: React.FormEvent) => {

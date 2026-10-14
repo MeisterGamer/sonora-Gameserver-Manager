@@ -179,7 +179,11 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
         isDone = true;
         clearInterval(pollTimer);
         setProvisionProgress(100);
-        setProvisionStepText('Instanz & portables Java 100% startbereit!');
+        setProvisionStepText(
+          isMinecraft
+            ? 'Instanz & portables Java 100% startbereit!'
+            : `${activeGame?.name || 'Gameserver'} erfolgreich eingerichtet und 100% startbereit!`
+        );
         setTimeout(() => {
           onClose();
         }, 1200);

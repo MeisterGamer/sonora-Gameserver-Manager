@@ -115,45 +115,48 @@ export const UpdateManagerView: React.FC<UpdateManagerViewProps> = ({
       }, 3100);
 
     } else {
-      // Steam game update
-      pushLog(`Initialisiere SteamCMD Update für AppID ${server.gameId}...`);
-      setUpdateStep('SteamCMD initialisieren...');
+      // Steam game real installation / update
+      pushLog(`Initialisiere Installation / Update für "${server.gameName}" (AppID: ${server.steamAppId || 'automatisch'})...`);
+      setUpdateStep('Starte Steam Server-Installation...');
 
-      setTimeout(() => {
-        setUpdateProgress(25);
-        pushLog(`[SteamCMD] Logging into Steam via anonymous / token auth...`);
-        pushLog(`[SteamCMD] Set target branch: "${selectedBranch}"`);
-        if (branchPassword) {
-          pushLog(`[SteamCMD] Unlocking branch with provided beta password: ***`);
+      (async () => {
+        try {
+          setUpdateProgress(20);
+          pushLog(`[SteamCMD / Installer] Sende Installationsanfrage an Node-Daemon...`);
+
+          const res = await fetch(`/api/servers/${server.id}/install`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              category: server.category,
+              version: server.version,
+              steamAppId: server.steamAppId,
+              port: server.port
+            })
+          });
+
+          const data = await res.json();
+          if (data.success || data.isInstalled) {
+            pushLog(`[Erfolg] ${data.message || 'Spieldateien erfolgreich installiert und einsatzbereit.'}`);
+            setUpdateProgress(100);
+            setUpdateStep('Fertiggestellt');
+            setIsUpdating(false);
+            const newVer = selectedBranch === 'public' ? 'v1.4.2' : `${selectedBranch}-build-${Date.now().toString().slice(-4)}`;
+            onUpdateVersion?.(newVer, `Branch: ${selectedBranch}`);
+            onNotify?.(`${server.gameName} erfolgreich bereitgestellt und startbereit!`);
+          } else {
+            pushLog(`[Fehler] ${data.error || data.message || 'Installation fehlgeschlagen'}`);
+            setUpdateStep('Fehler');
+            setIsUpdating(false);
+            onNotify?.(`Fehler bei der Installation: ${data.error || 'Unbekannt'}`);
+          }
+        } catch (err: any) {
+          pushLog(`[Fehler] Netzwerkfehler: ${err.message}`);
+          setUpdateStep('Fehler');
+          setIsUpdating(false);
+          onNotify?.(`Verbindungsfehler: ${err.message}`);
         }
-        setUpdateStep('Prüfe App-Dateien & Delta-Updates...');
-      }, 800);
-
-      setTimeout(() => {
-        setUpdateProgress(60);
-        pushLog(`[SteamCMD] Update state (0x3) : Validating installation...`);
-        if (validateFiles) {
-          pushLog(`[SteamCMD] Validating file hashes against Steam CDN...`);
-        }
-        pushLog(`[SteamCMD] Downloading delta payload: 124.5 MB / 124.5 MB`);
-        setUpdateStep('Anwenden des Patches...');
-      }, 1600);
-
-      setTimeout(() => {
-        setUpdateProgress(90);
-        pushLog(`[SteamCMD] Committing patch to game directory...`);
-        pushLog(`[SteamCMD] Success! App "${server.gameName}" fully installed and verified.`);
-        setUpdateStep('Fertigstellen...');
-      }, 2400);
-
-      setTimeout(() => {
-        setUpdateProgress(100);
-        const newVer = selectedBranch === 'public' ? 'v1.4.2' : `${selectedBranch}-build-${Date.now().toString().slice(-4)}`;
-        pushLog(`[Erfolg] Steam Server erfolgreich auf Branch "${selectedBranch}" aktualisiert.`);
-        setIsUpdating(false);
-        onUpdateVersion?.(newVer, `Branch: ${selectedBranch}`);
-        onNotify?.(`Serverdateien über SteamCMD erfolgreich aktualisiert!`);
-      }, 3200);
+      })();
     }
   };
 

@@ -141,10 +141,10 @@ export const ConsoleView: React.FC<ConsoleViewProps> = ({
           : `${server.gameName} erfolgreich via SteamCMD bereitgestellt!`));
         fetchDiagnostics();
       } else {
-        alert(data.error || 'Installation fehlgeschlagen.');
+        setInstallProgress({ percent: 0, step: 'error', message: data.error || 'Installation fehlgeschlagen.' });
       }
     } catch (e: any) {
-      alert(`Fehler bei der Installation: ${e.message}`);
+      setInstallProgress({ percent: 0, step: 'error', message: `Fehler bei der Installation: ${e.message}` });
     } finally {
       setTimeout(() => {
         setIsInstallingServer(false);

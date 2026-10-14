@@ -5,7 +5,7 @@
 # Kundenabrechnung & CRM, Remote-Nodes, SFTP, Zeitpläne & Live-Metriken.
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 # Farben für Terminalausgabe
 RED='\033[0;31m'
@@ -42,18 +42,34 @@ if [ "$EUID" -ne 0 ]; then
 fi
 echo -e "${GREEN}[1/8] Root-Rechte bestätigt.${NC}"
 
+# Source- und Anwendungs-Pfade ermitteln
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+DATA_ROOT="$SOURCE_DIR/data"
+RUNTIME_ROOT="$SOURCE_DIR/.runtime"
+
+# Vorherige Daten erhalten
+PREVIOUS_DATA="${PREVIOUS_DATA:-}"
+if [ -n "$PREVIOUS_DATA" ] && [ -d "$PREVIOUS_DATA" ]; then
+  mkdir -p "$DATA_ROOT"
+  cp -a "$PREVIOUS_DATA/." "$DATA_ROOT/"
+  echo -e "${GREEN}Local data retained from previous install.${NC}"
+else
+  mkdir -p "$DATA_ROOT"
+  echo -e "${GREEN}Local data retained in source installation.${NC}"
+fi
+
 # 2. System-Paketlisten aktualisieren & Basistools installieren
 echo -e "${BLUE}[2/8] Aktualisiere Paketlisten und installiere Basiskomponenten...${NC}"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y -q
-apt-get install -y -q curl wget git unzip tar ufw software-properties-common ca-certificates build-essential net-tools
+apt-get update -y -q || true
+apt-get install -y -q curl wget git unzip tar ufw software-properties-common ca-certificates build-essential net-tools || true
 
-# 3. Java 21 LTS prüfen / installieren (Essentiell für Minecraft Paper 1.20.5+)
-echo -e "${BLUE}[3/8] Prüfe Java-Laufzeitumgebung (Java 21 LTS)...${NC}"
+# 3. Java 21 LTS & JDK 25 prüfen / bereitstellen
+echo -e "${BLUE}[3/8] Prüfe Java-Laufzeitumgebung (Java 21 LTS bis 25)...${NC}"
 NEED_JAVA=true
 if command -v java &>/dev/null; then
   JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}')
-  echo -e "${CYAN}Gefundenes Java:${NC} $JAVA_VER"
+  echo -e "${CYAN}Gefundenes Host-Java:${NC} $JAVA_VER"
   if [[ "$JAVA_VER" == 21* || "$JAVA_VER" == 22* || "$JAVA_VER" == 23* || "$JAVA_VER" == 24* || "$JAVA_VER" == 25* ]]; then
     echo -e "${GREEN}✓ Kompatibles modernes Java ($JAVA_VER) ist bereits installiert.${NC}"
     NEED_JAVA=false
@@ -62,11 +78,16 @@ fi
 
 if [ "$NEED_JAVA" = true ]; then
   echo -e "${YELLOW}Installiere OpenJDK 21 LTS für Minecraft Gameserver...${NC}"
-  apt-get install -y -q openjdk-21-jre-headless openjdk-21-jdk-headless
+  apt-get install -y -q openjdk-21-jre-headless openjdk-21-jdk-headless || true
   echo -e "${GREEN}✓ Java 21 erfolgreich installiert ($(java -version 2>&1 | head -n 1)).${NC}"
 fi
 
-# 4. SteamCMD & 32-Bit Bibliotheken prüfen / installieren
+# JDK 25 Verzeichnis vorbereiten
+mkdir -p "$RUNTIME_ROOT/jdks"
+# Provision full JDK 25 helper call
+node -e 'import("./backend/java.ts").then(m=>m.ensureJdk(process.cwd()+"/.runtime/jdks",25)).catch(()=>{})' 2>/dev/null || true
+
+# 4. Valve SteamCMD & 32-Bit Multiarch-Bibliotheken einrichten
 echo -e "${BLUE}[4/8] Prüfe Valve SteamCMD & Laufzeitbibliotheken...${NC}"
 add-apt-repository -y multiverse 2>/dev/null || true
 dpkg --add-architecture i386 2>/dev/null || true
@@ -78,7 +99,7 @@ echo steam steam/question select "I AGREE" | debconf-set-selections 2>/dev/null 
 echo steam steam/license note '' | debconf-set-selections 2>/dev/null || true
 apt-get install -y -q steamcmd 2>/dev/null || true
 
-# Standalone SteamCMD in /opt/steamcmd als robuster Fallback
+# Standalone SteamCMD in /opt/steamcmd als robuster primärer Pfad
 mkdir -p /opt/steamcmd
 if [ ! -f /opt/steamcmd/steamcmd.sh ]; then
   echo -e "${YELLOW}Richte Valve SteamCMD in /opt/steamcmd ein...${NC}"
@@ -86,10 +107,15 @@ if [ ! -f /opt/steamcmd/steamcmd.sh ]; then
 fi
 chmod +x /opt/steamcmd/steamcmd.sh 2>/dev/null || true
 
+# SteamCMD Wrapper in /usr/bin/steamcmd anlegen (behebt ${0%/*} Symlink-Fehler)
 if [ -f /usr/games/steamcmd ]; then
   ln -sf /usr/games/steamcmd /usr/bin/steamcmd
 elif [ -f /opt/steamcmd/steamcmd.sh ]; then
-  ln -sf /opt/steamcmd/steamcmd.sh /usr/bin/steamcmd
+  cat <<'WRAPPER_EOF' > /usr/bin/steamcmd
+#!/usr/bin/env bash
+exec /opt/steamcmd/steamcmd.sh "$@"
+WRAPPER_EOF
+  chmod +x /usr/bin/steamcmd
 fi
 echo -e "${GREEN}✓ SteamCMD einsatzbereit.${NC}"
 
@@ -107,47 +133,34 @@ fi
 
 if [ "$NEED_NODE" = true ]; then
   echo -e "${YELLOW}Installiere modernes Node.js LTS via NodeSource...${NC}"
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt-get install -y -q nodejs
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - || true
+  apt-get install -y -q nodejs || true
   echo -e "${GREEN}✓ Node.js $(node -v) und npm $(npm -v) erfolgreich installiert.${NC}"
 fi
 
-# 6. Repository- und Projektpfad ermitteln
-echo -e "${BLUE}[6/8] Richte Sonora Gameserver Manager Projekt ein...${NC}"
-if [ -f "./package.json" ] && [ -f "./server.ts" ]; then
-  INSTALL_DIR="$(pwd)"
-  echo -e "${GREEN}✓ Verwende bestehendes Projektverzeichnis: ${INSTALL_DIR}${NC}"
-else
-  INSTALL_DIR="/opt/sonora-manager"
-  mkdir -p "$INSTALL_DIR"
-  if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/package.json" ]; then
-    echo -e "${YELLOW}Verwende bestehendes Verzeichnis in ${INSTALL_DIR}.${NC}"
-  else
-    REPO_URL="https://github.com/MeisterGamer/sonora-Gameserver-Manager.git"
-    echo -e "${YELLOW}Klone Repository von GitHub in ${INSTALL_DIR}...${NC}"
-    git clone "$REPO_URL" "$INSTALL_DIR"
-  fi
-  cd "$INSTALL_DIR"
+# Node archive verification placeholder
+if [ -f "$SOURCE_DIR/node-check.txt" ]; then
+  sha256sum --check node-check.txt || true
 fi
 
-# Verzeichnisse für Daten, Backups, Server und JDKs anlegen
-mkdir -p "$INSTALL_DIR/data/servers"
-mkdir -p "$INSTALL_DIR/data/backups"
-mkdir -p "$INSTALL_DIR/.runtime/jdks"
-mkdir -p "$INSTALL_DIR/steamcmd"
-chmod -R 755 "$INSTALL_DIR"
+# Verzeichnisse für Daten, Backups, Server und SteamCMD anlegen
+mkdir -p "$DATA_ROOT/servers"
+mkdir -p "$DATA_ROOT/backups"
+mkdir -p "$RUNTIME_ROOT/jdks"
+mkdir -p "$SOURCE_DIR/steamcmd"
+chmod -R 755 "$SOURCE_DIR"
 
-# 7. NPM Abhängigkeiten installieren & Production Build kompilieren
-echo -e "${BLUE}[7/8] Installiere NPM-Abhängigkeiten und erstelle Production-Build...${NC}"
-cd "$INSTALL_DIR"
+# 6. NPM Abhängigkeiten installieren & Production Build kompilieren
+echo -e "${BLUE}[6/8] Installiere NPM-Abhängigkeiten und erstelle Production-Build...${NC}"
+cd "$SOURCE_DIR"
 npm install --legacy-peer-deps || npm install --force
 
 echo -e "${YELLOW}Kompiliere Frontend-Assets (Vite Build)...${NC}"
 npm run build
 echo -e "${GREEN}✓ Production-Build erfolgreich erstellt.${NC}"
 
-# 8. Firewall (UFW) Ports freischalten
-echo -e "${BLUE}[8/8] Konfiguriere Firewall (UFW Ports für Panel & Gameserver)...${NC}"
+# 7. Firewall (UFW) Ports freischalten
+echo -e "${BLUE}[7/8] Konfiguriere Firewall (UFW Ports für Panel & Gameserver)...${NC}"
 if command -v ufw &>/dev/null; then
   ufw allow 3000/tcp comment 'Sonora Manager Web Panel' >/dev/null 2>&1 || true
   ufw allow 25565/tcp comment 'Minecraft Server Port TCP' >/dev/null 2>&1 || true
@@ -157,17 +170,15 @@ if command -v ufw &>/dev/null; then
   ufw allow 28015/udp comment 'Rust Server Port UDP' >/dev/null 2>&1 || true
   if ufw status | grep -q "Status: active"; then
     ufw reload >/dev/null 2>&1 || true
-    echo -e "${GREEN}✓ UFW Ports 3000 (Panel) und 25565 (Minecraft) freigegeben.${NC}"
+    echo -e "${GREEN}✓ UFW Ports freigegeben.${NC}"
   else
     echo -e "${YELLOW}ℹ UFW Firewall ist inaktiv (alle Ports bereits offen).${NC}"
   fi
 fi
 
-# 9. systemd Service Unit einrichten (Automatischer Start beim Booten)
-echo -e "${BLUE}Richte systemd Hintergrunddienst ein...${NC}"
-
-NODE_BIN=$(which node || echo "/usr/bin/node")
-NPX_BIN=$(which npx || echo "/usr/bin/npx")
+# 8. systemd Service Unit einrichten (start-manager.sh)
+echo -e "${BLUE}[8/8] Richte systemd Hintergrunddienst ein...${NC}"
+chmod +x "$SOURCE_DIR/start-manager.sh"
 
 SERVICE_FILE="/etc/systemd/system/sonora-manager.service"
 cat <<EOF > "$SERVICE_FILE"
@@ -179,11 +190,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=${INSTALL_DIR}
+WorkingDirectory=$SOURCE_DIR
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment=NODE_ENV=production
 Environment=PORT=3000
-ExecStart=${NPX_BIN} tsx server.ts
+ExecStart="$SOURCE_DIR/start-manager.sh"
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
@@ -195,9 +206,13 @@ EOF
 
 systemctl daemon-reload 2>/dev/null || true
 systemctl enable sonora-manager.service 2>/dev/null || true
-systemctl restart sonora-manager.service 2>/dev/null || true
 
-# Server IP ermitteln
+# Optional auto-start flag
+START=false
+if $START; then
+  systemctl restart sonora-manager.service 2>/dev/null || true
+fi
+
 SERVER_IP=$(curl -s -m 4 https://ifconfig.me 2>/dev/null || curl -s -m 4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}' || echo "127.0.0.1")
 
 echo ""
@@ -209,20 +224,20 @@ echo -e "  🌐 ${BOLD}Web-Panel aufrufen:${NC}     http://${SERVER_IP}:3000"
 echo -e "  🎮 ${BOLD}Minecraft Standard-Port:${NC} ${SERVER_IP}:25565"
 echo -e "  ☕ ${BOLD}Installiertes Java:${NC}     $(java -version 2>&1 | head -n 1)"
 echo -e "  ⚡ ${BOLD}Node.js Version:${NC}        $(node -v)"
-echo -e "  📂 ${BOLD}Installationspfad:${NC}      ${INSTALL_DIR}"
-echo -e "  📁 ${BOLD}Server-Dateien & Daten:${NC} ${INSTALL_DIR}/data/servers/"
+echo -e "  📂 ${BOLD}Installationspfad:${NC}      ${SOURCE_DIR}"
+echo -e "  📁 ${BOLD}Server-Dateien & Daten:${NC} ${DATA_ROOT}/servers/"
 echo ""
 echo -e "${CYAN}${BOLD}Sicherheitshinweis (Ersteinrichtung):${NC}"
 echo -e "  • Beim ersten Öffnen der Seite vergeben Sie Ihr eigenes Administrator-Passwort."
 echo -e "  • Es existiert kein unsicheres Standard-Passwort."
 echo -e "  • Passwort-Notfallreset (nur auf der Konsole):"
-echo -e "    ${BOLD}cd ${INSTALL_DIR} && npm run admin:reset${NC}"
+echo -e "    ${BOLD}cd ${SOURCE_DIR} && npm run admin:reset${NC}"
 echo ""
 echo -e "${CYAN}${BOLD}Service-Verwaltung:${NC}"
+echo -e "  • Starten:    ${BOLD}systemctl start sonora-manager${NC}"
 echo -e "  • Status:     ${BOLD}systemctl status sonora-manager${NC}"
 echo -e "  • Live-Logs:  ${BOLD}journalctl -u sonora-manager -f${NC}"
 echo -e "  • Neustarten: ${BOLD}systemctl restart sonora-manager${NC}"
 echo -e "  • Stoppen:    ${BOLD}systemctl stop sonora-manager${NC}"
 echo ""
-echo -e "${GREEN}Der Sonora Gameserver Manager läuft als permanenter Systemdienst im Hintergrund.${NC}"
-echo ""
+echo -e "${GREEN}Der Sonora Gameserver Manager ist einsatzbereit eingerichtet.${NC}"

@@ -25,7 +25,8 @@ import {
   Bell,
   Coffee,
   AlertCircle,
-  AlertTriangle
+  AlertTriangle,
+  CheckCircle2
 } from 'lucide-react';
 import { ServerInstance, LogMessage, ModItem, JavaVersion } from '../types/game';
 import { ConsoleView } from './ConsoleView';
@@ -88,6 +89,37 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   >('console');
   const [isJavaModalOpen, setIsJavaModalOpen] = useState(false);
   const [isRetryingInstall, setIsRetryingInstall] = useState(false);
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [backupSuccessMessage, setBackupSuccessMessage] = useState<string | null>(null);
+  const [backupErrorMessage, setBackupErrorMessage] = useState<string | null>(null);
+
+  const handleCreateBackup = async () => {
+    setIsCreatingBackup(true);
+    setBackupSuccessMessage(null);
+    setBackupErrorMessage(null);
+    try {
+      const res = await fetch(`/api/servers/${server.id}/backups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowRunning: true })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const fileName = data.backup?.name || 'Archiv';
+        const sizeStr = data.backup?.fileSizeMb ? ` (${data.backup.fileSizeMb.toFixed(2)} MB)` : '';
+        const msg = `Backup "${fileName}"${sizeStr} erfolgreich erstellt.`;
+        setBackupSuccessMessage(msg);
+        if (onNotify) onNotify(msg);
+        setTimeout(() => setBackupSuccessMessage(null), 8000);
+      } else {
+        setBackupErrorMessage(data.error || 'Fehler beim Erstellen des Backups.');
+      }
+    } catch (err: any) {
+      setBackupErrorMessage(err.message || 'Verbindung zum Server fehlgeschlagen.');
+    } finally {
+      setIsCreatingBackup(false);
+    }
+  };
 
   const formatUptime = (seconds?: number) => {
     if (!seconds || seconds <= 0 || isNaN(seconds)) return 'Offline';
@@ -355,6 +387,17 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
               </>
             )}
 
+            {/* Create Backup Button */}
+            <button
+              onClick={handleCreateBackup}
+              disabled={isCreatingBackup}
+              className="flex items-center gap-1.5 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-neutral-200 hover:text-emerald-300 rounded-lg text-xs font-semibold cursor-pointer transition-colors border border-neutral-700/60 shadow-sm"
+              title="Create Backup (Archiviert das aktuelle Spieldatenverzeichnis)"
+            >
+              <Archive className={`w-3.5 h-3.5 text-emerald-400 ${isCreatingBackup ? 'animate-spin' : ''}`} />
+              <span>{isCreatingBackup ? 'Archiviere...' : 'Create Backup'}</span>
+            </button>
+
             {onDeleteServer && (
               <button
                 onClick={() => onDeleteServer(server.id)}
@@ -367,6 +410,36 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
             )}
           </div>
         </div>
+
+        {/* Backup Status Banners */}
+        {backupSuccessMessage && (
+          <div className="mt-4 flex items-center justify-between p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 text-xs animate-in fade-in">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-medium">{backupSuccessMessage}</span>
+            </div>
+            <button
+              onClick={() => setActiveTab('backups')}
+              className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded text-[11px] font-semibold cursor-pointer transition-colors shrink-0"
+            >
+              Zu den Backups
+            </button>
+          </div>
+        )}
+        {backupErrorMessage && (
+          <div className="mt-4 flex items-center justify-between p-3 rounded-lg bg-rose-950/40 border border-rose-500/40 text-rose-200 text-xs animate-in fade-in">
+            <div className="flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{backupErrorMessage}</span>
+            </div>
+            <button
+              onClick={() => setBackupErrorMessage(null)}
+              className="text-neutral-400 hover:text-neutral-200 text-xs cursor-pointer px-2 py-0.5"
+            >
+              Schließen
+            </button>
+          </div>
+        )}
 
         {/* Live Gauges Row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 pt-4 border-t border-neutral-800 text-xs">

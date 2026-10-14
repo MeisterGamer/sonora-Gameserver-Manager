@@ -213,6 +213,8 @@ export interface BackupItem {
   createdAt: string;
   fileSizeMb: number;
   type: 'manual' | 'scheduled';
+  sha256?: string;
+  server?: any;
 }
 
 export interface ScheduledTask {

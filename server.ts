@@ -1,5 +1,7 @@
 import { ensureJdk, jdkHome, JDK_VERSIONS } from './backend/java';
 import { configureAuth } from './backend/auth';
+import { configureBackups } from './backend/backups';
+import { configureMods } from './backend/mods';
 import { STEAM_GAMES_DATABASE, ALL_STEAM_GAMES } from './src/data/steamGames';
 import { STEAM_INSTALLERS } from './src/data/installerSupport';
 import express from 'express';
@@ -127,6 +129,66 @@ interface ServerProcessInfo {
 
 const activeProcesses = new Map<string, ServerProcessInfo>();
 const memoryLogBuffers = new Map<string, Array<{ id: string; timestamp: string; level: string; message: string }>>();
+
+// Per-server exclusive lock for critical operations (backups, restore, mutations)
+const serverLocks = new Map<string, Promise<any>>();
+async function exclusiveServerLock<T>(id: string, action: () => Promise<T>): Promise<T> {
+  const current = serverLocks.get(id) || Promise.resolve();
+  let release: () => void = () => {};
+  const lockPromise = new Promise<void>(resolve => { release = resolve; });
+  const next = current.then(async () => {
+    try {
+      return await action();
+    } finally {
+      release();
+    }
+  });
+  serverLocks.set(id, lockPromise);
+  return next;
+}
+
+// Configure backup archiving and restoration for game servers
+configureBackups(
+  app,
+  DATA_DIR,
+  path.resolve(process.cwd(), 'data', 'manager'),
+  (id: string) => {
+    const servers = getServerRegistry();
+    const server = servers.find(s => s.id === id);
+    if (!server) throw new Error(`Serverinstanz "${id}" nicht gefunden`);
+    return server;
+  },
+  exclusiveServerLock,
+  (id: string) => {
+    if (activeProcesses.has(id)) {
+      throw new Error('Server muss vor Sicherung oder Wiederherstellung gestoppt sein');
+    }
+  },
+  () => {
+    // Registry is saved automatically via saveServerRegistry
+  }
+);
+
+// Configure mod management and Gemini AI Auto-Resolve for game servers
+configureMods(
+  app,
+  DATA_DIR,
+  (id: string) => {
+    const servers = getServerRegistry();
+    const server = servers.find(s => s.id === id);
+    if (!server) throw new Error(`Serverinstanz "${id}" nicht gefunden`);
+    return server;
+  },
+  () => {
+    saveServerRegistry(getServerRegistry());
+  },
+  exclusiveServerLock,
+  (id: string) => {
+    if (activeProcesses.has(id)) {
+      throw new Error('Server muss vor Mod-Aktionen gestoppt sein');
+    }
+  }
+);
 
 // Helper: Append log line to memory buffer and disk latest.log
 function appendLog(serverId: string, level: 'INFO' | 'WARN' | 'ERROR' | 'SUCCESS', message: string) {

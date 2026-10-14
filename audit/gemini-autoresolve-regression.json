@@ -1,0 +1,28 @@
+{
+  "checks": [
+    "server.ts imports configureMods",
+    "server.ts invokes configureMods",
+    "backend/mods.ts imports @google/genai",
+    "backend/mods.ts implements /api/servers/:id/mods/auto-resolve-dependencies",
+    "backend/mods.ts implements /api/mods/auto-resolve-dependencies",
+    "backend/mods.ts targets gemini-2.5-flash model",
+    "backend/mods.ts includes Vault dependency rule",
+    "backend/mods.ts includes Fabric API dependency rule",
+    "backend/mods.ts includes WorldEdit dependency rule",
+    "backend/mods.ts includes Sodium dependency rule",
+    "backend/mods.ts includes auto-install support for dependencies",
+    "CentralModHub imports AutoResolveModal",
+    "CentralModHub has Auto-Resolve Dependencies button in top banner",
+    "CentralModHub has handleOpenAutoResolve function",
+    "CentralModHub supports multi-select state selectedModIds",
+    "CentralModHub supports toggleModSelection",
+    "CentralModHub renders Multi-Select & Auto-Resolve Toolbar",
+    "CentralModHub renders AutoResolveModal component",
+    "AutoResolveModal calls auto-resolve-dependencies endpoint",
+    "AutoResolveModal shows Gemini AI model badge",
+    "AutoResolveModal renders compatibility score",
+    "AutoResolveModal displays missing dependencies",
+    "AutoResolveModal provides handleInstallAllDependencies"
+  ],
+  "passed": true
+}

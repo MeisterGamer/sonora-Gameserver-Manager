@@ -36,22 +36,48 @@ export function configureBackups(app: Express, root: string, state: string, regi
     }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     res.json({ success: true, backups });
   });
-  app.post('/api/servers/:id/backups', async (req, res) => {
-    const backup = await exclusive(req.params.id, async () => {
-      assertStopped(req.params.id);
-      const source = instancePath(root, req.params.id); checkTree(source);
-      const id = 'bk_' + Date.now() + '_' + randomBytes(6).toString('hex');
-      const archive = confinedPath(directory(req.params.id), id + '.tar.gz');
-      try {
-        await run('tar', ['-czf', archive, '-C', source, '.'], { timeout: 30 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 });
-        const server = registered(req.params.id);
-        const info = { id, name: id + '.tar.gz', createdAt: new Date().toISOString(), fileSizeMb: fs.statSync(archive).size / 1048576, type: 'manual', sha256: await hashFile(archive),
-          server: { version: server.version, minecraftType: server.minecraftType, installedMods: server.installedMods } };
-        fs.writeFileSync(confinedPath(directory(req.params.id), id + '.json'), JSON.stringify(info), { flag: 'wx', mode: 0o600 });
-        return info;
-      } catch (error) { if (fs.existsSync(archive)) fs.unlinkSync(archive); throw error; }
-    });
-    res.json({ success: true, backup });
+  app.post(['/api/servers/:id/backups', '/api/servers/:id/backup'], async (req, res) => {
+    try {
+      const backup = await exclusive(req.params.id, async () => {
+        const allowLive = req.body?.allowRunning || req.query?.allowRunning;
+        if (!allowLive) {
+          assertStopped(req.params.id);
+        }
+        const source = instancePath(root, req.params.id);
+        if (!fs.existsSync(source)) {
+          fs.mkdirSync(source, { recursive: true });
+        }
+        checkTree(source);
+        const id = 'bk_' + Date.now() + '_' + randomBytes(6).toString('hex');
+        const backupDir = directory(req.params.id);
+        const archive = confinedPath(backupDir, id + '.tar.gz');
+        try {
+          await run('tar', ['--warning=no-file-changed', '-czf', archive, '-C', source, '.'], { timeout: 30 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 });
+          const server = registered(req.params.id);
+          const info = {
+            id,
+            name: id + '.tar.gz',
+            createdAt: new Date().toISOString(),
+            fileSizeMb: fs.statSync(archive).size / 1048576,
+            type: 'manual',
+            sha256: await hashFile(archive),
+            server: {
+              version: server.version,
+              minecraftType: server.minecraftType,
+              installedMods: server.installedMods
+            }
+          };
+          fs.writeFileSync(confinedPath(backupDir, id + '.json'), JSON.stringify(info, null, 2), { flag: 'wx', mode: 0o600 });
+          return info;
+        } catch (error) {
+          if (fs.existsSync(archive)) fs.unlinkSync(archive);
+          throw error;
+        }
+      });
+      res.json({ success: true, backup, message: `Backup erfolgreich erstellt (${backup.name}).` });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
   });
   app.get('/api/servers/:id/backups/:backupId/download', (req, res) => {
     const backup = metadata(req.params.id, req.params.backupId);

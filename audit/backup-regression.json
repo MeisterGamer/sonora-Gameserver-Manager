@@ -1,0 +1,28 @@
+{
+  "checks": [
+    "server.ts imports configureBackups",
+    "server.ts invokes configureBackups",
+    "server.ts implements exclusive server lock",
+    "backend/backups.ts supports /api/servers/:id/backups and /backup",
+    "backend/backups.ts uses tar command with --warning=no-file-changed",
+    "backend/backups.ts creates source dir if missing",
+    "backend/backups.ts generates sha256 checksum for archives",
+    "tar generates actual archive on host",
+    "archive contains server.properties",
+    "archive contains eula.txt",
+    "archive contains world/level.dat",
+    "archive sha256 checksum is valid hex",
+    "ServerDetail has Create Backup button",
+    "ServerDetail has handleCreateBackup handler",
+    "ServerDetail calls /api/servers/${server.id}/backups",
+    "ServerDetail has isCreatingBackup loading state",
+    "ServerDetail shows backupSuccessMessage banner",
+    "RealBackupsView has Create Backup button",
+    "RealBackupsView has handleCreateBackup handler",
+    "RealBackupsView has download link",
+    "RealBackupsView has restore action",
+    "ServerList has Create Backup button / action",
+    "ServerList has handleQuickBackup function"
+  ],
+  "passed": true
+}

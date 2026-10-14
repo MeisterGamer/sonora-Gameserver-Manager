@@ -21,7 +21,8 @@ import {
   Sparkles,
   AlertCircle,
   AlertTriangle,
-  DownloadCloud
+  DownloadCloud,
+  Archive
 } from 'lucide-react';
 import { ServerInstance } from '../types/game';
 
@@ -52,6 +53,35 @@ export const ServerList: React.FC<ServerListProps> = ({
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'offline'>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [backingUpServerId, setBackingUpServerId] = useState<string | null>(null);
+  const [backupToast, setBackupToast] = useState<{ id: string; text: string; error?: boolean } | null>(null);
+
+  const handleQuickBackup = async (e: React.MouseEvent, srv: ServerInstance) => {
+    e.stopPropagation();
+    setBackingUpServerId(srv.id);
+    setBackupToast(null);
+    try {
+      const res = await fetch(`/api/servers/${srv.id}/backups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allowRunning: true })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const name = data.backup?.name || srv.name;
+        setBackupToast({ id: srv.id, text: `Backup "${name}" erfolgreich erstellt.` });
+        setTimeout(() => setBackupToast(null), 6000);
+      } else {
+        setBackupToast({ id: srv.id, text: `Fehler: ${data.error || 'Aktion fehlgeschlagen'}`, error: true });
+        setTimeout(() => setBackupToast(null), 6000);
+      }
+    } catch (err: any) {
+      setBackupToast({ id: srv.id, text: `Fehler: ${err.message}`, error: true });
+      setTimeout(() => setBackupToast(null), 6000);
+    } finally {
+      setBackingUpServerId(null);
+    }
+  };
 
   const onlineCount = servers.filter(s => s.status === 'running').length;
   const totalPlayers = servers.reduce((sum, s) => sum + (s.status === 'running' ? s.currentPlayers : 0), 0);
@@ -466,6 +496,13 @@ export const ServerList: React.FC<ServerListProps> = ({
 
                         return null;
                       })()}
+
+                      {backupToast?.id === server.id && (
+                        <div className={`mt-2 w-full max-w-md rounded-lg p-2 text-xs flex items-center gap-2 animate-in fade-in shadow-sm ${backupToast.error ? 'bg-rose-950/40 text-rose-300 border border-rose-500/40' : 'bg-emerald-950/40 text-emerald-300 border border-emerald-500/40'}`}>
+                          <Archive className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{backupToast.text}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -530,6 +567,17 @@ export const ServerList: React.FC<ServerListProps> = ({
                     >
                       <Terminal className="w-3.5 h-3.5 text-emerald-400" />
                       <span>Verwalten</span>
+                    </button>
+
+                    {/* Create Backup Button */}
+                    <button
+                      onClick={(e) => handleQuickBackup(e, server)}
+                      disabled={backingUpServerId === server.id}
+                      className="p-2 text-neutral-400 hover:text-emerald-400 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-50"
+                      title="Create Backup: Archiviert das Spieldatenverzeichnis"
+                      aria-label="Create Backup"
+                    >
+                      <Archive className={`w-4 h-4 ${backingUpServerId === server.id ? 'animate-spin text-emerald-400' : ''}`} />
                     </button>
 
                     {/* Clone Server Button */}

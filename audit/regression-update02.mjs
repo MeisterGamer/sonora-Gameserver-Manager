@@ -51,13 +51,14 @@ const imports = {
   express: { default: express }, dotenv: { default: { config() {} } },
   path: { default: path }, url: { fileURLToPath }, fs: { default: fs }, os: { default: os },
   'node:crypto': { createHash: crypto.createHash },
-  child_process: { exec: (_cmd, callback) => callback(null, '', 'openjdk version "25.0.1"'), execFile() { throw new Error('Unexpected extraction in fixture'); }, spawn, ChildProcess: EventEmitter },
+  child_process: { exec: (_cmd, callback) => callback(null, '', 'openjdk version "25.0.1"'), execSync: (_cmd) => Buffer.from('openjdk version "25.0.1"'), execFile() { throw new Error('Unexpected extraction in fixture'); }, spawn, ChildProcess: EventEmitter },
   net: { default: { createServer() {
     const net = new EventEmitter(); net.listen = () => setImmediate(() => net.emit('listening')); net.close = () => {}; return net;
   } } },
 };
 const javaModule = await import('../backend/java.ts');
 imports['./backend/java.ts'] = { ...javaModule, ensureJdk: async (root, major) => path.join(root, 'jdk-' + major, 'bin', 'java') };
+imports['./backend/java'] = imports['./backend/java.ts'];
 const password = 'Regression-Fixture-Password-Only';
 const previous = Object.fromEntries(['SONORA_ADMIN_PASSWORD', 'SONORA_ADMIN_USERNAME', 'SONORA_PUBLIC_ORIGIN'].map(key => [key, process.env[key]]));
 process.env.SONORA_ADMIN_PASSWORD = password;
@@ -69,7 +70,11 @@ const module = new vm.SourceTextModule(stripTypeScriptTypes(fs.readFileSync('ser
 });
 await module.link(async name => {
   let values = imports[name];
-  if (!values && (name.startsWith('./backend/') || name.startsWith('./src/data/'))) values = await import(pathToFileURL(path.join(repo, name)).href);
+  if (!values && (name.startsWith('./backend/') || name.startsWith('./src/data/'))) {
+    let target = path.join(repo, name);
+    if (!fs.existsSync(target) && fs.existsSync(target + '.ts')) target += '.ts';
+    values = await import(pathToFileURL(target).href);
+  }
   assert.ok(values, 'Unexpected import ' + name);
   return new vm.SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); }, { context });
 });

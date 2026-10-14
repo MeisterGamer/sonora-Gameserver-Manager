@@ -14,7 +14,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Sliders,
-  Trash2
+  Trash2,
+  CheckSquare,
+  Square,
+  Zap
 } from 'lucide-react';
 import { ModItem, ServerInstance } from '../types/game';
 import { searchUnifiedMods, ModProviderSource } from '../services/liveModService';
@@ -23,6 +26,7 @@ import { ModDetailModal } from './ModDetailModal';
 import { CustomModUploadModal } from './CustomModUploadModal';
 import { ModBundlesView } from './ModBundlesView';
 import { ModInstallModal } from './ModInstallModal';
+import { AutoResolveModal } from './AutoResolveModal';
 
 interface CentralModHubProps {
   servers: ServerInstance[];
@@ -61,11 +65,13 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
   const [isLiveApi, setIsLiveApi] = useState(false);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
-  // Mod detail, Install & Upload modals
+  // Mod detail, Install, Upload & Auto-Resolve modals
   const [selectedModForDetail, setSelectedModForDetail] = useState<ModItem | null>(null);
   const [selectedModForInstall, setSelectedModForInstall] = useState<ModItem | null>(null);
   const [installingModId, setInstallingModId] = useState<string | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [selectedModIds, setSelectedModIds] = useState<Set<string>>(new Set());
+  const [isAutoResolveModalOpen, setIsAutoResolveModalOpen] = useState(false);
 
   const categories = [
     'all',
@@ -186,6 +192,38 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
     }, 450);
   };
 
+  const toggleModSelection = (modId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedModIds(prev => {
+      const next = new Set(prev);
+      if (next.has(modId)) next.delete(modId);
+      else next.add(modId);
+      return next;
+    });
+  };
+
+  const handleSelectAllVisible = () => {
+    setSelectedModIds(new Set(displayItems.map(m => m.id)));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedModIds(new Set());
+  };
+
+  const handleOpenAutoResolve = () => {
+    if (!targetServerId) {
+      setErrorMessage('Bitte wähle zuerst einen Ziel-Server aus der Auswahlliste oben aus!');
+      setTimeout(() => setErrorMessage(null), 4000);
+      return;
+    }
+    setIsAutoResolveModalOpen(true);
+  };
+
+  const selectedModsList = displayItems.filter(m => selectedModIds.has(m.id));
+  const modsForAutoResolve = selectedModsList.length > 0 
+    ? selectedModsList 
+    : (displayItems.length > 0 ? displayItems.slice(0, 5) : []);
+
   const currentTargetServer = servers.find(s => s.id === targetServerId);
 
   return (
@@ -210,7 +248,7 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
           </p>
         </div>
 
-        {/* Target Server Selector & Custom Upload Button */}
+        {/* Target Server Selector, Auto-Resolve & Custom Upload Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
           {servers.length > 0 && (
             <div className="flex items-center gap-2 bg-neutral-950 p-2.5 rounded-xl border border-neutral-800 text-xs">
@@ -228,6 +266,21 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
               </select>
             </div>
           )}
+
+          {/* Prominent Auto-Resolve Dependencies button in top action bar */}
+          <button
+            onClick={handleOpenAutoResolve}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold cursor-pointer transition-all shadow-md shadow-emerald-600/25 active:scale-95 border border-emerald-500/40"
+            title="Abhängigkeiten & Kompatibilität mit Gemini API automatisch analysieren und installieren"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+            <span>Auto-Resolve Dependencies</span>
+            {selectedModIds.size > 0 && (
+              <span className="px-1.5 py-0.2 bg-emerald-950 text-emerald-200 rounded-full text-[10px] font-mono border border-emerald-700/60 ml-0.5">
+                {selectedModIds.size}
+              </span>
+            )}
+          </button>
 
           <button
             onClick={() => setIsUploadModalOpen(true)}
@@ -408,6 +461,58 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
             </div>
           </div>
 
+          {/* Multi-Select & Auto-Resolve Toolbar */}
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedModIds.size === displayItems.length && displayItems.length > 0) {
+                    handleClearSelection();
+                  } else {
+                    handleSelectAllVisible();
+                  }
+                }}
+                className="flex items-center gap-1.5 text-neutral-300 hover:text-white cursor-pointer font-medium"
+              >
+                {selectedModIds.size > 0 && selectedModIds.size === displayItems.length ? (
+                  <CheckSquare className="w-4 h-4 text-emerald-400" />
+                ) : selectedModIds.size > 0 ? (
+                  <CheckSquare className="w-4 h-4 text-emerald-500/70" />
+                ) : (
+                  <Square className="w-4 h-4 text-neutral-500" />
+                )}
+                <span>
+                  {selectedModIds.size > 0 
+                    ? `${selectedModIds.size} von ${displayItems.length} Mods ausgewählt` 
+                    : 'Alle sichtbaren Mods auswählen'}
+                </span>
+              </button>
+
+              {selectedModIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearSelection}
+                  className="text-[11px] text-neutral-400 hover:text-neutral-200 underline cursor-pointer"
+                >
+                  Auswahl aufheben
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleOpenAutoResolve}
+                className="flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-xs font-bold cursor-pointer transition-all shadow-sm shadow-emerald-600/30 active:scale-95"
+                title="Ausgewählte Mods mit Gemini API auf Kompatibilität prüfen und Abhängigkeiten auflösen"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                <span>Auto-Resolve Dependencies {selectedModIds.size > 0 ? `(${selectedModIds.size} ausgewählt)` : ''}</span>
+              </button>
+            </div>
+          </div>
+
           {/* Results Grid */}
           {displayItems.length === 0 ? (
             <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-10 text-center text-neutral-400">
@@ -424,18 +529,35 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
                   inst.modId.toLowerCase() === mod.id.toLowerCase() ||
                   inst.name.toLowerCase().trim() === mod.name.toLowerCase().trim()
                 );
+                const isSelected = selectedModIds.has(mod.id);
 
                 return (
                 <div 
                   key={mod.id}
                   onClick={() => setSelectedModForDetail(mod)}
-                  className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col justify-between hover:border-neutral-700 transition-all cursor-pointer group hover:bg-neutral-850/60"
+                  className={`bg-neutral-900 border rounded-xl p-4 flex flex-col justify-between transition-all cursor-pointer group hover:bg-neutral-850/60 ${
+                    isSelected ? 'border-emerald-500/80 ring-1 ring-emerald-500/40 bg-emerald-950/20' : 'border-neutral-800 hover:border-neutral-700'
+                  }`}
                 >
                   <div>
                     <div className="flex items-start justify-between gap-2 mb-1.5">
-                      <h4 className="font-semibold text-neutral-100 text-sm group-hover:text-emerald-400 transition-colors">
-                        {mod.name}
-                      </h4>
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <button
+                          type="button"
+                          onClick={(e) => toggleModSelection(mod.id, e)}
+                          className="text-neutral-500 hover:text-emerald-400 p-0.5 cursor-pointer shrink-0 transition-colors"
+                          title={isSelected ? "Auswahl entfernen" : "Mod auswählen für Auto-Resolve"}
+                        >
+                          {isSelected ? (
+                            <CheckSquare className="w-4 h-4 text-emerald-400" />
+                          ) : (
+                            <Square className="w-4 h-4 text-neutral-600 group-hover:text-neutral-400" />
+                          )}
+                        </button>
+                        <h4 className="font-semibold text-neutral-100 text-sm group-hover:text-emerald-400 transition-colors truncate">
+                          {mod.name}
+                        </h4>
+                      </div>
                       <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 ${
                         mod.source === 'Modrinth' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' :
                         mod.source === 'SpigotMC' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
@@ -573,6 +695,26 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
         onClose={() => setIsUploadModalOpen(false)}
         onInstallUploadedMod={(mod) => {
           handleInstall(mod);
+        }}
+      />
+
+      {/* Gemini AI Auto-Resolve Dependencies Modal */}
+      <AutoResolveModal
+        isOpen={isAutoResolveModalOpen}
+        onClose={() => setIsAutoResolveModalOpen(false)}
+        server={currentTargetServer || null}
+        selectedMods={modsForAutoResolve}
+        onInstallDependency={(mod) => {
+          handleInstall(mod);
+        }}
+        onRefreshServer={() => {
+          if (targetServerId) {
+            const target = servers.find(s => s.id === targetServerId);
+            if (target) {
+              setInstalledNotification(`Abhängigkeit für "${target.name}" installiert!`);
+              setTimeout(() => setInstalledNotification(null), 3500);
+            }
+          }
         }}
       />
     </div>

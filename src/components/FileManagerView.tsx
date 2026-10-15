@@ -814,3 +814,5 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
     </div>
   );
 };
+
+export { HierarchicalFileExplorer } from './HierarchicalFileExplorer';

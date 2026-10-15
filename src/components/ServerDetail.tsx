@@ -30,12 +30,13 @@ import {
 } from 'lucide-react';
 import { ServerInstance, LogMessage, ModItem, JavaVersion } from '../types/game';
 import { ConsoleView } from './ConsoleView';
-import { ModPluginBrowser } from './RealModPluginBrowser';
+import { ModPluginBrowser } from './ModPluginBrowser';
 import { ConfigFileEditor } from './ConfigFileEditor';
 import { PlayerManager } from './PlayerManager';
 import { BackupsView } from './RealBackupsView';
 import { CrossPlatformView } from './CrossPlatformView';
 import { FileManagerView } from './RealFileManagerView';
+import { HierarchicalFileExplorer } from './HierarchicalFileExplorer';
 import { MetricsView } from './MetricsView';
 import { NetworkPortsView } from './NetworkPortsView';
 import { UpdateManagerView } from './RealUpdateManagerView';
@@ -548,7 +549,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           }`}
         >
           <Folder className="w-3.5 h-3.5 text-amber-400" />
-          <span>Datei-Manager & SFTP</span>
+          <span>Datei-Explorer & SFTP</span>
         </button>
 
         <button
@@ -683,7 +684,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
       )}
 
       {activeTab === 'files' && (
-        <FileManagerView
+        <HierarchicalFileExplorer
           server={server}
           onSaveConfigFile={(fn, c) => onSaveConfigFile(server.id, fn, c)}
           onNotify={onNotify}
@@ -712,6 +713,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           server={server}
           onSaveConfigFile={(fn, c) => onSaveConfigFile(server.id, fn, c)}
           onOpenJavaModal={() => setIsJavaModalOpen(true)}
+          onOpenFileExplorer={() => setActiveTab('files')}
         />
       )}
 

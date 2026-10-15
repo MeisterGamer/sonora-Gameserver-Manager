@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
-import { FileText, Save, RotateCcw, Check, Sliders, Code2, Copy, Coffee } from 'lucide-react';
+import { FileText, Save, RotateCcw, Check, Sliders, Code2, Copy, Coffee, Folder } from 'lucide-react';
 import { ServerInstance } from '../types/game';
+import { SyntaxCodeEditor } from './SyntaxCodeEditor';
 
 interface ConfigFileEditorProps {
   server: ServerInstance;
   onSaveConfigFile: (filename: string, content: string) => void;
   onOpenJavaModal?: () => void;
+  onOpenFileExplorer?: () => void;
 }
 
 export const ConfigFileEditor: React.FC<ConfigFileEditorProps> = ({
   server,
   onSaveConfigFile,
-  onOpenJavaModal
+  onOpenJavaModal,
+  onOpenFileExplorer
 }) => {
   const configFiles = server.configFiles || {};
   const fileNames = Object.keys(configFiles);
@@ -90,6 +93,20 @@ export const ConfigFileEditor: React.FC<ConfigFileEditorProps> = ({
               </div>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-700/50">
                 {server.javaVersion || 'Java 21'}
+              </span>
+            </button>
+          )}
+          {onOpenFileExplorer && (
+            <button
+              onClick={onOpenFileExplorer}
+              className="w-full flex items-center justify-between p-2 rounded-lg bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 text-neutral-300 text-xs transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-1.5 font-medium">
+                <Folder className="w-3.5 h-3.5 text-amber-400" />
+                <span>Dateibaum-Explorer</span>
+              </div>
+              <span className="text-[10px] text-emerald-400 font-mono">
+                Öffnen →
               </span>
             </button>
           )}
@@ -251,13 +268,13 @@ export const ConfigFileEditor: React.FC<ConfigFileEditorProps> = ({
             </div>
           </div>
         ) : (
-          /* Raw Editor */
-          <div className="flex-1 p-2 bg-neutral-950">
-            <textarea
+          /* Raw Editor with Syntax Highlighting */
+          <div className="flex-1 p-3 bg-neutral-950 flex flex-col min-h-0">
+            <SyntaxCodeEditor
               value={fileContent}
-              onChange={(e) => setFileContent(e.target.value)}
-              className="w-full h-[470px] bg-transparent text-neutral-200 font-mono text-xs p-3 leading-relaxed focus:outline-none resize-none"
-              spellCheck={false}
+              onChange={setFileContent}
+              fileName={selectedFile}
+              className="h-[520px]"
             />
           </div>
         )}

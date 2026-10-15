@@ -256,7 +256,7 @@ export const ModDetailModal: React.FC<ModDetailModalProps> = ({
                   </p>
                   <div className="divide-y divide-neutral-800 border border-neutral-800 rounded-xl overflow-hidden bg-neutral-950">
                     {dependencies.map((depId) => {
-                      const isDepInstalled = server?.installedMods.some(m => m.modId === depId);
+                      const isDepInstalled = (server?.installedMods || []).some(m => m.modId === depId || m.id === depId);
                       return (
                         <div key={depId} className="p-3.5 flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2.5">
@@ -321,7 +321,9 @@ export const ModDetailModal: React.FC<ModDetailModalProps> = ({
             {isInstalled ? (
               <button
                 onClick={() => {
-                  const targetInst = server?.installedMods.find(m => m.modId === mod.id);
+                  const targetInst = (server?.installedMods || []).find(m => 
+                    m.modId === mod.id || m.id === mod.id || m.name.toLowerCase().trim() === mod.name.toLowerCase().trim()
+                  );
                   if (targetInst && onUninstallMod) {
                     onUninstallMod(targetInst.id);
                     onClose();

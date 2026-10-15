@@ -276,8 +276,10 @@ export default function App() {
 
   const handleInstallMod = async (serverId: string, mod: ModItem, restartServer?: boolean) => {
     try {
-      await apiRequest('/api/servers/' + serverId + '/mods', 'POST', { mod });
-      await refreshServers(); showToast('Plugindatei verifiziert und installiert.');
+      const data = await apiRequest('/api/servers/' + serverId + '/mods', 'POST', { mod, restartServer });
+      await refreshServers();
+      const folderNote = data?.targetDir ? ` (in /${data.targetDir}/)` : '';
+      showToast(`Erweiterung "${mod.name}" verifiziert und installiert${folderNote}.`);
       if (restartServer) await handleRestartServer(serverId);
     } catch (error: any) { showToast(error.message); throw error; }
   };

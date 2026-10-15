@@ -183,10 +183,8 @@ configureMods(
     saveServerRegistry(getServerRegistry());
   },
   exclusiveServerLock,
-  (id: string) => {
-    if (activeProcesses.has(id)) {
-      throw new Error('Server muss vor Mod-Aktionen gestoppt sein');
-    }
+  (_id: string) => {
+    // Non-blocking: mod files are safely placed into plugins/mods folder; running processes load them on reboot or reload
   }
 );
 
@@ -1747,10 +1745,69 @@ app.delete('/api/servers/:id', (req, res) => {
   res.json({ success: true, serverId });
 });
 
-// --- FILE MANAGER: LIST DIRECTORY ---
+// --- FILE MANAGER: HIERARCHICAL DIRECTORY TREE HELPER ---
+function getDirectoryTree(baseDir: string, currentRel: string = '', maxDepth: number = 6, currentDepth: number = 0): any[] {
+  if (currentDepth > maxDepth) return [];
+  const dirPath = path.join(baseDir, currentRel);
+  if (!fs.existsSync(dirPath)) return [];
+  
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    const editableExtensions = ['.txt', '.properties', '.yml', '.yaml', '.json', '.cfg', '.ini', '.sh', '.log', '.toml', '.conf', '.env'];
+    const items: any[] = [];
+
+    for (const entry of entries) {
+      if (['node_modules', '.git', '__pycache__', '.sonora-tmp'].includes(entry.name)) continue;
+      const itemRelPath = path.posix.join('/', currentRel.replace(/\\/g, '/'), entry.name);
+      const fullPath = path.join(dirPath, entry.name);
+      let sizeBytes = 0;
+      let lastModified = new Date().toISOString().slice(0, 16).replace('T', ' ');
+      try {
+        const stat = fs.statSync(fullPath);
+        sizeBytes = stat.size;
+        lastModified = stat.mtime.toISOString().slice(0, 16).replace('T', ' ');
+      } catch {}
+
+      if (entry.isDirectory()) {
+        const children = getDirectoryTree(baseDir, path.join(currentRel, entry.name), maxDepth, currentDepth + 1);
+        items.push({
+          name: entry.name,
+          path: itemRelPath,
+          type: 'directory',
+          sizeBytes,
+          lastModified,
+          isEditable: false,
+          children
+        });
+      } else {
+        const ext = path.extname(entry.name).toLowerCase();
+        const isEditable = editableExtensions.includes(ext) || entry.name === 'eula.txt';
+        items.push({
+          name: entry.name,
+          path: itemRelPath,
+          type: 'file',
+          sizeBytes,
+          lastModified,
+          isEditable
+        });
+      }
+    }
+
+    items.sort((a, b) => {
+      if (a.type === b.type) return a.name.localeCompare(b.name);
+      return a.type === 'directory' ? -1 : 1;
+    });
+
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+// --- FILE MANAGER: LIST DIRECTORY & HIERARCHICAL TREE ---
 app.get('/api/servers/:id/files', (req, res) => {
   const serverId = req.params.id;
-  const subPath = (req.query.path as string) || '';
+  const subPath = ((req.query.path || req.query.dir || '') as string).replace(/^\/+/, '');
   const srvDir = path.join(DATA_DIR, serverId);
   const targetDir = path.normalize(path.join(srvDir, subPath));
 
@@ -1758,12 +1815,13 @@ app.get('/api/servers/:id/files', (req, res) => {
     return res.status(403).json({ error: 'Ungültiger Pfad' });
   }
 
-  if (!fs.existsSync(targetDir)) {
-    return res.json({ success: true, path: subPath, files: [] });
+  // Ensure default server files exist for convenience
+  if (!fs.existsSync(srvDir)) {
+    fs.mkdirSync(srvDir, { recursive: true });
   }
 
   try {
-    const entries = fs.readdirSync(targetDir, { withFileTypes: true });
+    const entries = fs.existsSync(targetDir) ? fs.readdirSync(targetDir, { withFileTypes: true }) : [];
     const editableExtensions = ['.txt', '.properties', '.yml', '.yaml', '.json', '.cfg', '.ini', '.sh', '.log', '.toml', '.conf', '.env'];
 
     const items = entries.map(entry => {
@@ -1795,16 +1853,32 @@ app.get('/api/servers/:id/files', (req, res) => {
       return a.type === 'directory' ? -1 : 1;
     });
 
-    res.json({ success: true, path: subPath, files: items });
+    const tree = getDirectoryTree(srvDir);
+
+    res.json({ success: true, path: subPath ? '/' + subPath : '/', files: items, tree });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// --- FILE MANAGER: READ FILE CONTENT ---
-app.get('/api/servers/:id/files/content', (req, res) => {
+// --- FILE MANAGER: GET FULL HIERARCHICAL TREE ---
+app.get('/api/servers/:id/files/tree', (req, res) => {
   const serverId = req.params.id;
-  const filePath = (req.query.file as string) || '';
+  const srvDir = path.join(DATA_DIR, serverId);
+  if (!fs.existsSync(srvDir)) fs.mkdirSync(srvDir, { recursive: true });
+
+  try {
+    const tree = getDirectoryTree(srvDir);
+    res.json({ success: true, tree });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- FILE MANAGER: READ FILE CONTENT (PLURAL & SINGULAR) ---
+const handleGetFileContent = (req: any, res: any) => {
+  const serverId = req.params.id;
+  const filePath = ((req.query.file || req.query.path || '') as string).replace(/^\/+/, '');
   const srvDir = path.join(DATA_DIR, serverId);
   const fullPath = path.normalize(path.join(srvDir, filePath));
 
@@ -1813,6 +1887,13 @@ app.get('/api/servers/:id/files/content', (req, res) => {
   }
 
   if (!fs.existsSync(fullPath)) {
+    // Check if server registry has this config file content as fallback
+    const servers = getServerRegistry();
+    const server = servers.find(s => s.id === serverId);
+    const fileName = path.basename(filePath);
+    if (server && server.configFiles && server.configFiles[fileName] !== undefined) {
+      return res.json({ success: true, file: filePath, path: '/' + filePath, content: server.configFiles[fileName] });
+    }
     return res.status(404).json({ error: 'Datei existiert nicht auf dem Server' });
   }
 
@@ -1822,16 +1903,20 @@ app.get('/api/servers/:id/files/content', (req, res) => {
       return res.status(400).json({ error: 'Datei ist zu groß zum Bearbeiten (> 5 MB)' });
     }
     const content = fs.readFileSync(fullPath, 'utf8');
-    res.json({ success: true, file: filePath, content });
+    res.json({ success: true, file: filePath, path: '/' + filePath, content });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
-});
+};
 
-// --- FILE MANAGER: SAVE FILE CONTENT ---
-app.post('/api/servers/:id/files/content', (req, res) => {
+app.get('/api/servers/:id/files/content', handleGetFileContent);
+app.get('/api/servers/:id/file', handleGetFileContent);
+
+// --- FILE MANAGER: SAVE FILE CONTENT (PLURAL & SINGULAR) ---
+const handleSaveFileContent = (req: any, res: any) => {
   const serverId = req.params.id;
-  const { file, content } = req.body;
+  const file = ((req.body.file || req.body.path || '') as string).replace(/^\/+/, '');
+  const content = req.body.content;
   if (!file || content === undefined) {
     return res.status(400).json({ error: 'Datei und Inhalt erforderlich' });
   }
@@ -1847,11 +1932,61 @@ app.post('/api/servers/:id/files/content', (req, res) => {
     const dir = path.dirname(fullPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(fullPath, content, 'utf8');
+    
+    // Also sync to server registry configFiles if applicable
+    const fileName = path.basename(file);
+    const servers = getServerRegistry();
+    const srv = servers.find(s => s.id === serverId);
+    if (srv) {
+      if (!srv.configFiles) srv.configFiles = {};
+      srv.configFiles[fileName] = content;
+      saveServerRegistry(servers);
+    }
+
     appendLog(serverId, 'INFO', `Konfigurationsdatei "${file}" gespeichert.`);
-    res.json({ success: true, file });
+    res.json({ success: true, file, path: '/' + file });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+};
+
+app.post('/api/servers/:id/files/content', handleSaveFileContent);
+app.post('/api/servers/:id/file', handleSaveFileContent);
+
+// --- FILE MANAGER: CREATE DIRECTORY ---
+app.post('/api/servers/:id/directory', (req, res) => {
+  const serverId = req.params.id;
+  const dirPath = ((req.body.path || req.body.name || '') as string).replace(/^\/+/, '');
+  if (!dirPath) return res.status(400).json({ error: 'Ordnerpfad erforderlich' });
+
+  const srvDir = path.join(DATA_DIR, serverId);
+  const fullPath = path.normalize(path.join(srvDir, dirPath));
+
+  if (!fullPath.startsWith(srvDir)) {
+    return res.status(403).json({ error: 'Zugriff verweigert' });
+  }
+
+  try {
+    if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
+    appendLog(serverId, 'INFO', `Ordner "${dirPath}" angelegt.`);
+    res.json({ success: true, path: '/' + dirPath });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- FILE MANAGER: DOWNLOAD FILE ---
+app.get('/api/servers/:id/download', (req, res) => {
+  const serverId = req.params.id;
+  const file = ((req.query.file || req.query.path || '') as string).replace(/^\/+/, '');
+  const srvDir = path.join(DATA_DIR, serverId);
+  const fullPath = path.normalize(path.join(srvDir, file));
+
+  if (!fullPath.startsWith(srvDir) || !fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+    return res.status(404).send('Datei nicht gefunden');
+  }
+
+  res.download(fullPath, path.basename(fullPath));
 });
 
 // --- FILE MANAGER: UPLOAD FILE (BASE64) ---
@@ -1881,16 +2016,16 @@ app.post('/api/servers/:id/files/upload', (req, res) => {
   }
 });
 
-// --- FILE MANAGER: DELETE FILE ---
-app.delete('/api/servers/:id/files', (req, res) => {
+// --- FILE MANAGER: DELETE FILE (PLURAL & SINGULAR) ---
+const handleDeleteFile = (req: any, res: any) => {
   const serverId = req.params.id;
-  const file = (req.body?.file || req.query?.file) as string;
+  const file = ((req.body?.file || req.body?.path || req.query?.file || req.query?.path) as string || '').replace(/^\/+/, '');
   if (!file) return res.status(400).json({ error: 'Keine Datei angegeben' });
 
   const srvDir = path.join(DATA_DIR, serverId);
   const fullPath = path.normalize(path.join(srvDir, file));
 
-  if (!fullPath.startsWith(srvDir)) {
+  if (!fullPath.startsWith(srvDir) || fullPath === srvDir) {
     return res.status(403).json({ error: 'Zugriff verweigert' });
   }
 
@@ -1908,7 +2043,10 @@ app.delete('/api/servers/:id/files', (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
-});
+};
+
+app.delete('/api/servers/:id/files', handleDeleteFile);
+app.delete('/api/servers/:id/file', handleDeleteFile);
 
 // --- SEND CONSOLE COMMAND ---
 app.post('/api/servers/:id/command', (req, res) => {

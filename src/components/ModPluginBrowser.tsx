@@ -228,7 +228,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
     setIsCheckingUpdates(true);
     setTimeout(() => {
       const updates: Record<string, string> = {};
-      server.installedMods.forEach((inst, idx) => {
+      (server.installedMods || []).forEach((inst, idx) => {
         // simulate available update for some mods
         if (idx % 2 === 0) {
           const parts = inst.version.split('.');
@@ -249,7 +249,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
   };
 
   const handleUpdateSingleMod = (installedId: string) => {
-    const target = server.installedMods.find(m => m.id === installedId);
+    const target = (server.installedMods || []).find(m => m.id === installedId);
     const newVer = updatesAvailableMap[installedId];
     if (target && newVer) {
       onInstallMod({
@@ -277,7 +277,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
   const handleUpdateAllMods = () => {
     const entries = Object.entries(updatesAvailableMap);
     entries.forEach(([id, newVer]) => {
-      const target = server.installedMods.find(m => m.id === id);
+      const target = (server.installedMods || []).find(m => m.id === id);
       if (target) {
         onInstallMod({
           id: target.modId,
@@ -343,7 +343,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
                 : 'text-neutral-400 hover:text-neutral-200'
             }`}
           >
-            <span>Installiert ({server.installedMods.length})</span>
+            <span>Installiert ({(server.installedMods || []).length})</span>
             {Object.keys(updatesAvailableMap).length > 0 && (
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             )}
@@ -556,7 +556,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              const target = server.installedMods.find(m => 
+                              const target = (server.installedMods || []).find(m => 
                                 m.modId.toLowerCase().trim() === mod.id.toLowerCase().trim() ||
                                 m.name.toLowerCase().trim() === mod.name.toLowerCase().trim()
                               );
@@ -671,7 +671,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
               </div>
             </div>
 
-            {server.installedMods.length > 2 && (
+            {(server.installedMods || []).length > 2 && (
               <div className="p-3 bg-neutral-950/60 border-b border-neutral-800">
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -686,7 +686,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
               </div>
             )}
 
-            {server.installedMods.length === 0 ? (
+            {(server.installedMods || []).length === 0 ? (
               <div className="p-12 text-center text-neutral-500 text-xs space-y-2">
                 <Package className="w-8 h-8 mx-auto text-neutral-600" />
                 <p>Es sind derzeit keine Mods oder Plugins auf diesem Server installiert.</p>
@@ -699,7 +699,7 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
               </div>
             ) : (
               <div className="divide-y divide-neutral-800/80">
-                {server.installedMods
+                {(server.installedMods || [])
                   .filter(m => 
                     !installedSearchQuery ||
                     m.name.toLowerCase().includes(installedSearchQuery.toLowerCase()) ||

@@ -236,6 +236,7 @@ export interface ServerFileItem {
   lastModified: string;
   content?: string;
   isEditable?: boolean;
+  children?: ServerFileItem[];
 }
 
 export interface ServerAuditLog {

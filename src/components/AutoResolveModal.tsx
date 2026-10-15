@@ -451,7 +451,7 @@ function generateFallbackAnalysis(server: ServerInstance, selectedMods: ModItem[
   const conflicts: Array<{ modA: string; modB: string; reason: string }> = [];
 
   const modNames = selectedMods.map(m => m.name.toLowerCase());
-  const installedNames = server.installedMods.map(m => m.name.toLowerCase());
+  const installedNames = (server.installedMods || []).map(m => m.name.toLowerCase());
   const allNames = [...modNames, ...installedNames];
 
   // 1. EssentialsX requires Vault

@@ -525,7 +525,7 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {displayItems.map((mod) => {
-                const isInstalledOnCurrent = currentTargetServer?.installedMods.some(inst => 
+                const isInstalledOnCurrent = (currentTargetServer?.installedMods || []).some(inst => 
                   inst.modId.toLowerCase() === mod.id.toLowerCase() ||
                   inst.name.toLowerCase().trim() === mod.name.toLowerCase().trim()
                 );
@@ -665,7 +665,7 @@ export const CentralModHub: React.FC<CentralModHubProps> = ({
             setSelectedModForDetail(null);
             setSelectedModForInstall(m);
           }}
-          isInstalled={currentTargetServer?.installedMods.some(inst => 
+          isInstalled={(currentTargetServer?.installedMods || []).some(inst => 
             inst.modId.toLowerCase() === selectedModForDetail.id.toLowerCase() ||
             inst.name.toLowerCase().trim() === selectedModForDetail.name.toLowerCase().trim()
           ) || false}

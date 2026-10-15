@@ -52,7 +52,10 @@ export function configureBackups(app: Express, root: string, state: string, regi
         const backupDir = directory(req.params.id);
         const archive = confinedPath(backupDir, id + '.tar.gz');
         try {
-          await run('tar', ['--warning=no-file-changed', '-czf', archive, '-C', source, '.'], { timeout: 30 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 });
+          const tarCreateArgs = process.platform === 'win32'
+            ? ['-czf', archive, '-C', source, '.']
+            : ['--warning=no-file-changed', '-czf', archive, '-C', source, '.'];
+          await run('tar', tarCreateArgs, { timeout: 30 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 });
           const server = registered(req.params.id);
           const info = {
             id,

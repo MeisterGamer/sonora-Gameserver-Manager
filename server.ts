@@ -256,7 +256,14 @@ function detectJava(): Promise<{ installed: boolean; version: string; rawOutput:
 
 // Helper: Detect SteamCMD on host
 function detectSteamCmd(): string | null {
-  const commonPaths = [
+  const isWin = process.platform === 'win32';
+  const commonPaths = isWin ? [
+    path.resolve(process.cwd(), 'steamcmd', 'steamcmd.exe'),
+    path.resolve(DATA_DIR, '..', 'steamcmd', 'steamcmd.exe'),
+    'C:\\steamcmd\\steamcmd.exe',
+    'C:\\Program Files (x86)\\SteamCMD\\steamcmd.exe',
+    'C:\\Program Files\\SteamCMD\\steamcmd.exe'
+  ] : [
     '/usr/games/steamcmd',
     '/opt/steamcmd/steamcmd.sh',
     '/usr/bin/steamcmd',
@@ -270,6 +277,14 @@ function detectSteamCmd(): string | null {
       } catch {}
     }
   }
+  try {
+    const whichCmd = isWin ? 'where steamcmd.exe' : 'which steamcmd';
+    const out = execSync(whichCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+    if (out) {
+      const firstLine = out.split(/\r?\n/)[0].trim();
+      if (fs.existsSync(firstLine)) return firstLine;
+    }
+  } catch {}
   return null;
 }
 
@@ -300,28 +315,34 @@ async function ensureSteamCmd(serverId?: string): Promise<string> {
   const existing = detectSteamCmd();
   if (existing) return existing;
 
+  const isWin = process.platform === 'win32';
   const targetDir = path.resolve(process.cwd(), 'steamcmd');
-  const targetScript = path.join(targetDir, 'steamcmd.sh');
+  const targetScript = path.join(targetDir, isWin ? 'steamcmd.exe' : 'steamcmd.sh');
   if (fs.existsSync(targetScript)) return targetScript;
 
   if (serverId) {
-    appendLog(serverId, 'INFO', '[STEAMCMD] SteamCMD nicht auf dem Host installiert. Lade offizielles Valve SteamCMD Portable herunter...');
+    appendLog(serverId, 'INFO', `[STEAMCMD] SteamCMD nicht auf dem Host installiert. Lade offizielles Valve SteamCMD für ${isWin ? 'Windows' : 'Linux'} herunter...`);
   }
 
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  const archiveUrl = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz';
+  const archiveUrl = isWin
+    ? 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
+    : 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz';
   const res = await fetch(archiveUrl);
   if (!res.ok) throw new Error(`Download von SteamCMD fehlgeschlagen (Status ${res.status})`);
   const buffer = Buffer.from(await res.arrayBuffer());
-  const archivePath = path.join(targetDir, 'steamcmd_linux.tar.gz');
+  const archivePath = path.join(targetDir, isWin ? 'steamcmd.zip' : 'steamcmd_linux.tar.gz');
   fs.writeFileSync(archivePath, buffer);
 
   // Extract archive
   await new Promise<void>((resolve, reject) => {
-    exec(`tar -xzf "${archivePath}" -C "${targetDir}"`, (err) => {
+    const extractCmd = isWin
+      ? `tar -xf "${archivePath}" -C "${targetDir}"`
+      : `tar -xzf "${archivePath}" -C "${targetDir}"`;
+    exec(extractCmd, (err) => {
       if (err) reject(err);
       else resolve();
     });
@@ -836,23 +857,28 @@ async function installSteamGameServer(
     targetExecutable = game.executable.linux.replace(/^\.\//, '');
   } else {
     // Standard executable names by app id or id
-    const knownNames: Record<number, string> = {
-      2394010: 'PalServer.sh',
-      258550: 'RustDedicated',
-      896660: 'valheim_server.x86_64',
-      4020: 'srcds_run',
-      730: 'cs2.sh',
-      2430930: 'ArkAscendedServer.sh',
-      2278520: 'enshrouded_server',
-      294420: '7DaysToDieServer.x86_64',
-      223350: 'DayZServer',
-      2465200: 'SonsOfTheForestDS.sh',
-      380870: 'start-server.sh',
-      556450: 'TheForestDedicatedServer.sh',
-      1829350: 'VRisingServer.sh',
-      443030: 'ConanSandboxServer.sh'
-    };
-    targetExecutable = knownNames[steamAppId] || `${game?.id || 'game'}_server.sh`;
+    const isWin = process.platform === 'win32';
+    if (isWin && game?.executable?.windows) {
+      targetExecutable = game.executable.windows;
+    } else {
+      const knownNames: Record<number, string> = {
+        2394010: isWin ? 'PalServer.exe' : 'PalServer.sh',
+        258550: isWin ? 'RustDedicated.exe' : 'RustDedicated',
+        896660: isWin ? 'valheim_server.exe' : 'valheim_server.x86_64',
+        4020: isWin ? 'srcds.exe' : 'srcds_run',
+        730: isWin ? 'cs2.exe' : 'cs2.sh',
+        2430930: isWin ? 'ArkAscendedServer.exe' : 'ArkAscendedServer.sh',
+        2278520: isWin ? 'enshrouded_server.exe' : 'enshrouded_server',
+        294420: isWin ? '7DaysToDieServer.exe' : '7DaysToDieServer.x86_64',
+        223350: isWin ? 'DayZServer_x64.exe' : 'DayZServer',
+        2465200: isWin ? 'SonsOfTheForestDS.exe' : 'SonsOfTheForestDS.sh',
+        380870: isWin ? 'start-server.bat' : 'start-server.sh',
+        556450: isWin ? 'TheForestDedicatedServer.exe' : 'TheForestDedicatedServer.sh',
+        1829350: isWin ? 'VRisingServer.exe' : 'VRisingServer.sh',
+        443030: isWin ? 'ConanSandboxServer.exe' : 'ConanSandboxServer.sh'
+      };
+      targetExecutable = knownNames[steamAppId] || (isWin ? `${game?.id || 'game'}_server.exe` : `${game?.id || 'game'}_server.sh`);
+    }
   }
 
   // Check if SteamCMD is available on host and can execute
@@ -873,8 +899,9 @@ async function installSteamGameServer(
     setInstallProgress(serverId, 25, 'steamcmd', `SteamCMD initialisiert. Starte Download für AppID ${steamAppId}...`);
 
     const steamSuccess = await new Promise<boolean>((resolve) => {
+      const isWin = process.platform === 'win32';
       const steamArgs = [
-        '+@sSteamCmdForcePlatformType', 'linux',
+        '+@sSteamCmdForcePlatformType', isWin ? 'windows' : 'linux',
         '+force_install_dir', srvDir,
         '+login', 'anonymous',
         '+app_update', String(steamAppId), 'validate',
@@ -1058,13 +1085,41 @@ done
 
 // Helper: Find game binary in server directory
 function findGameExecutable(srvDir: string, preferredExec?: string): string | null {
+  const isWin = process.platform === 'win32';
   if (preferredExec) {
     const clean = preferredExec.replace(/^\.\//, '');
-    const directPath = path.join(srvDir, clean);
-    if (fs.existsSync(directPath)) return directPath;
+    const candidates = [clean];
+    if (isWin) {
+      if (clean.endsWith('.sh')) candidates.unshift(clean.replace(/\.sh$/, '.exe'));
+      if (clean.endsWith('.x86_64')) candidates.unshift(clean.replace(/\.x86_64$/, '.exe'));
+      if (!clean.endsWith('.exe') && !clean.endsWith('.bat') && !clean.endsWith('.cmd')) candidates.push(clean + '.exe');
+    }
+    for (const cand of candidates) {
+      const directPath = path.join(srvDir, cand);
+      if (fs.existsSync(directPath)) return directPath;
+    }
   }
 
   const commonExecs = [
+    // Windows executables
+    'PalServer.exe',
+    'Pal/Binaries/Win64/PalServer-Win64-Test.exe',
+    'RustDedicated.exe',
+    'valheim_server.exe',
+    'srcds.exe',
+    'cs2.exe',
+    'ArkAscendedServer.exe',
+    'enshrouded_server.exe',
+    '7DaysToDieServer.exe',
+    'DayZServer_x64.exe',
+    'SonsOfTheForestDS.exe',
+    'start-server.bat',
+    'TheForestDedicatedServer.exe',
+    'VRisingServer.exe',
+    'ConanSandboxServer.exe',
+    'FactoryServer.exe',
+    'ShooterGame/Binaries/Win64/ShooterGameServer.exe',
+    // Linux executables
     'PalServer.sh',
     'Pal/Binaries/Linux/PalServer-Linux-Test',
     'RustDedicated',
@@ -1089,11 +1144,18 @@ function findGameExecutable(srvDir: string, preferredExec?: string): string | nu
     if (fs.existsSync(full)) return full;
   }
 
-  // Fallback: search for any .sh or .x86_64 script in srvDir
+  // Fallback: search for any .exe, .bat, .cmd (Windows) or .sh, .x86_64 (Linux)
   try {
     const entries = fs.readdirSync(srvDir);
-    const shFile = entries.find(e => (e.endsWith('.sh') || e.endsWith('.x86_64')) && !e.includes('install') && !e.includes('steamcmd'));
-    if (shFile) return path.join(srvDir, shFile);
+    const match = entries.find(e => {
+      const lower = e.toLowerCase();
+      if (lower.includes('install') || lower.includes('steamcmd')) return false;
+      if (isWin) {
+        return lower.endsWith('.exe') || lower.endsWith('.bat') || lower.endsWith('.cmd');
+      }
+      return (lower.endsWith('.sh') || lower.endsWith('.x86_64'));
+    });
+    if (match) return path.join(srvDir, match);
   } catch {}
 
   return null;
@@ -1168,10 +1230,18 @@ app.get('/api/system/diagnostics', async (_req, res) => {
       servers: serversStatus,
       activeProcessCount: activeProcesses.size,
       troubleshooting: {
-        javaCommand: 'sudo apt update && sudo apt install -y openjdk-21-jre-headless',
-        steamcmdCommand: 'sudo apt update && sudo apt install -y steamcmd',
-        firewallCommand: 'sudo ufw allow 25565/tcp && sudo ufw reload',
-        portsCheckCommand: 'ss -tulpn | grep 25565'
+        javaCommand: os.platform() === 'win32'
+          ? 'winget install -e --id EclipseAdoptium.Temurin.21.JDK'
+          : 'sudo apt update && sudo apt install -y openjdk-21-jre-headless',
+        steamcmdCommand: os.platform() === 'win32'
+          ? 'curl -sqL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip" -o steamcmd.zip && tar -xf steamcmd.zip'
+          : 'sudo apt update && sudo apt install -y steamcmd',
+        firewallCommand: os.platform() === 'win32'
+          ? 'netsh advfirewall firewall add rule name="Minecraft" dir=in action=allow protocol=TCP localport=25565'
+          : 'sudo ufw allow 25565/tcp && sudo ufw reload',
+        portsCheckCommand: os.platform() === 'win32'
+          ? 'netstat -ano | findstr :25565'
+          : 'ss -tulpn | grep 25565'
       }
     });
   } catch (err: any) {
@@ -1282,10 +1352,16 @@ app.post('/api/servers/:id/power', async (req, res) => {
       let javaBin = 'java';
       let runtimeEnv: NodeJS.ProcessEnv = { ...process.env };
 
-      if (fs.existsSync(path.join(portableJavaHome, 'bin', 'java'))) {
-        javaBin = path.join(portableJavaHome, 'bin', 'java');
+      const isWin = process.platform === 'win32';
+      const potentialJavaBins = isWin
+        ? [path.join(portableJavaHome, 'bin', 'java.exe'), path.join(portableJavaHome, 'bin', 'java')]
+        : [path.join(portableJavaHome, 'bin', 'java'), path.join(portableJavaHome, 'bin', 'java.exe')];
+      const existingPortableJava = potentialJavaBins.find(p => fs.existsSync(p));
+
+      if (existingPortableJava) {
+        javaBin = existingPortableJava;
         runtimeEnv.JAVA_HOME = portableJavaHome;
-        runtimeEnv.PATH = `${path.join(portableJavaHome, 'bin')}:${process.env.PATH || ''}`;
+        runtimeEnv.PATH = `${path.join(portableJavaHome, 'bin')}${path.delimiter}${process.env.PATH || ''}`;
         appendLog(serverId, 'INFO', `[JAVA RUNTIME] Verwende portables JDK ${jdkMajor}: ${javaBin}`);
       } else {
         appendLog(serverId, 'INFO', `[JAVA RUNTIME] Portables JDK ${jdkMajor} wird für den Start bereitgestellt...`);
@@ -1293,7 +1369,7 @@ app.post('/api/servers/:id/power', async (req, res) => {
           const installedPath = await ensureJdk(JDKS_DIR, jdkMajor);
           javaBin = installedPath;
           runtimeEnv.JAVA_HOME = portableJavaHome;
-          runtimeEnv.PATH = `${path.join(portableJavaHome, 'bin')}:${process.env.PATH || ''}`;
+          runtimeEnv.PATH = `${path.join(portableJavaHome, 'bin')}${path.delimiter}${process.env.PATH || ''}`;
           appendLog(serverId, 'SUCCESS', `[JAVA RUNTIME] Portables JDK ${jdkMajor} einsatzbereit: ${javaBin}`);
         } catch (jdkErr: any) {
           appendLog(serverId, 'WARN', `Portables JDK ${jdkMajor} nicht verfügbar (${jdkErr.message}). Prüfe Host-Java...`);
@@ -1434,12 +1510,17 @@ app.post('/api/servers/:id/power', async (req, res) => {
 
       try {
         appendLog(serverId, 'INFO', `Führe aus: ${path.basename(execPath)} ${rawArgs}`);
+        const isWin = process.platform === 'win32';
+        const spawnEnv = isWin
+          ? { ...process.env }
+          : {
+              ...process.env,
+              LD_LIBRARY_PATH: `${srvDir}/linux64:${srvDir}:${process.env.LD_LIBRARY_PATH || ''}`
+            };
         const child = spawn(execPath, parsedArgs, {
           cwd: srvDir,
-          env: {
-            ...process.env,
-            LD_LIBRARY_PATH: `${srvDir}/linux64:${srvDir}:${process.env.LD_LIBRARY_PATH || ''}`
-          }
+          env: spawnEnv,
+          shell: isWin && (execPath.endsWith('.bat') || execPath.endsWith('.cmd'))
         });
 
         if (!child.pid) {
@@ -1497,12 +1578,20 @@ app.post('/api/servers/:id/power', async (req, res) => {
       }
       setTimeout(() => {
         if (activeProcesses.has(serverId)) {
-          procInfo.process.kill('SIGTERM');
+          if (process.platform === 'win32') {
+            try { exec(`taskkill /pid ${procInfo.pid} /T /F`); } catch {}
+          } else {
+            procInfo.process.kill('SIGTERM');
+          }
         }
       }, 3000);
       return res.json({ success: true, message: 'Stopp-Signal gesendet.' });
     } catch (e: any) {
-      procInfo.process.kill('SIGKILL');
+      if (process.platform === 'win32') {
+        try { exec(`taskkill /pid ${procInfo.pid} /T /F`); } catch {}
+      } else {
+        procInfo.process.kill('SIGKILL');
+      }
       activeProcesses.delete(serverId);
       return res.json({ success: true, message: 'Prozess beendet.' });
     }
@@ -1512,7 +1601,11 @@ app.post('/api/servers/:id/power', async (req, res) => {
     // Stop then start
     const procInfo = activeProcesses.get(serverId);
     if (procInfo) {
-      procInfo.process.kill('SIGTERM');
+      if (process.platform === 'win32') {
+        try { exec(`taskkill /pid ${procInfo.pid} /T /F`); } catch {}
+      } else {
+        procInfo.process.kill('SIGTERM');
+      }
       activeProcesses.delete(serverId);
     }
     return res.json({ success: true, message: 'Neustart eingeleitet.' });

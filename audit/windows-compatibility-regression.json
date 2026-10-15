@@ -1,0 +1,29 @@
+{
+  "checks": [
+    "install.bat exists",
+    "install.bat prepares data and runtime directories",
+    "install.bat checks or installs Node.js",
+    "install.bat checks or installs Java 21 LTS",
+    "install.bat sets up Valve SteamCMD for Windows",
+    "install.bat installs npm dependencies",
+    "install.bat compiles production frontend build",
+    "install.bat configures Windows Defender Firewall rules",
+    "install.bat verifies start-manager.bat",
+    "start-manager.bat exists",
+    "start-manager.bat sets NODE_ENV=production",
+    "start-manager.bat sets PORT=3000",
+    "start-manager.bat sets APEXHOST_DATA_DIR",
+    "start-manager.bat executes server.ts",
+    "server.ts detectSteamCmd handles Windows steamcmd.exe and common paths",
+    "server.ts ensureSteamCmd downloads steamcmd.zip on Windows",
+    "server.ts findGameExecutable detects Windows .exe binaries",
+    "server.ts uses path.delimiter for Java runtime PATH",
+    "server.ts uses taskkill on Windows for terminating processes",
+    "server.ts diagnostics endpoint includes Windows troubleshooting commands",
+    "confinedPath resolves valid nested path",
+    "backend/backups.ts omits --warning=no-file-changed on Windows",
+    "backend/java.ts supports Windows platform in ensureJdk",
+    "backend/java.ts supports java.exe in verifyJdk"
+  ],
+  "timestamp": "2026-10-15T12:47:08.445Z"
+}

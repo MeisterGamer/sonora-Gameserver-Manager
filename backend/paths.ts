@@ -14,8 +14,11 @@ export function confinedPath(root: string, relative: string): string {
   }
   const resolvedRoot = path.resolve(root);
   const target = path.resolve(resolvedRoot, relative);
+  const cleanWinPath = (p: string) => p.replace(/^\\\\\?\\/, '');
   const inside = (base: string, candidate: string) => {
-    const rel = path.relative(base, candidate);
+    const normBase = cleanWinPath(path.normalize(base));
+    const normCand = cleanWinPath(path.normalize(candidate));
+    const rel = path.relative(normBase, normCand);
     return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
   };
   if (!inside(resolvedRoot, target)) throw new Error('Pfad verlässt das Instanzverzeichnis');

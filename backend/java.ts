@@ -39,8 +39,16 @@ export function jdkHome(root: string, major: number) {
   return path.join(root, 'jdk-' + major);
 }
 export async function verifyJdk(home: string, major: number, execute = run) {
-  const executable = path.join(home, 'bin', 'java');
-  if (!fs.existsSync(executable)) throw new Error('Java-Executable nicht gefunden: ' + executable);
+  let executable = path.join(home, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+  if (!fs.existsSync(executable)) {
+    if (fs.existsSync(path.join(home, 'bin', 'java'))) {
+      executable = path.join(home, 'bin', 'java');
+    } else if (fs.existsSync(path.join(home, 'bin', 'java.exe'))) {
+      executable = path.join(home, 'bin', 'java.exe');
+    } else {
+      throw new Error('Java-Executable nicht gefunden: ' + executable);
+    }
+  }
   try { fs.chmodSync(executable, 0o755); } catch {}
 
   const binDir = path.join(home, 'bin');
@@ -72,10 +80,11 @@ export async function verifyJdk(home: string, major: number, execute = run) {
       throw new Error('Java-Verifizierung fehlgeschlagen: ' + err.message);
     }
   }
-  const javac = path.join(path.dirname(executable), 'javac');
-  if (fs.existsSync(javac)) {
+  const javac = path.join(path.dirname(executable), process.platform === 'win32' ? 'javac.exe' : 'javac');
+  const targetJavac = fs.existsSync(javac) ? javac : path.join(path.dirname(executable), 'javac');
+  if (fs.existsSync(targetJavac)) {
     try {
-      await execute(javac, ['-version'], { timeout: 30000 });
+      await execute(targetJavac, ['-version'], { timeout: 30000 });
     } catch {}
   }
   return executable;
@@ -84,7 +93,9 @@ const jobs = new Map<string, Promise<string>>();
 export type ProgressCallback = (percent: number, message: string) => void;
 
 export async function ensureJdk(root: string, major: number, onProgress?: ProgressCallback) {
-  if (process.platform !== 'linux' || process.arch !== 'x64') throw new Error('JDK-Installation unterstützt derzeit Linux x64');
+  if ((process.platform !== 'linux' && process.platform !== 'win32') || (process.arch !== 'x64' && process.arch !== 'arm64')) {
+    throw new Error('JDK-Installation unterstützt derzeit Linux x64 und Windows x64');
+  }
   return installJdk(root, major, fetch, run, onProgress);
 }
 
@@ -200,7 +211,10 @@ export async function installJdk(
       fs.renameSync(extracted, home);
 
       onProgress?.(100, `Portables JDK ${major} erfolgreich eingerichtet.`);
-      return path.join(home, 'bin', 'java');
+      const returnBin = process.platform === 'win32' && fs.existsSync(path.join(home, 'bin', 'java.exe'))
+        ? path.join(home, 'bin', 'java.exe')
+        : path.join(home, 'bin', 'java');
+      return returnBin;
     } finally {
       fs.rmSync(temporary, { recursive: true, force: true });
     }

@@ -300,9 +300,18 @@ export default function App() {
 
 
 
-  const handleSaveConfigFile = async (serverId: string, filename: string, content: string) => {
-    await apiRequest('/api/servers/' + serverId + '/file', 'POST', { path: filename, content });
-    setServers(prev => prev.map(server => server.id === serverId ? { ...server, configFiles: { ...server.configFiles, [filename]: content } } : server));
+  const handleSaveConfigFile = async (serverId: string, filePath: string, content: string) => {
+    const cleanRel = filePath.replace(/^\/+/, '');
+    await apiRequest('/api/servers/' + serverId + '/file', 'POST', { path: cleanRel, content });
+    const baseName = cleanRel.split('/').pop() || cleanRel;
+    setServers(prev => prev.map(server => server.id === serverId ? { 
+      ...server, 
+      configFiles: { 
+        ...server.configFiles, 
+        [cleanRel]: content,
+        ...(cleanRel === baseName ? { [baseName]: content } : {})
+      } 
+    } : server));
   };
 
 

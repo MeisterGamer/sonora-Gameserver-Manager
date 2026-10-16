@@ -88,12 +88,8 @@ export const ConfigEditModal: React.FC<ConfigEditModalProps> = ({
     setErrorMessage(null);
     setSaveSuccess(false);
 
-    // Default to GUI tab if it's a properties file, otherwise raw editor
-    if (file.name === 'server.properties' || fileExt === 'properties') {
-      setActiveTab('gui');
-    } else {
-      setActiveTab('raw');
-    }
+    // Default to Code-Editor tab for exact fidelity; users can toggle GUI for properties
+    setActiveTab('raw');
 
     const loadContent = async () => {
       try {
@@ -113,7 +109,7 @@ export const ConfigEditModal: React.FC<ConfigEditModalProps> = ({
       }
 
       if (isMounted) {
-        const fallback = initialContent ?? file.content ?? `# ${file.name}\n`;
+        const fallback = initialContent ?? file.content ?? (file.name === 'eula.txt' ? 'eula=true\n' : (file.name === 'server.properties' ? `server-port=25565\nmotd=§aApexHost Minecraft Server§r\nonline-mode=true\nmax-players=20\n` : ''));
         setContent(fallback);
         setOriginalContent(fallback);
         setIsLoading(false);
@@ -217,13 +213,13 @@ export const ConfigEditModal: React.FC<ConfigEditModalProps> = ({
   }, [content, isKeyValueFile]);
 
   const updateKeyValue = (key: string, newVal: string) => {
-    const lines = content.split('\n');
-    const regex = new RegExp(`^${key}=.*$`, 'm');
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`^(\\s*${escapedKey}\\s*[:=]\\s*).*$`, 'm');
     let updated: string;
     if (regex.test(content)) {
-      updated = content.replace(regex, `${key}=${newVal}`);
+      updated = content.replace(regex, `$1${newVal}`);
     } else {
-      updated = content + `\n${key}=${newVal}`;
+      updated = content.endsWith('\n') ? `${content}${key}=${newVal}\n` : `${content}\n${key}=${newVal}\n`;
     }
     setContent(updated);
   };

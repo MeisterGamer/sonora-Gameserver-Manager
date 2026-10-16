@@ -417,7 +417,8 @@ export const SyntaxCodeEditor: React.FC<SyntaxCodeEditorProps> = ({
             ref={textareaRef}
             value={value}
             onChange={(e) => {
-              onChange(e.target.value);
+              const normalized = e.target.value.replace(/\r\n/g, '\n');
+              onChange(normalized);
               updateCursorLine();
             }}
             onScroll={handleScroll}
@@ -432,8 +433,8 @@ export const SyntaxCodeEditor: React.FC<SyntaxCodeEditorProps> = ({
             autoCorrect="off"
             className={`w-full h-full p-3 font-mono text-xs leading-[1.625rem] bg-transparent resize-none border-none outline-none focus:ring-0 ${
               syntaxEnabled 
-                ? 'text-transparent caret-emerald-400 selection:bg-emerald-900/50 selection:text-transparent' 
-                : 'text-neutral-200 caret-emerald-400 selection:bg-emerald-900/80 selection:text-white'
+                ? 'text-transparent caret-emerald-400 selection:bg-emerald-700/70 selection:text-white' 
+                : 'text-neutral-100 caret-emerald-400 selection:bg-emerald-700/70 selection:text-white'
             } ${wordWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'} overflow-y-auto`}
             style={{
               tabSize: 2,

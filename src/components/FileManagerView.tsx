@@ -433,9 +433,9 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const sftpHost = `sftp.apexhost.net`;
+  const sftpHost = (typeof window !== 'undefined' && window.location.hostname) ? window.location.hostname : 'localhost';
   const sftpPort = 2022;
-  const sftpUser = `apex_${server.id.replace(/[^a-zA-Z0-9]/g, '')}`;
+  const sftpUser = `apex_${server.id}`;
 
   const copySftpString = () => {
     navigator.clipboard.writeText(`sftp://${sftpUser}@${sftpHost}:${sftpPort}`);
@@ -453,21 +453,25 @@ export const FileManagerView: React.FC<FileManagerViewProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-semibold text-neutral-200">SFTP / FTPS Dateizugriff</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-sky-950 text-sky-400 border border-sky-800/60">
-                Port {sftpPort} (SSL/TLS)
+              <span className="font-semibold text-neutral-200">SFTP / SSH Dateizugriff (FileZilla / WinSCP)</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-400 border border-emerald-800/60">
+                Aktiv auf Port {sftpPort}
               </span>
             </div>
-            <p className="text-neutral-400 mt-0.5">
-              Host: <span className="font-mono text-neutral-300">{sftpHost}</span> | User: <span className="font-mono text-neutral-300">{sftpUser}</span>
+            <p className="text-neutral-400 mt-1 font-mono text-[11px] flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span>Host: <strong className="text-neutral-200">{sftpHost}</strong></span>
+              <span>Port: <strong className="text-neutral-200">{sftpPort}</strong></span>
+              <span>User: <strong className="text-neutral-200">{sftpUser}</strong></span>
+              <span>Passwort: <strong className="text-neutral-300">Panel-Passwort (Standard: apexhost)</strong></span>
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={copySftpString}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-950 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 cursor-pointer transition-colors"
+            title="sftp:// URL kopieren"
           >
             {copySftpSuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copySftpSuccess ? 'Kopiert!' : 'SFTP-URL kopieren'}</span>

@@ -29,7 +29,17 @@ import {
   AlertCircle,
   Eye,
   LayoutGrid,
-  List
+  List,
+  FolderArchive,
+  PackageOpen,
+  CheckSquare,
+  Square,
+  MinusSquare,
+  FolderUp,
+  FileUp,
+  X,
+  FileArchive,
+  Layers
 } from 'lucide-react';
 import { ServerInstance, ServerFileItem } from '../types/game';
 import { ConfigEditModal } from './ConfigEditModal';
@@ -166,10 +176,45 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
   // Delete Confirm Modal
   const [itemToDelete, setItemToDelete] = useState<ServerFileItem | null>(null);
 
-  // Upload state
+  // Upload and Multi-Select state
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const multiFileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [copySftpSuccess, setCopySftpSuccess] = useState<boolean>(false);
+
+  // Multi-Selection State
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+
+  // Drag and Drop state
+  const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
+  const dragCounterRef = useRef<number>(0);
+
+  // Upload Progress
+  const [uploadProgress, setUploadProgress] = useState<{
+    active: boolean;
+    current: number;
+    total: number;
+    filename: string;
+    percent: number;
+    totalBytes: number;
+  }>({ active: false, current: 0, total: 0, filename: '', percent: 0, totalBytes: 0 });
+
+  // ZIP Modal State
+  const [isZipModalOpen, setIsZipModalOpen] = useState<boolean>(false);
+  const [zipTargetPaths, setZipTargetPaths] = useState<string[]>([]);
+  const [zipArchiveName, setZipArchiveName] = useState<string>('');
+  const [isCreatingZip, setIsCreatingZip] = useState<boolean>(false);
+
+  // UNZIP Modal State
+  const [isUnzipModalOpen, setIsUnzipModalOpen] = useState<boolean>(false);
+  const [unzipTargetItem, setUnzipTargetItem] = useState<ServerFileItem | null>(null);
+  const [unzipDestinationDir, setUnzipDestinationDir] = useState<string>('');
+  const [isExtractingZip, setIsExtractingZip] = useState<boolean>(false);
+
+  // Batch Delete State
+  const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState<boolean>(false);
+  const [isBatchDeleting, setIsBatchDeleting] = useState<boolean>(false);
 
   // Build tree from flat files list
   const fileTree = useMemo(() => {
@@ -275,12 +320,12 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
     if (selectedFile?.path === filePath) {
       setSelectedFile(prev => prev ? { ...prev, content: newContent, lastModified: 'Gerade eben' } : null);
     }
-    const fileName = filePath.split('/').pop() || '';
+    const cleanRel = filePath.replace(/^\/+/, '');
     if (onSaveConfigFile) {
-      onSaveConfigFile(fileName, newContent);
+      onSaveConfigFile(cleanRel, newContent);
     }
     if (onNotify) {
-      onNotify(`Konfiguration "${fileName}" erfolgreich gespeichert.`);
+      onNotify(`Konfiguration "${filePath.split('/').pop() || filePath}" erfolgreich gespeichert.`);
     }
     loadDirectoryFiles(currentPath);
   };
@@ -370,39 +415,393 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
     loadDirectoryFiles(currentPath);
   };
 
-  // Upload file
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Clear selection on path change
+  useEffect(() => {
+    setSelectedPaths(new Set());
+  }, [currentPath]);
+
+  // Multi-Selection Computations
+  const allCurrentPaths = useMemo(() => currentDirectoryItems.map(f => f.path), [currentDirectoryItems]);
+  const allSelected = allCurrentPaths.length > 0 && allCurrentPaths.every(p => selectedPaths.has(p));
+  const someSelected = allCurrentPaths.some(p => selectedPaths.has(p)) && !allSelected;
+
+  const toggleSelectAll = () => {
+    setSelectedPaths(prev => {
+      const next = new Set(prev);
+      if (allSelected) {
+        allCurrentPaths.forEach(p => next.delete(p));
+      } else {
+        allCurrentPaths.forEach(p => next.add(p));
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectItem = (filePath: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedPaths(prev => {
+      const next = new Set(prev);
+      if (next.has(filePath)) {
+        next.delete(filePath);
+      } else {
+        next.add(filePath);
+      }
+      return next;
+    });
+  };
+
+  // Convert File to Base64
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.includes(',') ? result.split(',')[1] : result;
+        resolve(base64);
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Upload Batch (Files & Folders)
+  const uploadFilesBatch = async (items: Array<{ file: File; relativePath: string }>) => {
+    if (!items.length) return;
 
     setIsUploading(true);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const base64 = (reader.result as string).split(',')[1];
-        const subDir = currentPath === '/' ? '' : currentPath.replace(/^\//, '');
-        const res = await fetch(`/api/servers/${server.id}/files/upload`, {
+    setUploadProgress({
+      active: true,
+      current: 0,
+      total: items.length,
+      filename: items[0].file.name,
+      percent: 0,
+      totalBytes: items.reduce((acc, it) => acc + it.file.size, 0)
+    });
+
+    const subDir = currentPath === '/' ? '' : currentPath.replace(/^\//, '');
+    const batchSize = 10;
+    let uploadedCount = 0;
+
+    try {
+      for (let i = 0; i < items.length; i += batchSize) {
+        const chunk = items.slice(i, i + batchSize);
+        const encodedChunk = await Promise.all(
+          chunk.map(async (item, chunkIdx) => {
+            setUploadProgress(prev => ({
+              ...prev,
+              current: i + chunkIdx + 1,
+              filename: item.relativePath || item.file.name,
+              percent: Math.round(((i + chunkIdx) / items.length) * 100)
+            }));
+            const base64 = await fileToBase64(item.file);
+            return {
+              filename: item.file.name,
+              relativePath: item.relativePath || item.file.name,
+              base64
+            };
+          })
+        );
+
+        const res = await fetch(`/api/servers/${server.id}/files/upload-batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            filename: file.name,
-            path: subDir,
-            base64
+            destinationDir: subDir,
+            files: encodedChunk
           })
         });
 
-        if (res.ok) {
-          if (onNotify) onNotify(`Upload erfolgreich: ${file.name}`);
-          loadDirectoryFiles(currentPath);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Upload-Fehler bei Batch ${Math.floor(i / batchSize) + 1}`);
         }
-      } catch (err: any) {
-        if (onNotify) onNotify(`Upload fehlgeschlagen: ${err.message}`);
-      } finally {
-        setIsUploading(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
+
+        const data = await res.json();
+        uploadedCount += data.count || encodedChunk.length;
+        setUploadProgress(prev => ({
+          ...prev,
+          current: Math.min(items.length, i + batchSize),
+          percent: Math.round((Math.min(items.length, i + batchSize) / items.length) * 100)
+        }));
       }
-    };
-    reader.readAsDataURL(file);
+
+      if (onNotify) {
+        onNotify(`Erfolgreich ${uploadedCount} Datei(en) in "${currentPath}" hochgeladen!`);
+      }
+      loadDirectoryFiles(currentPath);
+    } catch (err: any) {
+      if (onNotify) onNotify(`Upload-Fehler: ${err.message}`);
+    } finally {
+      setIsUploading(false);
+      setTimeout(() => {
+        setUploadProgress(prev => ({ ...prev, active: false }));
+      }, 1200);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (multiFileInputRef.current) multiFileInputRef.current.value = '';
+      if (folderInputRef.current) folderInputRef.current.value = '';
+    }
+  };
+
+  // Single file input change
+  const handleSingleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    uploadFilesBatch([{ file, relativePath: file.name }]);
+  };
+  const handleFileUpload = handleSingleFileUpload;
+
+  // Multiple files input change
+  const handleMultiFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const items = Array.from(files).map(f => ({
+      file: f,
+      relativePath: f.name
+    }));
+    uploadFilesBatch(items);
+  };
+
+  // Folder upload input change (webkitdirectory)
+  const handleFolderUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const items = Array.from(files).map(f => ({
+      file: f,
+      relativePath: (f as any).webkitRelativePath || f.name
+    }));
+    uploadFilesBatch(items);
+  };
+
+  // Recursive directory reader for Drag and Drop (standard W3C webkitGetAsEntry)
+  const scanDirectoryEntry = async (entry: any, basePath = ''): Promise<Array<{ file: File; relativePath: string }>> => {
+    if (entry.isFile) {
+      return new Promise((resolve) => {
+        entry.file((file: File) => {
+          const rel = basePath ? `${basePath}/${file.name}` : file.name;
+          resolve([{ file, relativePath: rel }]);
+        }, () => resolve([]));
+      });
+    } else if (entry.isDirectory) {
+      const dirReader = entry.createReader();
+      const currentBase = basePath ? `${basePath}/${entry.name}` : entry.name;
+      const readEntries = (): Promise<any[]> => {
+        return new Promise((resolve) => {
+          dirReader.readEntries((batch: any[]) => {
+            resolve(batch || []);
+          }, () => resolve([]));
+        });
+      };
+
+      let entries: any[] = [];
+      let batch = await readEntries();
+      while (batch && batch.length > 0) {
+        entries = entries.concat(batch);
+        batch = await readEntries();
+      }
+
+      const results: Array<{ file: File; relativePath: string }> = [];
+      for (const child of entries) {
+        const subFiles = await scanDirectoryEntry(child, currentBase);
+        results.push(...subFiles);
+      }
+      return results;
+    }
+    return [];
+  };
+
+  // Drag & Drop Handlers
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDraggingOver(false);
+
+    const items = e.dataTransfer.items;
+    const filesToUpload: Array<{ file: File; relativePath: string }> = [];
+
+    if (items && items.length > 0) {
+      const promises: Promise<any>[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (typeof (item as any).webkitGetAsEntry === 'function') {
+          const entry = (item as any).webkitGetAsEntry();
+          if (entry) {
+            promises.push(scanDirectoryEntry(entry, ''));
+            continue;
+          }
+        }
+        const file = item.getAsFile();
+        if (file) {
+          filesToUpload.push({ file, relativePath: file.name });
+        }
+      }
+
+      if (promises.length > 0) {
+        const resolvedLists = await Promise.all(promises);
+        resolvedLists.forEach(list => filesToUpload.push(...list));
+      }
+    } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      for (let i = 0; i < e.dataTransfer.files.length; i++) {
+        const file = e.dataTransfer.files[i];
+        filesToUpload.push({
+          file,
+          relativePath: (file as any).webkitRelativePath || file.name
+        });
+      }
+    }
+
+    if (filesToUpload.length > 0) {
+      uploadFilesBatch(filesToUpload);
+    }
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types && (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('application/x-moz-file'))) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDraggingOver(false);
+    }
+  };
+
+  // ZIP Creation
+  const handleOpenZipModal = (item?: ServerFileItem) => {
+    const paths = item ? [item.path] : Array.from(selectedPaths);
+    if (!paths.length) return;
+    setZipTargetPaths(paths);
+
+    if (item) {
+      const cleanName = item.name.replace(/\.[^.]+$/, '');
+      setZipArchiveName(`${cleanName}.zip`);
+    } else if (paths.length === 1) {
+      const single = paths[0].split('/').pop() || 'archiv';
+      setZipArchiveName(`${single.replace(/\.[^.]+$/, '')}.zip`);
+    } else {
+      const dateStr = new Date().toISOString().slice(0, 10);
+      setZipArchiveName(`archiv-${dateStr}.zip`);
+    }
+    setIsZipModalOpen(true);
+  };
+
+  const handleConfirmCreateZip = async () => {
+    if (!zipTargetPaths.length) return;
+    setIsCreatingZip(true);
+    try {
+      const subDir = currentPath === '/' ? '' : currentPath.replace(/^\//, '');
+      const res = await fetch(`/api/servers/${server.id}/files/zip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paths: zipTargetPaths.map(p => p.replace(/^\//, '')),
+          archiveName: zipArchiveName,
+          destinationDir: subDir
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Fehler beim Erstellen des ZIP-Archivs');
+      }
+
+      const data = await res.json();
+      if (onNotify) {
+        onNotify(`ZIP-Archiv "${data.archiveName}" erfolgreich erstellt! (${formatFileSize(data.sizeBytes)})`);
+      }
+      setIsZipModalOpen(false);
+      setSelectedPaths(new Set());
+      loadDirectoryFiles(currentPath);
+    } catch (err: any) {
+      if (onNotify) onNotify(`ZIP-Fehler: ${err.message}`);
+    } finally {
+      setIsCreatingZip(false);
+    }
+  };
+
+  // UNZIP Extraction
+  const handleOpenUnzipModal = (item: ServerFileItem) => {
+    setUnzipTargetItem(item);
+    setUnzipDestinationDir(currentPath);
+    setIsUnzipModalOpen(true);
+  };
+
+  const handleConfirmUnzip = async () => {
+    if (!unzipTargetItem) return;
+    setIsExtractingZip(true);
+    try {
+      const cleanFile = unzipTargetItem.path.replace(/^\//, '');
+      const cleanDest = (unzipDestinationDir || currentPath).replace(/^\//, '');
+      const res = await fetch(`/api/servers/${server.id}/files/unzip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file: cleanFile,
+          destinationDir: cleanDest,
+          overwrite: true
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Fehler beim Entpacken des Archivs');
+      }
+
+      const data = await res.json();
+      if (onNotify) {
+        onNotify(`Archiv "${unzipTargetItem.name}" erfolgreich entpackt! (${data.extractedCount} Dateien extrahiert)`);
+      }
+      setIsUnzipModalOpen(false);
+      loadDirectoryFiles(currentPath);
+    } catch (err: any) {
+      if (onNotify) onNotify(`Entpacken fehlgeschlagen: ${err.message}`);
+    } finally {
+      setIsExtractingZip(false);
+    }
+  };
+
+  // Batch Delete
+  const handleBatchDelete = async () => {
+    const paths = Array.from(selectedPaths);
+    if (!paths.length) return;
+    setIsBatchDeleting(true);
+    try {
+      const res = await fetch(`/api/servers/${server.id}/files/delete-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: paths.map(p => p.replace(/^\//, ''))
+        })
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Fehler beim Löschen');
+      }
+      const data = await res.json();
+      if (onNotify) {
+        onNotify(`${data.count} Element(e) erfolgreich gelöscht.`);
+      }
+      setIsBatchDeleteModalOpen(false);
+      setSelectedPaths(new Set());
+      loadDirectoryFiles(currentPath);
+    } catch (err: any) {
+      if (onNotify) onNotify(`Löschen fehlgeschlagen: ${err.message}`);
+    } finally {
+      setIsBatchDeleting(false);
+    }
   };
 
   const formatFileSize = (bytes: number) => {
@@ -425,7 +824,10 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
     if (['properties', 'yml', 'yaml', 'json', 'toml', 'cfg', 'ini', 'conf'].includes(ext || '')) {
       return <FileCode className="w-4 h-4 text-emerald-400 shrink-0" />;
     }
-    if (ext === 'jar' || ext === 'zip' || ext === 'gz') {
+    if (ext === 'zip') {
+      return <FolderArchive className="w-4 h-4 text-purple-400 shrink-0" />;
+    }
+    if (ext === 'jar' || ext === 'gz' || ext === 'tar') {
       return <Archive className="w-4 h-4 text-purple-400 shrink-0" />;
     }
     if (ext === 'sh' || ext === 'bat') {
@@ -435,9 +837,9 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
   };
 
   // SFTP helper
-  const sftpHost = `sftp.apexhost.net`;
+  const sftpHost = (typeof window !== 'undefined' && window.location.hostname) ? window.location.hostname : 'localhost';
   const sftpPort = 2022;
-  const sftpUser = `apex_${server.id.replace(/[^a-zA-Z0-9]/g, '')}`;
+  const sftpUser = `apex_${server.id}`;
 
   const copySftpString = () => {
     navigator.clipboard.writeText(`sftp://${sftpUser}@${sftpHost}:${sftpPort}`);
@@ -528,21 +930,25 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-semibold text-neutral-200">SFTP / FTPS Dateizugriff</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-sky-950 text-sky-400 border border-sky-800/60">
-                Port {sftpPort} (SSL/TLS)
+              <span className="font-semibold text-neutral-200">SFTP / SSH Dateizugriff (FileZilla / WinSCP)</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-400 border border-emerald-800/60">
+                Aktiv auf Port {sftpPort}
               </span>
             </div>
-            <p className="text-neutral-400 mt-0.5">
-              Host: <span className="font-mono text-neutral-300">{sftpHost}</span> | User: <span className="font-mono text-neutral-300">{sftpUser}</span>
+            <p className="text-neutral-400 mt-1 font-mono text-[11px] flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span>Host: <strong className="text-neutral-200">{sftpHost}</strong></span>
+              <span>Port: <strong className="text-neutral-200">{sftpPort}</strong></span>
+              <span>User: <strong className="text-neutral-200">{sftpUser}</strong></span>
+              <span>Passwort: <strong className="text-neutral-300">Panel-Passwort (Standard: apexhost)</strong></span>
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={copySftpString}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-950 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 cursor-pointer transition-colors"
+            title="sftp:// URL kopieren"
           >
             {copySftpSuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copySftpSuccess ? 'Kopiert!' : 'SFTP-URL kopieren'}</span>
@@ -553,7 +959,7 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
             title="In externem SFTP-Client (FileZilla / WinSCP) öffnen"
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            <span>FileZilla</span>
+            <span>FileZilla verbinden</span>
           </a>
         </div>
       </div>
@@ -580,8 +986,55 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
         </div>
       )}
 
-      {/* Main Hierarchical File Explorer Container */}
-      <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden min-h-[600px] flex flex-col shadow-lg">
+      {/* Main Hierarchical File Explorer Container with Full Drag & Drop */}
+      <div 
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden min-h-[600px] flex flex-col shadow-lg relative"
+      >
+        {/* Full-Surface Drag & Drop Visual Overlay */}
+        {isDraggingOver && (
+          <div className="absolute inset-0 z-40 bg-neutral-950/90 backdrop-blur-xs border-2 border-dashed border-emerald-400 flex flex-col items-center justify-center gap-3 p-6 text-center animate-in fade-in duration-150">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 animate-bounce">
+              <Upload className="w-8 h-8" />
+            </div>
+            <div>
+              <h4 className="text-base font-bold text-neutral-100">Dateien & Ordner hier ablegen</h4>
+              <p className="text-xs text-neutral-400 mt-1 max-w-sm">
+                Dateien, ganze Verzeichnisse oder ZIP-Archive werden automatisch in den aktuellen Pfad <span className="font-mono text-emerald-400">{currentPath}</span> hochgeladen.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Upload Progress Banner */}
+        {uploadProgress.active && (
+          <div className="bg-emerald-950/80 border-b border-emerald-800/80 px-4 py-2.5 flex items-center justify-between gap-4 text-xs animate-in slide-in-from-top duration-150 z-20">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin shrink-0" />
+              <div className="min-w-0">
+                <span className="font-semibold text-emerald-300">Upload läuft...</span>
+                <span className="text-neutral-400 font-mono text-[11px] ml-2 truncate inline-block max-w-[200px] sm:max-w-md">
+                  {uploadProgress.filename} ({uploadProgress.current}/{uploadProgress.total})
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="w-24 sm:w-36 bg-neutral-900 rounded-full h-2 overflow-hidden border border-emerald-800/60">
+                <div 
+                  className="bg-emerald-500 h-full transition-all duration-200"
+                  style={{ width: `${uploadProgress.percent}%` }}
+                />
+              </div>
+              <span className="font-mono text-[11px] text-emerald-400 w-9 text-right font-bold">
+                {uploadProgress.percent}%
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Top Control Bar with Clickable Breadcrumbs and Actions */}
         <div className="p-3 bg-neutral-950 border-b border-neutral-800 flex flex-wrap items-center justify-between gap-2.5 text-xs">
           {/* Breadcrumbs Navigation */}
@@ -624,7 +1077,7 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                 placeholder="Dateien filtern..."
                 value={searchFilter}
                 onChange={(e) => setSearchFilter(e.target.value)}
-                className="pl-8 pr-3 py-1 bg-neutral-900 border border-neutral-800 rounded-lg text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-neutral-700 w-32 sm:w-44"
+                className="pl-8 pr-3 py-1 bg-neutral-900 border border-neutral-800 rounded-lg text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-neutral-700 w-28 sm:w-40 font-mono"
               />
             </div>
 
@@ -663,26 +1116,65 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                 setIsNewModalOpen(true);
               }}
               className="flex items-center gap-1.5 px-2.5 py-1 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-800 cursor-pointer transition-colors"
+              title="Neue Datei oder neuen Ordner anlegen"
             >
               <Plus className="w-3.5 h-3.5 text-emerald-400" />
               <span className="hidden sm:inline">Neu</span>
             </button>
 
-            {/* Upload File */}
+            {/* Hidden Upload Inputs */}
             <input
               ref={fileInputRef}
               type="file"
-              onChange={handleFileUpload}
+              onChange={handleSingleFileUpload}
               className="hidden"
             />
+            <input
+              ref={multiFileInputRef}
+              type="file"
+              multiple
+              onChange={handleMultiFileUpload}
+              className="hidden"
+            />
+            <input
+              ref={folderInputRef}
+              type="file"
+              {...({ webkitdirectory: '', directory: '', multiple: true } as any)}
+              onChange={handleFolderUpload}
+              className="hidden"
+            />
+
+            {/* Multi-Files Upload Button */}
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => multiFileInputRef.current?.click()}
               disabled={isUploading}
-              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 rounded-lg border border-emerald-800/80 cursor-pointer transition-colors disabled:opacity-50"
-              title="Datei in dieses Verzeichnis hochladen"
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 rounded-lg border border-emerald-800/80 cursor-pointer transition-colors disabled:opacity-50"
+              title="Dateien hochladen (Mehrfachauswahl möglich)"
             >
-              <Upload className="w-3.5 h-3.5" />
-              <span>{isUploading ? 'Lädt...' : 'Upload'}</span>
+              <FileUp className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Dateien</span>
+            </button>
+
+            {/* Folder Upload Button */}
+            <button
+              onClick={() => folderInputRef.current?.click()}
+              disabled={isUploading}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 rounded-lg border border-emerald-800/60 cursor-pointer transition-colors disabled:opacity-50"
+              title="Ganzen Ordner hochladen (inklusive aller Unterordner)"
+            >
+              <FolderUp className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Ordner</span>
+            </button>
+
+            {/* ZIP Button */}
+            <button
+              onClick={() => handleOpenZipModal()}
+              disabled={isCreatingZip || currentDirectoryItems.length === 0}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-950/80 hover:bg-purple-900 text-purple-300 rounded-lg border border-purple-800/70 cursor-pointer transition-colors disabled:opacity-50"
+              title={selectedPaths.size > 0 ? "Ausgewählte Elemente als ZIP komprimieren" : "Aktuellen Ordner als ZIP komprimieren"}
+            >
+              <FolderArchive className="w-3.5 h-3.5 text-purple-400" />
+              <span className="hidden md:inline">{selectedPaths.size > 0 ? `ZIP (${selectedPaths.size})` : 'ZIP'}</span>
             </button>
           </div>
         </div>
@@ -732,6 +1224,49 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                 </button>
               )}
 
+              {/* Bulk Actions Floating Bar */}
+              {selectedPaths.size > 0 && (
+                <div className="bg-neutral-950 border border-emerald-500/50 rounded-lg p-2.5 flex items-center justify-between gap-3 text-xs shadow-md mb-2 animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={toggleSelectAll}
+                      className="p-1 text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                      title="Alle an-/abwählen"
+                    >
+                      {allSelected ? <CheckSquare className="w-4 h-4" /> : <MinusSquare className="w-4 h-4" />}
+                    </button>
+                    <span className="font-mono text-emerald-400 font-semibold text-[11px]">
+                      {selectedPaths.size} {selectedPaths.size === 1 ? 'Element' : 'Elemente'} ausgewählt
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleOpenZipModal()}
+                      className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-950 hover:bg-purple-900 text-purple-300 rounded border border-purple-800/80 cursor-pointer transition-colors font-medium text-[11px]"
+                      title="Ausgewählte Elemente in ein ZIP-Archiv packen"
+                    >
+                      <FolderArchive className="w-3.5 h-3.5" />
+                      <span>Als ZIP packen</span>
+                    </button>
+                    <button
+                      onClick={() => setIsBatchDeleteModalOpen(true)}
+                      className="flex items-center gap-1.5 px-2.5 py-1 bg-rose-950 hover:bg-rose-900 text-rose-300 rounded border border-rose-800/80 cursor-pointer transition-colors font-medium text-[11px]"
+                      title="Ausgewählte Elemente löschen"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Löschen ({selectedPaths.size})</span>
+                    </button>
+                    <button
+                      onClick={() => setSelectedPaths(new Set())}
+                      className="px-2 py-1 text-neutral-400 hover:text-neutral-200 cursor-pointer transition-colors text-[11px]"
+                    >
+                      Abwählen
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Empty Directory State */}
               {currentDirectoryItems.length === 0 ? (
                 <div className="text-center py-16 text-neutral-500 space-y-2">
@@ -744,9 +1279,36 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
               ) : viewMode === 'list' ? (
                 /* List View */
                 <div className="border border-neutral-800 rounded-lg overflow-hidden divide-y divide-neutral-800/80 bg-neutral-950/40">
+                  {/* Table Header */}
+                  <div className="flex items-center justify-between p-2 text-[11px] font-semibold text-neutral-400 bg-neutral-950/90 border-b border-neutral-800 select-none">
+                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                      <button
+                        onClick={toggleSelectAll}
+                        className="p-0.5 text-neutral-400 hover:text-neutral-200 cursor-pointer"
+                        title={allSelected ? "Alle abwählen" : "Alle auswählen"}
+                      >
+                        {allSelected ? (
+                          <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : someSelected ? (
+                          <MinusSquare className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          <Square className="w-3.5 h-3.5 text-neutral-600" />
+                        )}
+                      </button>
+                      <span>Name</span>
+                    </div>
+                    <div className="flex items-center gap-6 shrink-0 font-mono text-[11px]">
+                      <span className="hidden sm:inline w-20 text-right">Größe</span>
+                      <span className="hidden md:inline w-32 text-right">Geändert</span>
+                      <span className="w-28 sm:w-44 text-right pr-1">Aktionen</span>
+                    </div>
+                  </div>
+
                   {currentDirectoryItems.map(item => {
                     const isSelected = selectedFile?.path === item.path;
+                    const isChecked = selectedPaths.has(item.path);
                     const isConfig = item.type === 'file' && item.isEditable;
+                    const isZip = item.name.toLowerCase().endsWith('.zip');
 
                     return (
                       <div
@@ -757,16 +1319,31 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                             navigateToDirectory(item.path);
                           } else if (isConfig) {
                             handleTriggerEdit(item);
+                          } else if (isZip) {
+                            handleOpenUnzipModal(item);
                           }
                         }}
                         className={`group flex items-center justify-between p-2.5 text-xs transition-colors cursor-pointer select-none ${
-                          isSelected 
-                            ? 'bg-neutral-800/90 text-neutral-100' 
-                            : 'hover:bg-neutral-900/80 text-neutral-300'
+                          isChecked
+                            ? 'bg-emerald-950/30 border-l-2 border-emerald-500 text-neutral-100'
+                            : isSelected 
+                              ? 'bg-neutral-800/90 text-neutral-100' 
+                              : 'hover:bg-neutral-900/80 text-neutral-300'
                         }`}
                       >
-                        {/* Name and Icon */}
+                        {/* Checkbox, Name and Icon */}
                         <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                          <button
+                            onClick={(e) => toggleSelectItem(item.path, e)}
+                            className="p-0.5 text-neutral-400 hover:text-emerald-400 cursor-pointer"
+                            title={isChecked ? "Auswahl aufheben" : "Auswählen"}
+                          >
+                            {isChecked ? (
+                              <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <Square className="w-3.5 h-3.5 text-neutral-600 group-hover:text-neutral-400" />
+                            )}
+                          </button>
                           {getItemIcon(item)}
                           <span 
                             onClick={(e) => {
@@ -780,7 +1357,9 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                                 ? 'hover:underline text-amber-200 hover:text-amber-100 font-medium' 
                                 : isConfig 
                                   ? 'text-neutral-200 hover:text-emerald-300' 
-                                  : 'text-neutral-400'
+                                  : isZip
+                                    ? 'text-purple-300 hover:underline font-medium'
+                                    : 'text-neutral-400'
                             }`}
                           >
                             {item.name}
@@ -793,6 +1372,12 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                             </span>
                           )}
 
+                          {isZip && (
+                            <span className="hidden sm:inline-block text-[10px] px-1.5 py-0.2 rounded bg-purple-950/80 text-purple-400 border border-purple-800/60 font-mono">
+                              ZIP
+                            </span>
+                          )}
+
                           {item.name === 'eula.txt' && item.content?.includes('eula=false') && (
                             <span className="text-[10px] font-bold bg-rose-950 text-rose-400 px-1.5 py-0.5 rounded border border-rose-800">
                               EULA prüfen!
@@ -802,10 +1387,37 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
 
                         {/* Metadata and Quick Actions */}
                         <div className="flex items-center gap-3 shrink-0 text-neutral-500 text-[11px] font-mono">
-                          <span className="hidden sm:inline">{formatFileSize(item.sizeBytes)}</span>
-                          <span className="hidden md:inline">{item.lastModified}</span>
+                          <span className="hidden sm:inline w-20 text-right">{formatFileSize(item.sizeBytes)}</span>
+                          <span className="hidden md:inline w-32 text-right">{item.lastModified}</span>
 
                           <div className="flex items-center gap-1">
+                            {/* UNZIP button for ZIP files */}
+                            {isZip && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenUnzipModal(item);
+                                }}
+                                className="flex items-center gap-1 px-2 py-1 bg-purple-950 hover:bg-purple-900 text-purple-300 rounded border border-purple-800/80 transition-colors cursor-pointer text-xs"
+                                title="Archiv entpacken"
+                              >
+                                <PackageOpen className="w-3 h-3" />
+                                <span className="hidden lg:inline">Entpacken</span>
+                              </button>
+                            )}
+
+                            {/* ZIP compress single item */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenZipModal(item);
+                              }}
+                              className="p-1.5 hover:bg-neutral-800 text-neutral-400 hover:text-purple-300 rounded transition-colors"
+                              title="Als ZIP komprimieren"
+                            >
+                              <FolderArchive className="w-3.5 h-3.5" />
+                            </button>
+
                             {/* Edit Button for Config files */}
                             {isConfig && (
                               <button
@@ -856,7 +1468,9 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
                   {currentDirectoryItems.map(item => {
                     const isSelected = selectedFile?.path === item.path;
+                    const isChecked = selectedPaths.has(item.path);
                     const isConfig = item.type === 'file' && item.isEditable;
+                    const isZip = item.name.toLowerCase().endsWith('.zip');
 
                     return (
                       <div
@@ -865,29 +1479,81 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                         onDoubleClick={() => {
                           if (item.type === 'directory') navigateToDirectory(item.path);
                           else if (isConfig) handleTriggerEdit(item);
+                          else if (isZip) handleOpenUnzipModal(item);
                         }}
-                        className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex flex-col justify-between ${
-                          isSelected 
-                            ? 'bg-neutral-800/90 border-neutral-700 shadow-sm' 
-                            : 'bg-neutral-950/60 border-neutral-800/80 hover:bg-neutral-900 hover:border-neutral-700'
+                        className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex flex-col justify-between relative ${
+                          isChecked
+                            ? 'bg-emerald-950/40 border-emerald-500 shadow-sm'
+                            : isSelected 
+                              ? 'bg-neutral-800/90 border-neutral-700 shadow-sm' 
+                              : 'bg-neutral-950/60 border-neutral-800/80 hover:bg-neutral-900 hover:border-neutral-700'
                         }`}
                       >
                         <div className="flex items-start justify-between gap-1.5 mb-2">
-                          <div className="p-2 rounded-lg bg-neutral-900 border border-neutral-800">
-                            {getItemIcon(item)}
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={(e) => toggleSelectItem(item.path, e)}
+                              className="p-0.5 text-neutral-400 hover:text-emerald-400 cursor-pointer"
+                              title={isChecked ? "Auswahl aufheben" : "Auswählen"}
+                            >
+                              {isChecked ? (
+                                <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                              ) : (
+                                <Square className="w-3.5 h-3.5 text-neutral-600 hover:text-neutral-400" />
+                              )}
+                            </button>
+                            <div className="p-2 rounded-lg bg-neutral-900 border border-neutral-800">
+                              {getItemIcon(item)}
+                            </div>
                           </div>
-                          {isConfig && (
+
+                          <div className="flex items-center gap-1">
+                            {isZip && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenUnzipModal(item);
+                                }}
+                                className="p-1 hover:bg-purple-950 text-purple-300 rounded transition-colors"
+                                title="Archiv entpacken"
+                              >
+                                <PackageOpen className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleTriggerEdit(item);
+                                handleOpenZipModal(item);
                               }}
-                              className="p-1 hover:bg-emerald-950 text-emerald-400 rounded transition-colors"
-                              title="Bearbeiten"
+                              className="p-1 hover:bg-neutral-800 text-neutral-400 hover:text-purple-300 rounded transition-colors"
+                              title="Als ZIP komprimieren"
                             >
-                              <Edit3 className="w-3.5 h-3.5" />
+                              <FolderArchive className="w-3.5 h-3.5" />
                             </button>
-                          )}
+                            {isConfig && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleTriggerEdit(item);
+                                }}
+                                className="p-1 hover:bg-emerald-950 text-emerald-400 rounded transition-colors"
+                                title="Bearbeiten"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {item.type === 'file' && (
+                              <a
+                                href={`/api/servers/${server.id}/download?file=${encodeURIComponent(item.path.replace(/^\/+/, ''))}`}
+                                onClick={(e) => e.stopPropagation()}
+                                download={item.name}
+                                className="p-1 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 rounded transition-colors"
+                                title="Herunterladen"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+                          </div>
                         </div>
 
                         <div>
@@ -899,7 +1565,11 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                               }
                             }}
                             className={`font-mono font-medium truncate ${
-                              item.type === 'directory' ? 'text-amber-200 hover:underline' : 'text-neutral-200'
+                              item.type === 'directory' 
+                                ? 'text-amber-200 hover:underline' 
+                                : isZip 
+                                  ? 'text-purple-300 hover:underline' 
+                                  : 'text-neutral-200'
                             }`}
                           >
                             {item.name}
@@ -1073,6 +1743,221 @@ export const HierarchicalFileExplorer: React.FC<HierarchicalFileExplorerProps> =
                 className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-semibold rounded-lg cursor-pointer transition-colors"
               >
                 Löschen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: ZIP Creation */}
+      {isZipModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-neutral-900 border border-purple-900/60 rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-purple-950 border border-purple-800 flex items-center justify-center text-purple-400 shrink-0">
+                <FolderArchive className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-neutral-100 text-sm">
+                  ZIP-Archiv erstellen
+                </h3>
+                <p className="text-[11px] text-neutral-400">
+                  Komprimiert die ausgewählten Einträge in ein portables .zip Archiv.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-neutral-400 block mb-1">
+                  Name des ZIP-Archivs
+                </label>
+                <input
+                  type="text"
+                  placeholder="z.B. backup.zip oder plugins.zip"
+                  value={zipArchiveName}
+                  onChange={(e) => setZipArchiveName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && zipArchiveName.trim() && !isCreatingZip) {
+                      handleConfirmCreateZip();
+                    }
+                  }}
+                  className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-200 focus:outline-none focus:border-purple-600 font-mono"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-neutral-400 block mb-1">
+                  Enthaltene Quellen ({zipTargetPaths.length}):
+                </label>
+                <div className="max-h-28 overflow-y-auto bg-neutral-950 border border-neutral-800 rounded-lg p-2 font-mono text-[11px] text-neutral-300 space-y-1">
+                  {zipTargetPaths.map(p => (
+                    <div key={p} className="truncate text-purple-300">
+                      • {p}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="text-[11px] text-neutral-500 font-mono">
+                Speicherort: <span className="text-emerald-400">{currentPath}</span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 text-xs">
+              <button
+                onClick={() => setIsZipModalOpen(false)}
+                disabled={isCreatingZip}
+                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={handleConfirmCreateZip}
+                disabled={!zipArchiveName.trim() || isCreatingZip}
+                className="flex items-center gap-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-lg shadow-sm shadow-purple-600/30 cursor-pointer transition-all disabled:opacity-50"
+              >
+                {isCreatingZip ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Komprimiere...</span>
+                  </>
+                ) : (
+                  <>
+                    <FolderArchive className="w-3.5 h-3.5" />
+                    <span>Archiv erstellen</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: UNZIP Extraction */}
+      {isUnzipModalOpen && unzipTargetItem && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-neutral-900 border border-purple-900/60 rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-purple-950 border border-purple-800 flex items-center justify-center text-purple-400 shrink-0">
+                <PackageOpen className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-neutral-100 text-sm">
+                  ZIP-Archiv entpacken
+                </h3>
+                <p className="text-[11px] text-neutral-400">
+                  Extrahiert alle Dateien aus diesem Archiv auf dem Server.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-neutral-950 rounded-lg border border-neutral-800 font-mono text-xs space-y-1">
+              <div className="text-purple-300 font-semibold truncate">
+                Archiv: {unzipTargetItem.name}
+              </div>
+              <div className="text-[11px] text-neutral-500">
+                Größe: {formatFileSize(unzipTargetItem.sizeBytes)} • Zuletzt geändert: {unzipTargetItem.lastModified}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-neutral-400 block">
+                Zielverzeichnis zum Entpacken:
+              </label>
+              <input
+                type="text"
+                value={unzipDestinationDir}
+                onChange={(e) => setUnzipDestinationDir(e.target.value)}
+                placeholder="/ oder /plugins"
+                className="w-full px-3 py-2 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-200 focus:outline-none focus:border-purple-600 font-mono"
+              />
+              <p className="text-[11px] text-neutral-500">
+                Tipp: Standardmäßig wird direkt in den aktuellen Ordner entpackt.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 text-xs">
+              <button
+                onClick={() => setIsUnzipModalOpen(false)}
+                disabled={isExtractingZip}
+                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={handleConfirmUnzip}
+                disabled={isExtractingZip}
+                className="flex items-center gap-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-lg shadow-sm shadow-purple-600/30 cursor-pointer transition-all disabled:opacity-50"
+              >
+                {isExtractingZip ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Entpacke...</span>
+                  </>
+                ) : (
+                  <>
+                    <PackageOpen className="w-3.5 h-3.5" />
+                    <span>Jetzt entpacken</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Batch Delete Confirmation */}
+      {isBatchDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-neutral-900 border border-rose-900/60 rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-rose-950 border border-rose-800 flex items-center justify-center text-rose-400 shrink-0">
+                <Trash2 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-neutral-100 text-sm">
+                  {selectedPaths.size} {selectedPaths.size === 1 ? 'Element' : 'Elemente'} löschen?
+                </h3>
+                <p className="text-[11px] text-neutral-400">
+                  Diese Aktion löscht alle ausgewählten Dateien und Ordner unwiderruflich.
+                </p>
+              </div>
+            </div>
+
+            <div className="max-h-36 overflow-y-auto bg-neutral-950 border border-neutral-800 rounded-lg p-2.5 font-mono text-xs text-rose-300 space-y-1">
+              {Array.from(selectedPaths).map(p => (
+                <div key={p} className="truncate">
+                  • {p}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1 text-xs">
+              <button
+                onClick={() => setIsBatchDeleteModalOpen(false)}
+                disabled={isBatchDeleting}
+                className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={handleBatchDelete}
+                disabled={isBatchDeleting}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-semibold rounded-lg cursor-pointer transition-colors disabled:opacity-50"
+              >
+                {isBatchDeleting ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Lösche...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Alle {selectedPaths.size} löschen</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

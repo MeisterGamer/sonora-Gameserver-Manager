@@ -1,0 +1,23 @@
+{
+  "checks": [
+    "server.ts defines LiveServerMetrics and serverMetricsMap",
+    "server.ts implements queryProcessStats for PID CPU and RAM",
+    "server.ts implements queryMinecraftPing for TCP Server List Ping",
+    "server.ts implements parseServerLogForMetrics for joins, leaves and TPS",
+    "server.ts provides GET /api/servers/:id/stats endpoint",
+    "server.ts merges real-time telemetry into GET /api/servers",
+    "ServerDetail.tsx does NOT contain hardcoded \"Nicht erfasst\" or \"Nicht abgefragt\"",
+    "ServerDetail.tsx polls /api/servers/:id/stats and updates live gauges",
+    "ServerList.tsx does NOT contain hardcoded \"Nicht erfasst\" or \"Nicht abgefragt\"",
+    "ServerList.tsx renders real-time Spieler, CPU Last, and Tickrate",
+    "/api/servers/:id/stats responds with success",
+    "/api/servers/:id/stats returns numeric cpuUsagePercent",
+    "/api/servers/:id/stats returns numeric ramUsageMb",
+    "/api/servers/:id/stats returns numeric currentPlayers",
+    "/api/servers/:id/stats returns numeric maxPlayers",
+    "/api/servers/:id/stats returns numeric tps",
+    "/api/servers/:id/stats returns playerList array",
+    "/api/servers responds with success",
+    "/api/servers returns servers array"
+  ]
+}

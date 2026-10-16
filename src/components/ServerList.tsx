@@ -511,21 +511,27 @@ export const ServerList: React.FC<ServerListProps> = ({
                     <div>
                       <div className="text-[11px] text-neutral-500">Spieler</div>
                       <div className="font-mono font-semibold text-neutral-200 tabular-nums">
-                        {'Nicht abgefragt'}
+                        {isRunning 
+                          ? `${server.currentPlayers ?? 0} / ${server.maxPlayers ?? 20}` 
+                          : `0 / ${server.maxPlayers ?? 20}`}
                       </div>
                     </div>
 
                     <div>
                       <div className="text-[11px] text-neutral-500">CPU Last</div>
                       <div className="font-mono font-semibold text-neutral-200 tabular-nums">
-                        {'Nicht erfasst'}
+                        {isRunning 
+                          ? `${(server.cpuUsagePercent || 0).toFixed(1)}%` 
+                          : '0.0%'}
                       </div>
                     </div>
 
                     <div>
                       <div className="text-[11px] text-neutral-500">Tickrate</div>
                       <div className="font-mono font-semibold text-neutral-200 tabular-nums">
-                        {'Nicht erfasst'}
+                        {isRunning 
+                          ? `${(server.tps ?? 20.0).toFixed(1)} TPS` 
+                          : '0.0 TPS'}
                       </div>
                     </div>
                   </div>

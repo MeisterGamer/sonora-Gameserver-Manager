@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Terminal, 
   Package, 
@@ -93,6 +93,62 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   const [isCreatingBackup, setIsCreatingBackup] = useState(false);
   const [backupSuccessMessage, setBackupSuccessMessage] = useState<string | null>(null);
   const [backupErrorMessage, setBackupErrorMessage] = useState<string | null>(null);
+
+  const isRunning = server.status === 'running';
+
+  // Real-time server telemetry and metrics polling
+  const [liveStats, setLiveStats] = useState<{
+    cpu: number;
+    ramMb: number;
+    players: number;
+    maxPlayers: number;
+    tps: number;
+    playerList: string[];
+    uptimeSeconds: number;
+  }>({
+    cpu: server.cpuUsagePercent || 0,
+    ramMb: server.ramUsageMb || 0,
+    players: server.currentPlayers || 0,
+    maxPlayers: server.maxPlayers || 20,
+    tps: server.tps || (isRunning ? 20.0 : 0),
+    playerList: (server as any).playerList || [],
+    uptimeSeconds: server.uptimeSeconds || 0
+  });
+
+  useEffect(() => {
+    let timer: any = null;
+    let isMounted = true;
+
+    const fetchLiveStats = async () => {
+      try {
+        const res = await fetch(`/api/servers/${server.id}/stats`);
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          if (data.success) {
+            setLiveStats({
+              cpu: typeof data.cpuUsagePercent === 'number' ? data.cpuUsagePercent : 0,
+              ramMb: typeof data.ramUsageMb === 'number' ? data.ramUsageMb : 0,
+              players: typeof data.currentPlayers === 'number' ? data.currentPlayers : 0,
+              maxPlayers: typeof data.maxPlayers === 'number' ? data.maxPlayers : (server.maxPlayers || 20),
+              tps: typeof data.tps === 'number' ? data.tps : 20.0,
+              playerList: Array.isArray(data.playerList) ? data.playerList : [],
+              uptimeSeconds: typeof data.uptimeSeconds === 'number' ? data.uptimeSeconds : 0
+            });
+          }
+        }
+      } catch {}
+    };
+
+    fetchLiveStats();
+    if (isRunning) {
+      timer = setInterval(fetchLiveStats, 3000);
+    }
+
+    return () => {
+      isMounted = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [server.id, isRunning]);
 
   const handleCreateBackup = async () => {
     setIsCreatingBackup(true);
@@ -450,12 +506,14 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <Cpu className="w-3.5 h-3.5 text-sky-400" />
                 <span>CPU Last</span>
               </span>
-              <span className="font-mono tabular-nums text-neutral-200">{'Nicht erfasst'}</span>
+              <span className="font-mono tabular-nums text-neutral-200">
+                {isRunning ? `${(liveStats.cpu).toFixed(1)}%` : '0.0%'}
+              </span>
             </div>
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
                 className="bg-sky-500 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${Math.min(100, Math.max(0, server.cpuUsagePercent || 0))}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, isRunning ? liveStats.cpu : 0))}%` }}
               />
             </div>
           </div>
@@ -467,13 +525,15 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <span>RAM Auslastung</span>
               </span>
               <span className="font-mono tabular-nums text-neutral-200">
-                {'Nicht erfasst · Limit: ' + (server.allocatedRamGb || 4) + ' GB'}
+                {isRunning 
+                  ? `${(liveStats.ramMb / 1024).toFixed(2)} GB / ${server.allocatedRamGb || 4} GB` 
+                  : `0.00 GB / ${server.allocatedRamGb || 4} GB`}
               </span>
             </div>
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
                 className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${Math.min(100, Math.max(0, ((server.ramUsageMb || 0) / ((server.allocatedRamGb || 4) * 1024)) * 100))}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, isRunning ? ((liveStats.ramMb / ((server.allocatedRamGb || 4) * 1024)) * 100) : 0))}%` }}
               />
             </div>
           </div>
@@ -485,13 +545,15 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <span>Spieler</span>
               </span>
               <span className="font-mono tabular-nums text-neutral-200">
-                {'Nicht abgefragt'}
+                {isRunning 
+                  ? `${liveStats.players} / ${liveStats.maxPlayers}` 
+                  : `0 / ${server.maxPlayers || 20}`}
               </span>
             </div>
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
                 className="bg-amber-500 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${Math.min(100, Math.max(0, ((server.currentPlayers || 0) / (server.maxPlayers || 20)) * 100))}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, isRunning ? ((liveStats.players / (liveStats.maxPlayers || 20)) * 100) : 0))}%` }}
               />
             </div>
           </div>
@@ -502,12 +564,16 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <Globe className="w-3.5 h-3.5 text-purple-400" />
                 <span>Tickrate / TPS</span>
               </span>
-              <span className="font-mono tabular-nums text-emerald-400 font-bold">{'Nicht erfasst'}</span>
+              <span className="font-mono tabular-nums text-emerald-400 font-bold">
+                {isRunning 
+                  ? `${(liveStats.tps).toFixed(1)} TPS` 
+                  : '0.0 TPS'}
+              </span>
             </div>
             <div className="w-full bg-neutral-800 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
                 className="bg-purple-500 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${Math.min(100, Math.max(0, ((server.tps || 20) / (server.category === 'minecraft' ? 20 : 60)) * 100))}%` }}
+                style={{ width: `${Math.min(100, Math.max(0, isRunning ? ((liveStats.tps / (server.category === 'minecraft' ? 20 : 60)) * 100) : 0))}%` }}
               />
             </div>
           </div>

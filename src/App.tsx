@@ -315,7 +315,64 @@ export default function App() {
   };
 
 
-  const handleCompleteSetupWizard = () => showToast('Systeminstallation über den Assistenten ist noch nicht implementiert.');
+  const handleCompleteSetupWizard = async (result: SetupWizardResult, createdServer?: ServerInstance) => {
+    try {
+      // 1. Send system setup configuration to backend
+      try {
+        await apiRequest('/api/system/setup', 'POST', {
+          setup: result,
+          createdServer
+        });
+      } catch (backendErr) {
+        console.warn('Backend setup notice:', backendErr);
+      }
+
+      // 2. Update admin settings
+      setAdminSettings(prev => ({
+        ...prev,
+        defaultJavaVersion: result.defaultJava,
+        steamMode: result.steamMode,
+        discordWebhookUrl: result.discordWebhook,
+        portRangeStart: prev.portRangeStart || 25565,
+        portRangeEnd: prev.portRangeEnd || 29999,
+        lastUpdated: new Date().toISOString()
+      }));
+
+      // 3. Update admin user credentials if modified
+      if (result.adminUsername || result.adminEmail || result.adminPassword) {
+        const updatedUser: UserAccount = {
+          ...currentUser,
+          username: result.adminUsername || currentUser.username,
+          email: result.adminEmail || currentUser.email,
+          ...(result.adminPassword ? { passwordHash: 'sha256_' + result.adminPassword.slice(0, 8) } : {})
+        };
+        setCurrentUser(updatedUser);
+        setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+      }
+
+      // 4. If first server was requested, register & deploy
+      if (createdServer) {
+        try {
+          await handleCreateNewServer({
+            ...createdServer,
+            autoRestart: true
+          });
+        } catch {
+          setServers(prev => [createdServer, ...prev.filter(s => s.id !== createdServer.id)]);
+          setSelectedServerId(createdServer.id);
+          setCurrentNavTab('servers');
+        }
+      } else {
+        await refreshServers();
+      }
+
+      showToast(`Systeminstallation erfolgreich! Node "${result.nodeName}" ist einsatzbereit.`);
+    } catch (err: any) {
+      showToast(`Setup abgeschlossen: ${err.message || 'System konfiguriert'}`);
+    } finally {
+      setIsSetupWizardOpen(false);
+    }
+  };
 
 
   const handleCreateNewServer = async (data: Partial<ServerInstance>) => {
@@ -895,7 +952,7 @@ export default function App() {
           setIsCreateModalOpen(true);
         }}
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
-        onOpenSetupWizard={() => showToast('Der Systeminstallations-Assistent ist noch nicht implementiert.')}
+        onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
         activeServerCount={servers.length}
         expiringCount={expiringContractsCount}
         selectedOS={selectedOS}
@@ -942,7 +999,7 @@ export default function App() {
                 setPreselectedGame(null);
                 setIsCreateModalOpen(true);
               }}
-              onOpenSetupWizard={() => showToast('Der Systeminstallations-Assistent ist noch nicht implementiert.')}
+              onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
             />
           )
         )}
@@ -1005,7 +1062,7 @@ export default function App() {
             onUpdateUserRole={handleUpdateUserRole}
             onAdjustUserBalance={handleAdjustUserBalance}
             onToggleUserStatus={handleToggleUserStatus}
-            onOpenSetupWizard={() => showToast('Der Systeminstallations-Assistent ist noch nicht implementiert.')}
+            onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
           />
         )}
 

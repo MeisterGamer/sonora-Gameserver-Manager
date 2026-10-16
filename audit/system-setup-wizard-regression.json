@@ -1,0 +1,21 @@
+{
+  "checks": [
+    "App.tsx imports SetupWizardModal and SetupWizardResult",
+    "App.tsx defines isSetupWizardOpen state",
+    "App.tsx implements full handleCompleteSetupWizard with backend persistence",
+    "App.tsx wires TopNav onOpenSetupWizard to setIsSetupWizardOpen(true)",
+    "No placeholder toasts for unimplemented Setup Wizard remain in App.tsx",
+    "TopNav renders Setup Wizard launch button with Sparkles icon",
+    "ServerList renders Setup Wizard button in toolbar",
+    "AdminControlView renders Setup Wizard button in control center header",
+    "SetupWizardModal contains 6-step workflow",
+    "SetupWizardModal queries live /api/system/diagnostics",
+    "SetupWizardModal generates systemd and Windows service units",
+    "server.ts implements GET /api/system/setup",
+    "server.ts implements POST /api/system/setup",
+    "POST /api/system/setup responds with success",
+    "POST /api/system/setup records nodeName",
+    "GET /api/system/setup reports configured=true",
+    "GET /api/system/setup returns saved config"
+  ]
+}

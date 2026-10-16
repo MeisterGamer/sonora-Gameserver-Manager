@@ -1267,6 +1267,63 @@ app.get('/api/system/diagnostics', async (_req, res) => {
   }
 });
 
+// --- SYSTEM SETUP & WIZARD ENDPOINTS ---
+app.get('/api/system/setup', (_req, res) => {
+  const setupConfigPath = path.join(DATA_DIR, 'system_config.json');
+  let config = null;
+  if (fs.existsSync(setupConfigPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(setupConfigPath, 'utf8'));
+    } catch {}
+  }
+  res.json({
+    success: true,
+    configured: !!config,
+    config
+  });
+});
+
+app.post('/api/system/setup', async (req, res) => {
+  try {
+    const { setup, createdServer } = req.body;
+    if (!setup) {
+      return res.status(400).json({ success: false, error: 'Setup-Konfiguration erforderlich' });
+    }
+
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+
+    const setupConfigPath = path.join(DATA_DIR, 'system_config.json');
+    const configData = {
+      ...setup,
+      configuredAt: new Date().toISOString(),
+      status: 'configured',
+      hostPlatform: os.platform(),
+      hostCpus: os.cpus().length,
+      hostTotalMemBytes: os.totalmem()
+    };
+
+    fs.writeFileSync(setupConfigPath, JSON.stringify(configData, null, 2), 'utf8');
+
+    // Also write daemon.conf if data directory exists
+    try {
+      const daemonConfContent = `# ApexHost Daemon Configuration\n# Node: ${setup.nodeName || 'ApexNode'}\nnode_name = "${setup.nodeName || 'ApexNode'}"\nhost_ip = "${setup.hostIp || '127.0.0.1'}"\npanel_port = ${setup.panelPort || 3000}\ndaemon_port = ${setup.daemonPort || 8080}\nsftp_port = ${setup.sftpPort || 2022}\ntarget_os = "${setup.targetOS || os.platform()}"\ndata_path = "${setup.dataPath || DATA_DIR}"\ndefault_java = "${setup.defaultJava || 'Java 21'}"\nsteam_mode = "${setup.steamMode || 'offline_disabled'}"\nconfigured_at = "${new Date().toISOString()}"\n`;
+      fs.writeFileSync(path.join(DATA_DIR, 'daemon.conf'), daemonConfContent, 'utf8');
+    } catch {}
+
+    console.log(`[SETUP] Systeminstallations-Assistent erfolgreich abgeschlossen für Node "${setup.nodeName}".`);
+
+    res.json({
+      success: true,
+      message: `Systeminstallation für Node "${setup.nodeName}" erfolgreich gespeichert.`,
+      config: configData
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // --- SERVER LOGS ENDPOINT ---
 app.get('/api/servers/:id/logs', (req, res) => {
   const serverId = req.params.id;

@@ -292,6 +292,8 @@ async function runTests() {
     assert.match(scriptText, /\/etc\/sysctl\.d\/99-sonora-ddos\.conf/, 'install.sh writes Kernel DDoS sysctl hardening');
     assert.match(scriptText, /net\.ipv4\.tcp_syncookies = 1/, 'install.sh enables TCP SYN cookies');
     assert.match(scriptText, /SONORA_DDOS/, 'install.sh creates iptables SONORA_DDOS anti-flood chain');
+    assert.match(scriptText, /sonora-ddos\.service/, 'install.sh persists SONORA_DDOS cleanly via systemd service');
+    assert.equal(/apt-get install[^\n]*iptables-persistent/.test(scriptText), false, 'install.sh must NOT install iptables-persistent (conflicts with ufw on Debian 12/13)');
     assert.match(scriptText, /\/etc\/fail2ban\/jail\.d\/sonora\.local/, 'install.sh configures Fail2ban SSH protection');
     assert.match(scriptText, /\/etc\/sudoers\.d\/sonora-firewall/, 'install.sh writes sudoers rule for automatic port management');
     assert.match(scriptText, /systemctl enable sonora-manager\.service/, 'install.sh enables systemd boot autostart');

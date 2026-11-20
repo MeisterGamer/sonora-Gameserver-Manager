@@ -105,15 +105,16 @@ fi
 echo -e "${GREEN}[1/11] Root-Rechte bestätigt (OS: $(grep -E '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)).${NC}"
 
 # 2. Debian/Ubuntu Paketlisten aktualisieren & Basistools + Firewall/DDoS-Pakete installieren
+# Hinweis: iptables-persistent wird bewusst NICHT installiert, da ufw unter Debian 12/13
+# mit iptables-persistent kollidiert (Breaks: iptables-persistent). Die SONORA_DDOS-Regeln
+# werden stattdessen konfliktfrei über den eigenen systemd-Dienst sonora-ddos.service persistiert.
 echo -e "${BLUE}[2/11] Aktualisiere Paketlisten und installiere Debian-Basiskomponenten, Git, Firewall & DDoS-Tools...${NC}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y -q || true
-echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections 2>/dev/null || true
-echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections 2>/dev/null || true
 apt-get install -y -q \
   curl wget git unzip tar ca-certificates gnupg lsb-release \
-  build-essential net-tools iproute2 sudo \
-  ufw iptables iptables-persistent fail2ban || true
+  build-essential net-tools iproute2 sudo || true
+apt-get install -y -q ufw iptables fail2ban || true
 
 # 3. Repository-Download & Quellverzeichnis ermitteln (In-Place vs. GitHub-Auto-Download)
 echo -e "${BLUE}[3/11] Prüfe Projektdateien / Lade Sonora Gameserver Manager von GitHub...${NC}"
@@ -391,33 +392,51 @@ SYSCTL_EOF
   sysctl --system >/dev/null 2>&1 || true
   echo -e "${GREEN}✓ Kernel DDoS-Hardening (/etc/sysctl.d/99-sonora-ddos.conf) aktiviert.${NC}"
 
-  # iptables Anti-Flood Chain (SONORA_DDOS)
+  # iptables Anti-Flood Chain (SONORA_DDOS) konfliktfrei via systemd-Dienst persistieren (kein iptables-persistent nötig)
   if command -v iptables &>/dev/null; then
-    iptables -N SONORA_DDOS 2>/dev/null || iptables -F SONORA_DDOS 2>/dev/null || true
-    # Ungültige & fragmentierte Pakete verwerfen
-    iptables -A SONORA_DDOS -m conntrack --ctstate INVALID -j DROP 2>/dev/null || true
-    iptables -A SONORA_DDOS -f -j DROP 2>/dev/null || true
-    # TCP-Scan / Bogus-Flags (NULL, XMAS, SYN-FIN, SYN-RST) verwerfen
-    iptables -A SONORA_DDOS -p tcp --tcp-flags ALL NONE -j DROP 2>/dev/null || true
-    iptables -A SONORA_DDOS -p tcp --tcp-flags ALL ALL -j DROP 2>/dev/null || true
-    iptables -A SONORA_DDOS -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP 2>/dev/null || true
-    iptables -A SONORA_DDOS -p tcp --tcp-flags SYN,RST SYN,RST -j DROP 2>/dev/null || true
-    # Neue Non-SYN TCP-Pakete blockieren
-    iptables -A SONORA_DDOS -p tcp ! --syn -m conntrack --ctstate NEW -j DROP 2>/dev/null || true
-    # TCP SYN-Flood Rate-Limiting pro Quell-IP
-    iptables -A SONORA_DDOS -p tcp --syn -m hashlimit --hashlimit-name sonora_syn --hashlimit-above 60/sec --hashlimit-burst 120 --hashlimit-mode srcip -j DROP 2>/dev/null || true
-    # ICMP Ping-Flood Rate-Limiting
-    iptables -A SONORA_DDOS -p icmp --icmp-type echo-request -m limit --limit 5/sec --limit-burst 15 -j ACCEPT 2>/dev/null || true
-    iptables -A SONORA_DDOS -p icmp --icmp-type echo-request -j DROP 2>/dev/null || true
-    iptables -A SONORA_DDOS -j RETURN 2>/dev/null || true
+    cat <<'DDOS_SCRIPT_EOF' > /usr/local/sbin/sonora-ddos-apply.sh
+#!/usr/bin/env bash
+set -euo pipefail
+command -v iptables >/dev/null 2>&1 || exit 0
+iptables -N SONORA_DDOS 2>/dev/null || iptables -F SONORA_DDOS 2>/dev/null || true
+# Ungültige & fragmentierte Pakete verwerfen
+iptables -A SONORA_DDOS -m conntrack --ctstate INVALID -j DROP 2>/dev/null || true
+iptables -A SONORA_DDOS -f -j DROP 2>/dev/null || true
+# TCP-Scan / Bogus-Flags (NULL, XMAS, SYN-FIN, SYN-RST) verwerfen
+iptables -A SONORA_DDOS -p tcp --tcp-flags ALL NONE -j DROP 2>/dev/null || true
+iptables -A SONORA_DDOS -p tcp --tcp-flags ALL ALL -j DROP 2>/dev/null || true
+iptables -A SONORA_DDOS -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP 2>/dev/null || true
+iptables -A SONORA_DDOS -p tcp --tcp-flags SYN,RST SYN,RST -j DROP 2>/dev/null || true
+# Neue Non-SYN TCP-Pakete blockieren
+iptables -A SONORA_DDOS -p tcp ! --syn -m conntrack --ctstate NEW -j DROP 2>/dev/null || true
+# TCP SYN-Flood Rate-Limiting pro Quell-IP
+iptables -A SONORA_DDOS -p tcp --syn -m hashlimit --hashlimit-name sonora_syn --hashlimit-above 60/sec --hashlimit-burst 120 --hashlimit-mode srcip -j DROP 2>/dev/null || true
+# ICMP Ping-Flood Rate-Limiting
+iptables -A SONORA_DDOS -p icmp --icmp-type echo-request -m limit --limit 5/sec --limit-burst 15 -j ACCEPT 2>/dev/null || true
+iptables -A SONORA_DDOS -p icmp --icmp-type echo-request -j DROP 2>/dev/null || true
+iptables -A SONORA_DDOS -j RETURN 2>/dev/null || true
+# SONORA_DDOS-Kette in INPUT einhängen (falls noch nicht vorhanden)
+iptables -C INPUT -j SONORA_DDOS 2>/dev/null || iptables -I INPUT 1 -j SONORA_DDOS 2>/dev/null || true
+DDOS_SCRIPT_EOF
+    chmod 0755 /usr/local/sbin/sonora-ddos-apply.sh
+    /usr/local/sbin/sonora-ddos-apply.sh 2>/dev/null || true
 
-    # SONORA_DDOS-Kette in INPUT einhängen (falls noch nicht vorhanden)
-    iptables -C INPUT -j SONORA_DDOS 2>/dev/null || iptables -I INPUT 1 -j SONORA_DDOS 2>/dev/null || true
+    cat <<'DDOS_UNIT_EOF' > /etc/systemd/system/sonora-ddos.service
+[Unit]
+Description=Sonora Gameserver Manager iptables Anti-DDoS Chain
+After=network.target ufw.service
 
-    if command -v netfilter-persistent &>/dev/null; then
-      netfilter-persistent save >/dev/null 2>&1 || true
-    fi
-    echo -e "${GREEN}✓ iptables Anti-DDoS Chain (SONORA_DDOS) installiert & persistent gespeichert.${NC}"
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sonora-ddos-apply.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+DDOS_UNIT_EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable sonora-ddos.service 2>/dev/null || true
+    echo -e "${GREEN}✓ iptables Anti-DDoS Chain (SONORA_DDOS) installiert & via sonora-ddos.service bootfest persistiert.${NC}"
   fi
 
   # 10. Fail2ban gegen SSH- & Brute-Force-Angriffe konfigurieren

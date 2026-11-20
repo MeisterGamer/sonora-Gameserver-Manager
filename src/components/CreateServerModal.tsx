@@ -113,7 +113,7 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
       category: activeGame.category,
       minecraftType: mcEngine,
       steamAppId: activeGame.steamAppId,
-      linuxExecutable: activeGame.executable?.linux,
+      linuxExecutable: activeGame.executable?.linux?.replace(/^\.\//, ''),
       linuxStartArgs: activeGame.defaultStartArgs?.linux,
       status: 'offline',
       allocatedRamGb: ramGb,

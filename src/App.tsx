@@ -247,9 +247,16 @@ export default function App() {
         version: srv?.version,
         minecraftType: srv?.minecraftType,
         category: srv?.category,
+        gameId: srv?.gameId,
         port: srv?.port,
+        queryPort: srv?.queryPort,
+        rconPort: srv?.rconPort,
+        maxPlayers: srv?.maxPlayers,
         ramGb: srv?.allocatedRamGb,
-        steamAppId: srv?.steamAppId
+        steamAppId: srv?.steamAppId,
+        executable: srv?.linuxExecutable,
+        startArgs: srv?.linuxStartArgs,
+        name: srv?.name
       });
       await refreshServers();
       showToast(data.message || 'Aktion bestätigt: ' + action + ' (' + data.status + ')');

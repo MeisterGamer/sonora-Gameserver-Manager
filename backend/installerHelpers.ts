@@ -272,3 +272,398 @@ export function ensureServerPropertiesPort(srvDir: string, port: number, motd?: 
     fs.writeFileSync(propsPath, text, 'utf8');
   } catch {}
 }
+
+/**
+ * Shell-quote-aware CLI argument splitter so quoted arguments like
+ * `+server.hostname "My Rust Server"` or `-name "Valheim World"` are never corrupted.
+ */
+export function splitCommandArgs(rawArgs: string): string[] {
+  const input = String(rawArgs || '').trim();
+  if (!input) return [];
+  const tokens: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  let escapeNext = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (escapeNext) {
+      current += ch;
+      escapeNext = false;
+      continue;
+    }
+    if (ch === '\\' && quote !== "'") {
+      escapeNext = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += ch;
+  }
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+  return tokens;
+}
+
+/**
+ * Normalizes and applies the allocated server port, queryPort, rconPort, and maxPlayers
+ * into Steam dedicated server launch arguments while preserving quoted strings.
+ */
+export function applySteamServerArgs(
+  rawArgs: string | undefined,
+  opts: {
+    port?: number;
+    queryPort?: number;
+    rconPort?: number;
+    maxPlayers?: number;
+    serverName?: string;
+  }
+): string[] {
+  const port = Number.isFinite(Number(opts.port)) && Number(opts.port) > 0 ? Math.round(Number(opts.port)) : 27015;
+  const queryPort = Number.isFinite(Number(opts.queryPort)) && Number(opts.queryPort) > 0 ? Math.round(Number(opts.queryPort)) : port + 1;
+  const rconPort = Number.isFinite(Number(opts.rconPort)) && Number(opts.rconPort) > 0 ? Math.round(Number(opts.rconPort)) : 25575;
+  const maxPlayers = Number.isFinite(Number(opts.maxPlayers)) && Number(opts.maxPlayers) > 0 ? Math.round(Number(opts.maxPlayers)) : 32;
+
+  let template = String(rawArgs || '').trim();
+  if (!template) {
+    return [`-port=${port}`, `-queryport=${queryPort}`, `-players=${maxPlayers}`];
+  }
+
+  // Replace explicit template placeholders if present
+  template = template
+    .replace(/\{\{PORT\}\}/gi, String(port))
+    .replace(/\{\{QUERY_PORT\}\}/gi, String(queryPort))
+    .replace(/\{\{RCON_PORT\}\}/gi, String(rconPort))
+    .replace(/\{\{MAX_PLAYERS\}\}/gi, String(maxPlayers));
+
+  if (opts.serverName) {
+    template = template.replace(/\{\{SERVER_NAME\}\}/gi, opts.serverName.replace(/"/g, ''));
+  }
+
+  const tokens = splitCommandArgs(template);
+  let hasPort = false;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    const lower = tok.toLowerCase();
+
+    // Key=Value forms: -port=8211, -Port=7777, +server.port=28015, --port=27015
+    if (/^(--?port|\+server\.port|\+hostport)=/i.test(tok)) {
+      tokens[i] = `${tok.split('=')[0]}=${port}`;
+      hasPort = true;
+      continue;
+    }
+    if (/^(--?queryport|\+server\.queryport)=/i.test(tok)) {
+      tokens[i] = `${tok.split('=')[0]}=${queryPort}`;
+      continue;
+    }
+    if (/^(--?rconport|\+rcon\.port)=/i.test(tok)) {
+      tokens[i] = `${tok.split('=')[0]}=${rconPort}`;
+      continue;
+    }
+    if (/^(--?players|\+server\.maxplayers|\+maxplayers|-winlivemaxplayers)=/i.test(tok)) {
+      tokens[i] = `${tok.split('=')[0]}=${maxPlayers}`;
+      continue;
+    }
+
+    // Space-separated forms: -port 2456, +server.port 28015, -queryport 27015, +rcon.port 28016
+    if ((lower === '-port' || lower === '--port' || lower === '+server.port' || lower === '+hostport') && i + 1 < tokens.length) {
+      tokens[i + 1] = String(port);
+      hasPort = true;
+      i++;
+      continue;
+    }
+    if ((lower === '-queryport' || lower === '--queryport' || lower === '+server.queryport') && i + 1 < tokens.length) {
+      tokens[i + 1] = String(queryPort);
+      i++;
+      continue;
+    }
+    if ((lower === '-rconport' || lower === '--rconport' || lower === '+rcon.port') && i + 1 < tokens.length) {
+      tokens[i + 1] = String(rconPort);
+      i++;
+      continue;
+    }
+    if ((lower === '-players' || lower === '--players' || lower === '+server.maxplayers' || lower === '+maxplayers') && i + 1 < tokens.length) {
+      tokens[i + 1] = String(maxPlayers);
+      i++;
+      continue;
+    }
+  }
+
+  if (!hasPort) {
+    tokens.push(`-port=${port}`);
+  }
+  return tokens;
+}
+
+/**
+ * Checks whether an executable on disk is a text script with a `#!` shebang (or `.sh`)
+ * so Linux can launch it reliably via `bash` even on restricted/noexec mounts, whereas
+ * native ELF binaries are spawned directly.
+ */
+export function isShebangScript(filePath: string): boolean {
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    const fd = fs.openSync(filePath, 'r');
+    const head = Buffer.alloc(4);
+    const bytesRead = fs.readSync(fd, head, 0, 4, 0);
+    fs.closeSync(fd);
+    if (bytesRead >= 4 && head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46) {
+      return false; // Native ELF binary
+    }
+    if (bytesRead >= 2 && head[0] === 0x23 && head[1] === 0x21) {
+      return true; // `#!` shebang script
+    }
+    return filePath.toLowerCase().endsWith('.sh');
+  } catch {
+    return filePath.toLowerCase().endsWith('.sh');
+  }
+}
+
+export interface SteamAppManifestInfo {
+  exists: boolean;
+  manifestPath: string;
+  appId: number;
+  stateFlags: number | null;
+  buildId: string | null;
+  bytesDownloaded: number | null;
+  bytesToDownload: number | null;
+  fullyInstalled: boolean;
+}
+
+/**
+ * Parses a Valve SteamCMD `steamapps/appmanifest_<appId>.acf` file to determine
+ * whether the game download actually reached Valve's StateFullyInstalled (`StateFlags === 4`).
+ */
+export function parseSteamAppManifest(srvDir: string, steamAppId: number): SteamAppManifestInfo {
+  const manifestPath = path.join(srvDir, 'steamapps', `appmanifest_${steamAppId}.acf`);
+  if (!steamAppId || steamAppId <= 0 || !fs.existsSync(manifestPath)) {
+    return {
+      exists: false,
+      manifestPath,
+      appId: steamAppId,
+      stateFlags: null,
+      buildId: null,
+      bytesDownloaded: null,
+      bytesToDownload: null,
+      fullyInstalled: false
+    };
+  }
+  try {
+    const raw = fs.readFileSync(manifestPath, 'utf8');
+    const stateMatch = raw.match(/"StateFlags"\s+"(\d+)"/i);
+    const buildMatch = raw.match(/"buildid"\s+"([^"]+)"/i);
+    const downloadedMatch = raw.match(/"BytesDownloaded"\s+"(\d+)"/i);
+    const toDownloadMatch = raw.match(/"BytesToDownload"\s+"(\d+)"/i);
+
+    const stateFlags = stateMatch ? Number(stateMatch[1]) : null;
+    const bytesDownloaded = downloadedMatch ? Number(downloadedMatch[1]) : null;
+    const bytesToDownload = toDownloadMatch ? Number(toDownloadMatch[1]) : null;
+
+    // Valve StateFlags bitmask: 4 === StateFullyInstalled (no pending update/staging bits)
+    const fullyInstalled = stateFlags === 4;
+
+    return {
+      exists: true,
+      manifestPath,
+      appId: steamAppId,
+      stateFlags,
+      buildId: buildMatch ? buildMatch[1] : null,
+      bytesDownloaded,
+      bytesToDownload,
+      fullyInstalled
+    };
+  } catch {
+    return {
+      exists: true,
+      manifestPath,
+      appId: steamAppId,
+      stateFlags: null,
+      buildId: null,
+      bytesDownloaded: null,
+      bytesToDownload: null,
+      fullyInstalled: false
+    };
+  }
+}
+
+export interface SteamCmdVerification {
+  installed: boolean;
+  completed: boolean;
+  steamCmdPath: string | null;
+  hasLinux32Binary: boolean;
+  hasSteamClient64: boolean;
+  hasSteamClient32: boolean;
+  hasVerifiedMarker: boolean;
+  issues: string[];
+}
+
+/**
+ * Verifies whether Valve SteamCMD is completely installed and bootstrapped on disk
+ * (script + linux32/steamcmd binary + steamclient.so / package bootstrap artifacts).
+ */
+export function verifySteamCmdInstallation(steamCmdBin: string | null): SteamCmdVerification {
+  const issues: string[] = [];
+  if (!steamCmdBin || !fs.existsSync(steamCmdBin)) {
+    return {
+      installed: false,
+      completed: false,
+      steamCmdPath: steamCmdBin,
+      hasLinux32Binary: false,
+      hasSteamClient64: false,
+      hasSteamClient32: false,
+      hasVerifiedMarker: false,
+      issues: ['SteamCMD-Binary wurde nicht auf dem Host gefunden.']
+    };
+  }
+
+  const rootDir = path.dirname(steamCmdBin);
+  const candidateRoots = Array.from(new Set([rootDir, '/opt/steamcmd']));
+  const homeDir = process.env.HOME || '';
+
+  const hasLinux32Binary = candidateRoots.some((r) => {
+    const p = path.join(r, 'linux32', 'steamcmd');
+    return fs.existsSync(p) && fs.statSync(p).size > 0;
+  });
+
+  const hasSteamClient64 =
+    candidateRoots.some((r) => fs.existsSync(path.join(r, 'linux64', 'steamclient.so'))) ||
+    (homeDir ? fs.existsSync(path.join(homeDir, '.steam', 'sdk64', 'steamclient.so')) : false);
+
+  const hasSteamClient32 =
+    candidateRoots.some((r) => fs.existsSync(path.join(r, 'linux32', 'steamclient.so'))) ||
+    (homeDir ? fs.existsSync(path.join(homeDir, '.steam', 'sdk32', 'steamclient.so')) : false);
+
+  const hasVerifiedMarker = candidateRoots.some(
+    (r) =>
+      fs.existsSync(path.join(r, '.sonora-steamcmd-verified')) ||
+      fs.existsSync(path.join(r, 'package', 'steam_cmd_linux.installed'))
+  );
+
+  if (process.platform !== 'win32') {
+    if (!hasLinux32Binary && !steamCmdBin.endsWith('/usr/games/steamcmd')) {
+      issues.push('SteamCMD 32-Bit-Kernbinary (linux32/steamcmd) fehlt — Installation unvollständig.');
+    }
+    if (!hasSteamClient64 && !hasSteamClient32 && !hasVerifiedMarker) {
+      issues.push('SteamCMD-Bootstrap noch nicht abgeschlossen (steamclient.so fehlt).');
+    }
+  }
+
+  const completed =
+    process.platform === 'win32'
+      ? fs.existsSync(steamCmdBin) && fs.statSync(steamCmdBin).size > 0
+      : hasVerifiedMarker || (hasLinux32Binary && (hasSteamClient64 || hasSteamClient32));
+
+  return {
+    installed: true,
+    completed,
+    steamCmdPath: steamCmdBin,
+    hasLinux32Binary,
+    hasSteamClient64,
+    hasSteamClient32,
+    hasVerifiedMarker,
+    issues
+  };
+}
+
+export interface SteamAppDataVerification {
+  ready: boolean;
+  srvDirExists: boolean;
+  manifest: SteamAppManifestInfo;
+  hasPendingDownload: boolean;
+  executablePath: string | null;
+  executableValid: boolean;
+  executableIsScript: boolean;
+  needsRepair: boolean;
+  issues: string[];
+}
+
+/**
+ * Robust pre-start check verifying that Steam app data is completely downloaded
+ * (no incomplete appmanifest StateFlags, no leftover steamapps/downloading staging files)
+ * and that the game executable exists and is non-empty before running the start command.
+ */
+export function verifySteamAppDataDownloaded(
+  srvDir: string,
+  steamAppId: number,
+  detectedExecPath: string | null
+): SteamAppDataVerification {
+  const issues: string[] = [];
+  const srvDirExists = fs.existsSync(srvDir);
+  const manifest = parseSteamAppManifest(srvDir, steamAppId);
+
+  if (!srvDirExists) {
+    issues.push(`Server-Verzeichnis "${srvDir}" existiert nicht.`);
+  }
+
+  // Check for interrupted SteamCMD staging downloads
+  let hasPendingDownload = false;
+  if (steamAppId > 0) {
+    const downloadingDir = path.join(srvDir, 'steamapps', 'downloading', String(steamAppId));
+    try {
+      if (fs.existsSync(downloadingDir) && fs.readdirSync(downloadingDir).length > 0) {
+        hasPendingDownload = true;
+        issues.push(`Unvollständiger SteamCMD-Download erkannt (steamapps/downloading/${steamAppId} nicht leer).`);
+      }
+    } catch {}
+  }
+
+  // If a SteamCMD appmanifest exists, its StateFlags MUST equal 4 (StateFullyInstalled)
+  if (manifest.exists && !manifest.fullyInstalled) {
+    issues.push(
+      `Steam App-Manifest appmanifest_${steamAppId}.acf unvollständig (StateFlags=${manifest.stateFlags ?? 'unbekannt'}, erwartet 4).`
+    );
+  }
+
+  let executableValid = false;
+  let executableIsScript = false;
+  if (!detectedExecPath || !fs.existsSync(detectedExecPath)) {
+    issues.push('Keine ausführbare Server-Datei (Executable) im Spielverzeichnis gefunden.');
+  } else {
+    try {
+      const stat = fs.statSync(detectedExecPath);
+      executableValid = stat.isFile() && stat.size > 0;
+      executableIsScript = isShebangScript(detectedExecPath);
+      if (!executableValid) {
+        issues.push(`Server-Executable "${path.basename(detectedExecPath)}" ist leer (0 Bytes) oder keine reguläre Datei.`);
+      }
+    } catch {
+      issues.push(`Kein Lesezugriff auf Server-Executable "${detectedExecPath}".`);
+    }
+  }
+
+  const ready = srvDirExists && executableValid && !hasPendingDownload && (!manifest.exists || manifest.fullyInstalled);
+  const needsRepair = !ready;
+
+  return {
+    ready,
+    srvDirExists,
+    manifest,
+    hasPendingDownload,
+    executablePath: detectedExecPath,
+    executableValid,
+    executableIsScript,
+    needsRepair,
+    issues
+  };
+}
+
+

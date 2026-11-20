@@ -55,6 +55,7 @@ import { AuditLogView } from './AuditLogView';
 import { WebhooksView } from './WebhooksView';
 import { JavaRuntimeModal } from './JavaRuntimeModal';
 import { ServerDiagnosticsTool } from './ServerDiagnosticsTool';
+import { ConsoleLogAnalyzerBar } from './ConsoleLogAnalyzerBar';
 
 interface ServerDetailProps {
   server: ServerInstance;
@@ -839,15 +840,26 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
 
       {/* Tab Panels */}
       {activeTab === 'console' && (
-        <ConsoleView
-          server={server}
-          onSendCommand={(cmd) => onSendCommand(server.id, cmd)}
-          logs={logs}
-          onClearLogs={onClearLogs}
-          onStartServer={() => onStartServer(server.id)}
-          onStopServer={() => onStopServer(server.id)}
-          onRestartServer={() => onRestartServer(server.id)}
-        />
+        <div className="space-y-4">
+          <ConsoleView
+            server={server}
+            onSendCommand={(cmd) => onSendCommand(server.id, cmd)}
+            logs={logs}
+            onClearLogs={onClearLogs}
+            onStartServer={() => onStartServer(server.id)}
+            onStopServer={() => onStopServer(server.id)}
+            onRestartServer={() => onRestartServer(server.id)}
+          />
+          <ConsoleLogAnalyzerBar
+            server={server}
+            logs={logs}
+            canQuickFix={canQuickFix}
+            onStartServer={() => onStartServer(server.id)}
+            onNotify={onNotify}
+            onServerUpdated={onServerUpdated}
+            onOpenDiagnostics={() => setActiveTab('diagnostics')}
+          />
+        </div>
       )}
 
       {activeTab === 'metrics' && (

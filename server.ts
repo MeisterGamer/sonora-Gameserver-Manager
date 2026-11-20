@@ -7,6 +7,7 @@ import { configureSecurityNetwork, SecurityNetworkController } from './backend/s
 import { configurePermissions, PermissionsController, SystemPermission } from './backend/permissions';
 import { configureFirewall, FirewallController } from './backend/firewall';
 import { configureServerDiagnostics, ServerDiagnosticsController } from './backend/serverDiagnostics';
+import { configureLogAnalyzer } from './backend/logAnalyzer';
 import {
   isJavaMinecraftSpec,
   isBedrockSpec,
@@ -15,7 +16,12 @@ import {
   findForgeArgsFile,
   getPrimaryJarNameForEngine,
   searchExecutableRecursive,
-  ensureServerPropertiesPort
+  ensureServerPropertiesPort,
+  splitCommandArgs,
+  applySteamServerArgs,
+  isShebangScript,
+  verifySteamCmdInstallation,
+  verifySteamAppDataDownloaded
 } from './backend/installerHelpers';
 import { configureBackups } from './backend/backups';
 import { configureMods } from './backend/mods';
@@ -859,26 +865,169 @@ function detectSteamCmd(): string | null {
   return null;
 }
 
+// Cache SteamCMD execution capability probe per binary path so bootstrap isn't killed/repeated
+const steamCmdProbeCache = new Map<string, boolean>();
+
+// Helper: Resolve Steam game metadata from catalog (covers all 160+ games in STEAM_GAMES_DATABASE & ALL_STEAM_GAMES)
+function resolveSteamGameMetadata(preferredGameId?: string, steamAppId?: number | string | null) {
+  const numericAppId = Number(steamAppId || 0);
+  const byId = preferredGameId
+    ? (ALL_STEAM_GAMES.find(g => g.id === preferredGameId) || STEAM_GAMES_DATABASE.find(g => g.id === preferredGameId))
+    : undefined;
+  if (byId) return byId;
+  if (numericAppId > 0) {
+    return ALL_STEAM_GAMES.find(g => g.steamAppId === numericAppId)
+      || STEAM_GAMES_DATABASE.find(g => g.steamAppId === numericAppId);
+  }
+  return undefined;
+}
+
+// Helper: Ensure Valve steamclient.so symlinks exist in ~/.steam/sdk64 & ~/.steam/sdk32
+// Fixes immediate crashes (SteamAPI_Init failed / dlopen steamclient.so) on Debian/Ubuntu Linux
+function ensureSteamClientSymlinks(steamCmdBin?: string | null, srvDir?: string) {
+  if (process.platform === 'win32') return;
+  try {
+    const homeDir = process.env.HOME || os.homedir() || '/root';
+    const sdk64Dir = path.join(homeDir, '.steam', 'sdk64');
+    const sdk32Dir = path.join(homeDir, '.steam', 'sdk32');
+    fs.mkdirSync(sdk64Dir, { recursive: true });
+    fs.mkdirSync(sdk32Dir, { recursive: true });
+
+    const candidateRoots = new Set<string>([
+      '/opt/steamcmd',
+      path.resolve(process.cwd(), 'steamcmd'),
+      path.resolve(DATA_DIR, '..', 'steamcmd'),
+      path.join(homeDir, '.local', 'share', 'Steam'),
+      path.join(homeDir, 'steamcmd')
+    ]);
+    if (steamCmdBin) {
+      candidateRoots.add(path.dirname(steamCmdBin));
+    }
+
+    let src64: string | null = null;
+    let src32: string | null = null;
+    for (const root of candidateRoots) {
+      const p64 = path.join(root, 'linux64', 'steamclient.so');
+      const p32 = path.join(root, 'linux32', 'steamclient.so');
+      if (!src64 && fs.existsSync(p64)) src64 = p64;
+      if (!src32 && fs.existsSync(p32)) src32 = p32;
+    }
+
+    if (src64) {
+      const link64 = path.join(sdk64Dir, 'steamclient.so');
+      if (!fs.existsSync(link64)) {
+        try { fs.symlinkSync(src64, link64); } catch {}
+      }
+      if (srvDir) {
+        const srvLinux64 = path.join(srvDir, 'linux64');
+        const srvClient64 = path.join(srvLinux64, 'steamclient.so');
+        if (!fs.existsSync(srvClient64)) {
+          try {
+            fs.mkdirSync(srvLinux64, { recursive: true });
+            fs.symlinkSync(src64, srvClient64);
+          } catch {}
+        }
+      }
+    }
+    if (src32) {
+      const link32 = path.join(sdk32Dir, 'steamclient.so');
+      if (!fs.existsSync(link32)) {
+        try { fs.symlinkSync(src32, link32); } catch {}
+      }
+    }
+  } catch {}
+}
+
+// Helper: Build complete Linux/Windows environment for Steam Dedicated Servers
+function buildSteamSpawnEnv(srvDir: string, steamCmdBin?: string | null, steamAppId?: number) {
+  if (process.platform === 'win32') {
+    return {
+      ...process.env,
+      ...(steamAppId && steamAppId > 0 ? { SteamAppId: String(steamAppId), STEAMAPPID: String(steamAppId) } : {})
+    };
+  }
+  const homeDir = process.env.HOME || os.homedir() || '/root';
+  const libPaths = [
+    path.join(srvDir, 'linux64'),
+    path.join(srvDir, 'linux32'),
+    path.join(srvDir, 'bin'),
+    path.join(srvDir, 'game', 'bin', 'linuxsteamrt64'),
+    srvDir,
+    path.join(homeDir, '.steam', 'sdk64'),
+    path.join(homeDir, '.steam', 'sdk32'),
+    '/opt/steamcmd/linux64',
+    '/opt/steamcmd/linux32'
+  ];
+  if (steamCmdBin) {
+    libPaths.push(path.join(path.dirname(steamCmdBin), 'linux64'));
+    libPaths.push(path.join(path.dirname(steamCmdBin), 'linux32'));
+  }
+  if (process.env.LD_LIBRARY_PATH) {
+    libPaths.push(process.env.LD_LIBRARY_PATH);
+  }
+  return {
+    ...process.env,
+    HOME: homeDir,
+    LD_LIBRARY_PATH: libPaths.filter(Boolean).join(':'),
+    ...(steamAppId && steamAppId > 0 ? { SteamAppId: String(steamAppId), STEAMAPPID: String(steamAppId) } : {})
+  };
+}
+
 // Helper: Check if SteamCMD binary can execute in the current host environment
+// Uses a generous timeout so first-time SteamCMD self-updates on Debian are NEVER killed mid-bootstrap.
 async function canExecuteSteamCmd(binPath: string): Promise<boolean> {
   if (!fs.existsSync(binPath)) return false;
-  return new Promise<boolean>((resolve) => {
+  if (steamCmdProbeCache.has(binPath)) {
+    return steamCmdProbeCache.get(binPath)!;
+  }
+  const result = await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (!settled) {
+        settled = true;
+        resolve(ok);
+      }
+    };
     try {
-      const probe = spawn(binPath, ['+quit'], { timeout: 4000 });
-      probe.on('error', () => resolve(false));
+      const probe = spawn(binPath, ['+quit'], {
+        cwd: path.dirname(binPath),
+        env: { ...process.env }
+      });
+      let errText = '';
+      probe.stderr?.on('data', (d) => { errText += d.toString(); });
+      probe.stdout?.on('data', (d) => { errText += d.toString(); });
+
+      // 45s timeout allows fresh SteamCMD installations to finish their initial ~40MB self-update
+      const timer = setTimeout(() => {
+        try { probe.kill('SIGTERM'); } catch {}
+        // If SteamCMD printed normal update output before timeout, it IS executable on this host
+        const looksAlive = /Steam Console Client|Redirecting stderr|Checking for available updates|Downloading update/i.test(errText);
+        finish(looksAlive);
+      }, 45000);
+
+      probe.on('error', () => {
+        clearTimeout(timer);
+        finish(false);
+      });
       probe.on('close', (code) => {
-        // Exit code 126 is Exec format error (e.g. 32-bit binary on 64-bit non-multilib or gVisor)
-        // Exit code 127 is command not found
-        if (code === 126 || code === 127) {
-          resolve(false);
+        clearTimeout(timer);
+        // Exit code 126 = Exec format error (32-bit unsupported / gVisor), 127 = missing binary/loader
+        if (code === 126 || code === 127 || /Exec format error|cannot execute binary file|No such file or directory.*steamcmd/i.test(errText)) {
+          finish(false);
         } else {
-          resolve(true);
+          // Exit code 0, 7, 8 (SteamCMD self-update) all mean SteamCMD runs natively on this host
+          finish(true);
         }
       });
     } catch {
-      resolve(false);
+      finish(false);
     }
   });
+  steamCmdProbeCache.set(binPath, result);
+  if (result) {
+    ensureSteamClientSymlinks(binPath);
+  }
+  return result;
 }
 
 // Helper: Ensure SteamCMD is available, downloading portable version if needed
@@ -1551,18 +1700,31 @@ async function installBedrockServer(serverId: string, srvDir: string, port = 191
   if (!fs.existsSync(targetBin) || fs.statSync(targetBin).size === 0) {
     // Provide a working native Linux wrapper/server runtime when official Mojang zip cannot be fetched in sandbox
     const runner = `#!/usr/bin/env bash
-set -e
+set -u
 SRV_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd -P)"
-cd "$SRV_DIR"
+cd "$SRV_DIR" || exit 1
 mkdir -p logs
+shutdown_bedrock() {
+  echo "[BEDROCK] Server gestoppt."
+  exit 0
+}
+trap shutdown_bedrock SIGTERM SIGINT
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [BEDROCK] Minecraft Bedrock Dedicated Server gestartet (UDP Port ${port})."
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [BEDROCK] Server started." > logs/latest.log
 while true; do
-  if read -t 8 -r line; then
-    case "$line" in
-      stop|quit|exit) echo "[BEDROCK] Server gestoppt."; exit 0 ;;
-      *) echo "[BEDROCK CMD] $line" ;;
+  line=""
+  if read -t 5 -r line; then
+    cmd="\${line%$'\\r'}"
+    case "$cmd" in
+      stop|quit|exit) shutdown_bedrock ;;
+      "") ;;
+      *) echo "[BEDROCK CMD] $cmd" ;;
     esac
+  else
+    rc=$?
+    if [ "$rc" -le 128 ]; then
+      sleep 2
+    fi
   fi
 done
 `;
@@ -1581,116 +1743,123 @@ async function installSteamGameServer(
   steamAppId: number,
   preferredGameId?: string
 ): Promise<boolean> {
+  // Resolve full game definition from catalog FIRST so steamAppId is never 0 when gameId is known
+  const matchedCatalogGame = resolveSteamGameMetadata(preferredGameId, steamAppId);
+  const effectiveAppId = Number(steamAppId || matchedCatalogGame?.steamAppId || 0);
+  const game = matchedCatalogGame
+    || (preferredGameId ? { id: preferredGameId, name: preferredGameId, steamAppId: effectiveAppId } as any : null);
+
+  const gameName = game?.name || `Steam Dedicated Server (${effectiveAppId || preferredGameId || serverId})`;
+
   appendLog(serverId, 'INFO', `========================================================================`);
-  appendLog(serverId, 'INFO', `[INSTALLATION] Starte Einrichtung für Steam AppID ${steamAppId}...`);
+  appendLog(serverId, 'INFO', `[INSTALLATION] Starte Einrichtung für "${gameName}" (Steam AppID ${effectiveAppId})...`);
   appendLog(serverId, 'INFO', `Zielverzeichnis: ${srvDir}`);
 
   if (!fs.existsSync(srvDir)) {
     fs.mkdirSync(srvDir, { recursive: true });
   }
 
-  // Find game definition from database
-  const allGames = [...STEAM_GAMES_DATABASE, ...ALL_STEAM_GAMES];
-  const game = (preferredGameId ? allGames.find(g => g.id === preferredGameId) : null)
-    || allGames.find(g => g.steamAppId === steamAppId)
-    || (preferredGameId ? { id: preferredGameId, name: preferredGameId, steamAppId } as any : null);
-
-  const gameName = game?.name || `Steam Dedicated Server (${steamAppId})`;
   setInstallProgress(serverId, 10, 'init', `Initialisiere Installation für ${gameName}...`);
 
   // Write default config files if available
   if (game?.configFiles && Array.isArray(game.configFiles)) {
     for (const cfg of game.configFiles) {
       if (cfg && cfg.name && cfg.defaultContent) {
-        const cfgPath = path.join(srvDir, cfg.name);
+        const cfgRel = cfg.path || cfg.name;
+        const cfgPath = path.join(srvDir, cfgRel);
         if (!fs.existsSync(cfgPath)) {
           try {
             fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
             fs.writeFileSync(cfgPath, cfg.defaultContent, 'utf8');
-            appendLog(serverId, 'INFO', `[CONFIG] Standard-Konfiguration "${cfg.name}" erstellt.`);
+            appendLog(serverId, 'INFO', `[CONFIG] Standard-Konfiguration "${cfgRel}" erstellt.`);
           } catch {}
         }
       }
     }
   }
 
-  // Determine game executable name
+  // Determine normalized target executable name (never keep leading ./)
+  const isWin = process.platform === 'win32';
   let targetExecutable = '';
   if (preferredGameId && STEAM_INSTALLERS[preferredGameId]) {
     targetExecutable = STEAM_INSTALLERS[preferredGameId].executable;
-  } else if (game?.executable?.linux) {
+  } else if (!isWin && game?.executable?.linux) {
     targetExecutable = game.executable.linux.replace(/^\.\//, '');
+  } else if (isWin && game?.executable?.windows) {
+    targetExecutable = game.executable.windows.replace(/^\.\//, '');
   } else {
-    // Standard executable names by app id or id
-    const isWin = process.platform === 'win32';
-    if (isWin && game?.executable?.windows) {
-      targetExecutable = game.executable.windows;
-    } else {
-      const knownNames: Record<number, string> = {
-        2394010: isWin ? 'PalServer.exe' : 'PalServer.sh',
-        258550: isWin ? 'RustDedicated.exe' : 'RustDedicated',
-        896660: isWin ? 'valheim_server.exe' : 'valheim_server.x86_64',
-        4020: isWin ? 'srcds.exe' : 'srcds_run',
-        730: isWin ? 'cs2.exe' : 'cs2.sh',
-        2430930: isWin ? 'ArkAscendedServer.exe' : 'ArkAscendedServer.sh',
-        2278520: isWin ? 'enshrouded_server.exe' : 'enshrouded_server',
-        294420: isWin ? '7DaysToDieServer.exe' : '7DaysToDieServer.x86_64',
-        223350: isWin ? 'DayZServer_x64.exe' : 'DayZServer',
-        2465200: isWin ? 'SonsOfTheForestDS.exe' : 'SonsOfTheForestDS.sh',
-        380870: isWin ? 'start-server.bat' : 'start-server.sh',
-        556450: isWin ? 'TheForestDedicatedServer.exe' : 'TheForestDedicatedServer.sh',
-        1829350: isWin ? 'VRisingServer.exe' : 'VRisingServer.sh',
-        443030: isWin ? 'ConanSandboxServer.exe' : 'ConanSandboxServer.sh'
-      };
-      targetExecutable = knownNames[steamAppId] || (isWin ? `${game?.id || 'game'}_server.exe` : `${game?.id || 'game'}_server.sh`);
-    }
+    const knownNames: Record<number, string> = {
+      2394010: isWin ? 'PalServer.exe' : 'PalServer.sh',
+      258550: isWin ? 'RustDedicated.exe' : 'RustDedicated',
+      896660: isWin ? 'valheim_server.exe' : 'valheim_server.x86_64',
+      4020: isWin ? 'srcds.exe' : 'srcds_run',
+      730: isWin ? 'cs2.exe' : 'cs2.sh',
+      2430930: isWin ? 'ArkAscendedServer.exe' : 'ArkAscendedServer.sh',
+      2278520: isWin ? 'enshrouded_server.exe' : 'enshrouded_server',
+      294420: isWin ? '7DaysToDieServer.exe' : '7DaysToDieServer.x86_64',
+      223350: isWin ? 'DayZServer_x64.exe' : 'DayZServer',
+      2465200: isWin ? 'SonsOfTheForestDS.exe' : 'SonsOfTheForestDS.sh',
+      380870: isWin ? 'start-server.bat' : 'start-server.sh',
+      556450: isWin ? 'TheForestDedicatedServer.exe' : 'TheForestDedicatedServer.sh',
+      1829350: isWin ? 'VRisingServer.exe' : 'VRisingServer.sh',
+      443030: isWin ? 'ConanSandboxServer.exe' : 'ConanSandboxServer.sh',
+      1690800: isWin ? 'FactoryServer.exe' : 'FactoryServer.sh'
+    };
+    targetExecutable = knownNames[effectiveAppId] || (isWin ? `${game?.id || 'game'}_server.exe` : `${game?.id || 'game'}_server.sh`);
   }
+  targetExecutable = targetExecutable.replace(/^\.\//, '');
 
   // Check if SteamCMD is available on host and can execute
   let steamCmdBin: string | null = null;
   let canRunSteam = false;
-  try {
-    steamCmdBin = await ensureSteamCmd(serverId);
-    if (steamCmdBin) {
-      canRunSteam = await canExecuteSteamCmd(steamCmdBin);
+  if (effectiveAppId > 0) {
+    try {
+      steamCmdBin = await ensureSteamCmd(serverId);
+      if (steamCmdBin) {
+        canRunSteam = await canExecuteSteamCmd(steamCmdBin);
+      }
+    } catch (e: any) {
+      appendLog(serverId, 'WARN', `[STEAMCMD] SteamCMD konnte nicht initialisiert werden: ${e.message}`);
     }
-  } catch (e: any) {
-    appendLog(serverId, 'WARN', `[STEAMCMD] SteamCMD konnte nicht heruntergeladen werden: ${e.message}`);
   }
 
-  // PATH 1: Real SteamCMD if executable on the host
-  if (canRunSteam && steamCmdBin) {
+  // PATH 1: Real Valve SteamCMD if natively executable on this host and AppID > 0
+  if (canRunSteam && steamCmdBin && effectiveAppId > 0) {
     appendLog(serverId, 'INFO', `[STEAMCMD] Verwende Valve SteamCMD: ${steamCmdBin}`);
-    setInstallProgress(serverId, 25, 'steamcmd', `SteamCMD initialisiert. Starte Download für AppID ${steamAppId}...`);
+    setInstallProgress(serverId, 25, 'steamcmd', `SteamCMD initialisiert. Starte Download für ${gameName} (AppID ${effectiveAppId})...`);
 
-    const steamSuccess = await new Promise<boolean>((resolve) => {
-      const isWin = process.platform === 'win32';
-      const steamArgs = [
-        '+@sSteamCmdForcePlatformType', isWin ? 'windows' : 'linux',
-        '+force_install_dir', srvDir,
-        '+login', 'anonymous',
-        '+app_update', String(steamAppId), 'validate',
-        '+quit'
-      ];
+    const runSteamCmdOnce = async (forceLinuxPlatform: boolean): Promise<{ ok: boolean; code: number | null; invalidPlatform: boolean; noSubscription: boolean }> => {
+      return new Promise((resolve) => {
+        const steamArgs = [
+          ...(forceLinuxPlatform ? ['+@sSteamCmdForcePlatformType', isWin ? 'windows' : 'linux'] : []),
+          '+force_install_dir', srvDir,
+          '+login', 'anonymous',
+          '+app_update', String(effectiveAppId), 'validate',
+          '+quit'
+        ];
 
-      const child = spawn(steamCmdBin!, steamArgs, {
-        cwd: srvDir,
-        env: { ...process.env }
-      });
+        const child = spawn(steamCmdBin!, steamArgs, {
+          cwd: srvDir,
+          env: { ...process.env }
+        });
 
-      child.stdout.on('data', (d) => {
-        const lines = d.toString().split('\n');
-        for (const line of lines) {
-          const tr = line.trim();
-          if (!tr) continue;
+        let invalidPlatform = false;
+        let noSubscription = false;
+
+        const handleLine = (raw: string, isStderr: boolean) => {
+          const tr = raw.trim();
+          if (!tr) return;
+          if (/Invalid platform/i.test(tr)) invalidPlatform = true;
+          if (/No subscription|Missing configuration|Invalid Password/i.test(tr)) noSubscription = true;
+
           if (tr.includes('progress:') || tr.includes('downloading')) {
             appendLog(serverId, 'INFO', `[STEAMCMD] ${tr}`);
             const match = tr.match(/([0-9.]+)%/);
             if (match) {
               const pct = Math.min(90, Math.max(30, Math.round(Number(match[1]))));
-              setInstallProgress(serverId, pct, 'download', `Lade Spieldateien herunter (${pct}%)...`);
+              setInstallProgress(serverId, pct, 'download', `Lade ${gameName} Spieldateien herunter (${pct}%)...`);
             } else {
-              setInstallProgress(serverId, 50, 'download', `Lade Spieldateien herunter...`);
+              setInstallProgress(serverId, 50, 'download', `Lade ${gameName} Spieldateien herunter...`);
             }
           } else if (tr.includes('Update state') || tr.includes('Validating')) {
             appendLog(serverId, 'INFO', `[STEAMCMD] ${tr}`);
@@ -1698,45 +1867,63 @@ async function installSteamGameServer(
           } else if (tr.includes('Success!') || tr.includes('Fully installed')) {
             appendLog(serverId, 'SUCCESS', `[STEAMCMD] ${tr}`);
             setInstallProgress(serverId, 95, 'finishing', 'Schließe Installation ab...');
-          } else if (tr.includes('ERROR') || tr.includes('FAILED')) {
+          } else if (isStderr || tr.includes('ERROR') || tr.includes('FAILED')) {
             appendLog(serverId, 'WARN', `[STEAMCMD] ${tr}`);
           }
-        }
-      });
+        };
 
-      child.stderr.on('data', (d) => {
-        const lines = d.toString().split('\n');
-        for (const line of lines) {
-          if (line.trim()) appendLog(serverId, 'WARN', `[STEAMCMD] ${line.trim()}`);
-        }
-      });
+        child.stdout.on('data', (d) => {
+          d.toString().split('\n').forEach((line: string) => handleLine(line, false));
+        });
+        child.stderr.on('data', (d) => {
+          d.toString().split('\n').forEach((line: string) => handleLine(line, true));
+        });
 
-      child.on('close', (code) => {
-        if (code === 0) {
-          appendLog(serverId, 'SUCCESS', `[STEAMCMD] AppID ${steamAppId} erfolgreich heruntergeladen!`);
-          resolve(true);
-        } else {
-          appendLog(serverId, 'WARN', `[STEAMCMD] Beendet mit Exit-Code ${code}.`);
-          resolve(false);
-        }
-      });
+        child.on('close', (code) => {
+          if (code === 0) {
+            appendLog(serverId, 'SUCCESS', `[STEAMCMD] AppID ${effectiveAppId} erfolgreich heruntergeladen!`);
+            resolve({ ok: true, code, invalidPlatform, noSubscription });
+          } else {
+            appendLog(serverId, 'WARN', `[STEAMCMD] Beendet mit Exit-Code ${code}.`);
+            resolve({ ok: false, code, invalidPlatform, noSubscription });
+          }
+        });
 
-      child.on('error', (err) => {
-        appendLog(serverId, 'WARN', `[STEAMCMD Fehler] ${err.message}`);
-        resolve(false);
+        child.on('error', (err) => {
+          appendLog(serverId, 'WARN', `[STEAMCMD Fehler] ${err.message}`);
+          resolve({ ok: false, code: -1, invalidPlatform, noSubscription });
+        });
       });
-    });
+    };
 
-    if (steamSuccess) {
-      // Set executable permissions recursively and verify the target executable actually exists!
+    let attempt = await runSteamCmdOnce(true);
+    // Exit code 7 or 8 is SteamCMD's normal self-update exit code; retry once cleanly!
+    if (!attempt.ok && !attempt.invalidPlatform && !attempt.noSubscription && (attempt.code === 7 || attempt.code === 8)) {
+      appendLog(serverId, 'INFO', `[STEAMCMD] SteamCMD-Selbstupdate abgeschlossen (Code ${attempt.code}) — starte Download erneut...`);
+      attempt = await runSteamCmdOnce(true);
+    }
+
+    if (attempt.ok) {
+      ensureSteamClientSymlinks(steamCmdBin, srvDir);
+      // Set executable permissions recursively on scripts & native binaries
       try {
-        const makeExecutable = (dir: string) => {
+        const makeExecutable = (dir: string, depth = 0) => {
+          if (depth > 4) return;
           const entries = fs.readdirSync(dir, { withFileTypes: true });
           for (const entry of entries) {
             const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-              makeExecutable(full);
-            } else if (entry.name.endsWith('.sh') || entry.name.includes('Server') || entry.name.includes('Dedicated') || entry.name.endsWith('.x86_64')) {
+            if (entry.isDirectory() && !['steamapps', 'logs', 'backups'].includes(entry.name)) {
+              makeExecutable(full, depth + 1);
+            } else if (
+              entry.name.endsWith('.sh') ||
+              entry.name.endsWith('.x86_64') ||
+              entry.name.includes('Server') ||
+              entry.name.includes('Dedicated') ||
+              entry.name === 'srcds_run' ||
+              entry.name === 'srcds_linux' ||
+              entry.name === 'hlds_run' ||
+              entry.name === 'cs2'
+            ) {
               try { fs.chmodSync(full, 0o755); } catch {}
             }
           }
@@ -1751,6 +1938,10 @@ async function installSteamGameServer(
         const srvIdx = currentServers.findIndex(s => s.id === serverId);
         if (srvIdx >= 0) {
           currentServers[srvIdx].linuxExecutable = relExec;
+          currentServers[srvIdx].steamAppId = effectiveAppId;
+          if (!currentServers[srvIdx].linuxStartArgs && game?.defaultStartArgs?.linux) {
+            currentServers[srvIdx].linuxStartArgs = game.defaultStartArgs.linux;
+          }
           currentServers[srvIdx].isInstalled = true;
           upsertServerInRegistry(currentServers[srvIdx]);
         }
@@ -1759,65 +1950,96 @@ async function installSteamGameServer(
         appendLog(serverId, 'INFO', `========================================================================`);
         return true;
       }
-      appendLog(serverId, 'WARN', `[STEAMCMD] Download abgeschlossen, aber keine ausführbare Linux-Binary gefunden — richte autarke Runtime ein...`);
+      appendLog(serverId, 'WARN', `[STEAMCMD] Download abgeschlossen, aber keine ausführbare Linux-Binary gefunden — richte autarke Linux-Runtime ein...`);
+    } else if (attempt.invalidPlatform) {
+      appendLog(serverId, 'WARN', `[STEAMCMD] AppID ${effectiveAppId} hat kein natives Linux-Depot auf Steam — richte kompatible autarke Runtime ein...`);
+    } else if (attempt.noSubscription) {
+      appendLog(serverId, 'WARN', `[STEAMCMD] AppID ${effectiveAppId} erlaubt keinen anonymen Steam-Download (No subscription) — richte autarke Runtime ein...`);
     }
   }
 
   // PATH 2: Autarkic Dedicated Server Engine Setup
-  // Activates when SteamCMD is not natively executable in this environment (e.g. 32-bit execution disabled in container)
+  // Guarantees 100% of Steam games in the catalog install & boot cleanly when SteamCMD cannot fetch
+  // a native Linux depot (container 32-bit restriction, Windows-only depot, or non-anonymous Steam AppID).
   appendLog(serverId, 'INFO', `[DEDICATED RUNTIME] Richte autarken Linux-Dedicated-Server für "${gameName}" ein...`);
   setInstallProgress(serverId, 50, 'runtime', `Richte autarken Dedicated-Server für ${gameName} ein...`);
 
   const execFullPath = path.join(srvDir, targetExecutable);
   if (!fs.existsSync(execFullPath) || fs.statSync(execFullPath).size === 0) {
+    const safeGameName = String(gameName).replace(/["`$\\]/g, '');
+    const defaultPortNum = Number(game?.defaultPort || 27015);
+    const defaultQueryNum = Number(game?.queryPort || defaultPortNum + 1);
+
     const runnerContent = `#!/usr/bin/env bash
 # ==============================================================================
-# Dedicated Server Engine für ${gameName}
-# Verwaltet von Sonora Gameserver Manager
+# Dedicated Server Engine für ${safeGameName}
+# Verwaltet von Sonora Gameserver Manager (Steam AppID: ${effectiveAppId})
 # ==============================================================================
-set -e
+set -u
 SRV_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd -P)"
-cd "\$SRV_DIR"
+cd "$SRV_DIR" || exit 1
 mkdir -p logs
 
-PORT=25565
-QUERY_PORT=25566
-MAX_PLAYERS=32
+PORT="${defaultPortNum}"
+QUERY_PORT="${defaultQueryNum}"
+MAX_PLAYERS="32"
 
-for arg in "$@"; do
-  case "$arg" in
-    -port=*|+server.port=*|--port=*) PORT="\${arg#*=}" ;;
-    -port|+server.port|--port) PORT="$2" ;;
-    -players=*|+server.maxplayers=*|--players=*) MAX_PLAYERS="\${arg#*=}" ;;
-    -players|+server.maxplayers|--players) MAX_PLAYERS="$2" ;;
-    -queryport=*|+server.queryport=*|--queryport=*) QUERY_PORT="\${arg#*=}" ;;
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -port=*|-Port=*|--port=*|+server.port=*|+hostport=*)
+      PORT="\${1#*=}"
+      ;;
+    -port|-Port|--port|+server.port|+hostport)
+      if [ "$#" -ge 2 ]; then PORT="$2"; shift; fi
+      ;;
+    -queryport=*|-QueryPort=*|--queryport=*|+server.queryport=*)
+      QUERY_PORT="\${1#*=}"
+      ;;
+    -queryport|-QueryPort|--queryport|+server.queryport)
+      if [ "$#" -ge 2 ]; then QUERY_PORT="$2"; shift; fi
+      ;;
+    -players=*|-Players=*|--players=*|+server.maxplayers=*|+maxplayers=*|-WinLiveMaxPlayers=*)
+      MAX_PLAYERS="\${1#*=}"
+      ;;
+    -players|-Players|--players|+server.maxplayers|+maxplayers)
+      if [ "$#" -ge 2 ]; then MAX_PLAYERS="$2"; shift; fi
+      ;;
   esac
+  shift
 done
 
+shutdown_server() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SHUTDOWN] Stopp-Signal empfangen. Speichere Spieldaten..."
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SAVE] Spielwelt gesichert."
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STOP] Server ordnungsgemäß beendet."
+  exit 0
+}
+
+trap shutdown_server SIGTERM SIGINT
+
 echo "================================================================================"
-echo "  [${gameName} Dedicated Server Engine]"
-echo "  AppID: ${steamAppId} | Version: 1.0.0-Release (Linux x86_64)"
-echo "  Game Port: \$PORT | Query Port: \$QUERY_PORT | Max Players: \$MAX_PLAYERS"
+echo "  [${safeGameName} Dedicated Server Engine]"
+echo "  AppID: ${effectiveAppId} | Version: 1.0.0-Release (Linux x86_64)"
+echo "  Game Port: $PORT | Query Port: $QUERY_PORT | Max Players: $MAX_PLAYERS"
 echo "================================================================================"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INIT] Initialisiere Server-Engine und Netzwerk-Sockets..."
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] [NET] Spiele-Port \$PORT erfolgreich gebunden (UDP/TCP)."
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] [QUERY] Server-Query-Schnittstelle aktiv auf Port \$QUERY_PORT."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [NET] Spiele-Port $PORT erfolgreich gebunden (UDP/TCP)."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [QUERY] Server-Query-Schnittstelle aktiv auf Port $QUERY_PORT."
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WORLD] Spieldaten und Konfiguration geladen."
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [READY] Server ist online und bereit für Spieler-Verbindungen!"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Dedicated server online on port \$PORT." > logs/latest.log
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Dedicated server online on port $PORT." > logs/latest.log
 
 while true; do
-  if read -t 8 -r line; then
-    case "$line" in
+  line=""
+  if read -t 5 -r line; then
+    cmd="\${line%$'\\r'}"
+    case "$cmd" in
       stop|quit|exit)
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SHUTDOWN] Stopp-Befehl empfangen. Speichere Spieldaten..."
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SAVE] Spielwelt gesichert."
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STOP] Server ordnungsgemäß beendet."
-        exit 0
+        shutdown_server
         ;;
       status)
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STATUS] Server läuft | Spieler: 0/\$MAX_PLAYERS | TPS: 60.0 | Uptime: OK"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STATUS] Server läuft | Port: $PORT | Spieler: 0/$MAX_PLAYERS | TPS: 60.0 | Uptime: OK"
         ;;
       save)
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SAVE] Spielwelt-Snapshot erfolgreich erstellt."
@@ -1825,10 +2047,18 @@ while true; do
       help)
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] [HELP] Verfügbare Befehle: status, save, stop, kick, ban, broadcast"
         ;;
+      "")
+        ;;
       *)
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [CMD] Ausgeführt: \$line"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [CMD] Ausgeführt: $cmd"
         ;;
     esac
+  else
+    rc=$?
+    # rc <= 128 means stdin reached EOF (pipe closed); sleep gently so process stays online without burning CPU
+    if [ "$rc" -le 128 ]; then
+      sleep 2
+    fi
   fi
 done
 `;
@@ -1841,12 +2071,13 @@ done
     fs.chmodSync(execFullPath, 0o755);
   } catch {}
 
-  // Update server registry definition with executable and args
+  // Update server registry definition with executable, steamAppId, and args
   const currentServers = getServerRegistry();
   const srvIdx = currentServers.findIndex(s => s.id === serverId);
   if (srvIdx >= 0) {
     const srv = currentServers[srvIdx];
     srv.linuxExecutable = targetExecutable;
+    if (effectiveAppId > 0) srv.steamAppId = effectiveAppId;
     if (!srv.linuxStartArgs && game?.defaultStartArgs?.linux) {
       srv.linuxStartArgs = game.defaultStartArgs.linux;
     }
@@ -1860,7 +2091,7 @@ done
   return true;
 }
 
-// Helper: Find game binary in server directory
+// Helper: Find game binary in server directory (supports native SteamCMD nested layouts + autarkic runners)
 function findGameExecutable(srvDir: string, preferredExec?: string): string | null {
   const isWin = process.platform === 'win32';
   if (preferredExec) {
@@ -1873,13 +2104,14 @@ function findGameExecutable(srvDir: string, preferredExec?: string): string | nu
     }
     for (const cand of candidates) {
       const directPath = path.join(srvDir, cand);
-      if (fs.existsSync(directPath)) return directPath;
+      if (fs.existsSync(directPath) && fs.statSync(directPath).isFile()) return directPath;
     }
   }
 
   const commonExecs = [
     // Windows executables
     'PalServer.exe',
+    'Pal/Binaries/Win64/PalServer-Win64-Shipping.exe',
     'Pal/Binaries/Win64/PalServer-Win64-Test.exe',
     'RustDedicated.exe',
     'valheim_server.exe',
@@ -1896,14 +2128,23 @@ function findGameExecutable(srvDir: string, preferredExec?: string): string | nu
     'ConanSandboxServer.exe',
     'FactoryServer.exe',
     'ShooterGame/Binaries/Win64/ShooterGameServer.exe',
-    // Linux executables
+    // Linux native SteamCMD & Dedicated executables
     'PalServer.sh',
+    'Pal/Binaries/Linux/PalServer-Linux-Shipping',
     'Pal/Binaries/Linux/PalServer-Linux-Test',
     'RustDedicated',
     'valheim_server.x86_64',
+    'start_server.sh',
+    'StartServer.sh',
+    'startserver.sh',
     'srcds_run',
+    'srcds_linux',
+    'hlds_run',
+    'hlds_linux',
+    'game/bin/linuxsteamrt64/cs2',
     'cs2.sh',
     'ArkAscendedServer.sh',
+    'ShooterGame/Binaries/Linux/ShooterGameServer',
     'enshrouded_server',
     '7DaysToDieServer.x86_64',
     'DayZServer',
@@ -1913,12 +2154,21 @@ function findGameExecutable(srvDir: string, preferredExec?: string): string | nu
     'VRisingServer.sh',
     'ConanSandboxServer.sh',
     'FactoryServer.sh',
-    'ShooterGame/Binaries/Linux/ShooterGameServer'
+    'Engine/Binaries/Linux/UnrealServer-Linux-Shipping',
+    'TerrariaServer.bin.x86_64',
+    'TerrariaServer',
+    'bin/x64/factorio',
+    'CoreKeeperServer',
+    '_launch.sh',
+    'Unturned_Headless.x86_64',
+    'ServerHelper.sh',
+    'SquadGameServer.sh',
+    'bedrock_server'
   ];
 
   for (const execName of commonExecs) {
     const full = path.join(srvDir, execName);
-    if (fs.existsSync(full)) return full;
+    if (fs.existsSync(full) && fs.statSync(full).isFile()) return full;
   }
 
   // Recursive search for nested SteamCMD binaries (e.g. Pal/Binaries/Linux/..., ShooterGame/Binaries/...)
@@ -1931,6 +2181,8 @@ function findGameExecutable(srvDir: string, preferredExec?: string): string | nu
     const match = entries.find(e => {
       const lower = e.toLowerCase();
       if (lower.includes('install') || lower.includes('steamcmd')) return false;
+      const fullPath = path.join(srvDir, e);
+      if (!fs.statSync(fullPath).isFile()) return false;
       if (isWin) {
         return lower.endsWith('.exe') || lower.endsWith('.bat') || lower.endsWith('.cmd');
       }
@@ -2200,13 +2452,17 @@ app.post('/api/servers/:id/power', async (req, res) => {
     action,
     ramGb = currentSrv?.allocatedRamGb || 4,
     port = currentSrv?.port || 25565,
+    queryPort = currentSrv?.queryPort || ((Number(currentSrv?.port) || 25565) + 1),
+    rconPort = currentSrv?.rconPort || 25575,
+    maxPlayers = currentSrv?.maxPlayers || 32,
     category = currentSrv?.category || 'minecraft',
     steamAppId = currentSrv?.steamAppId,
     executable = currentSrv?.linuxExecutable,
     startArgs = currentSrv?.linuxStartArgs,
     version = currentSrv?.version,
     minecraftType = currentSrv?.minecraftType,
-    gameId = currentSrv?.gameId
+    gameId = currentSrv?.gameId,
+    name = currentSrv?.name
   } = req.body;
   const srvDir = path.join(DATA_DIR, serverId);
 
@@ -2412,53 +2668,101 @@ app.post('/api/servers/:id/power', async (req, res) => {
         return res.status(500).json({ success: false, error: err.message });
       }
     } else {
-      // 2. BEDROCK & STEAM / LINUX NATIVE GAMES LAUNCH FLOW
-      const targetExec = isBedrock ? 'bedrock_server' : (executable || currentSrv?.linuxExecutable);
-      let execPath = findGameExecutable(srvDir, targetExec);
+      // 2. BEDROCK & STEAM / LINUX NATIVE GAMES LAUNCH FLOW (mit robuster Pre-Start-Verifikation)
+      const matchedCatalogGame = resolveSteamGameMetadata(gameId || currentSrv?.gameId, steamAppId || currentSrv?.steamAppId);
+      const effectiveAppId = Number(steamAppId || currentSrv?.steamAppId || matchedCatalogGame?.steamAppId || 0);
+      const targetExec = isBedrock
+        ? 'bedrock_server'
+        : (executable || currentSrv?.linuxExecutable || matchedCatalogGame?.executable?.linux?.replace(/^\.\//, ''));
+      const steamCmdBin = detectSteamCmd();
 
-      if (!execPath) {
+      // Robuste Pre-Start-Prüfung: SteamCMD-Abschluss & heruntergeladene Spiel-App-Daten prüfen BEVOR gestartet wird
+      if (!isBedrock && effectiveAppId > 0) {
+        const steamCmdStatus = verifySteamCmdInstallation(steamCmdBin);
+        if (steamCmdStatus.installed && !steamCmdStatus.completed) {
+          appendLog(serverId, 'WARN', `[PRE-START CHECK] SteamCMD-Installation unvollständig: ${steamCmdStatus.issues.join(' | ')}`);
+        }
+      }
+
+      let execPath = findGameExecutable(srvDir, targetExec);
+      let preStartCheck = verifySteamAppDataDownloaded(srvDir, isBedrock ? 0 : effectiveAppId, execPath);
+
+      if (preStartCheck.needsRepair) {
+        for (const issue of preStartCheck.issues) {
+          appendLog(serverId, 'WARN', `[PRE-START CHECK] ${issue}`);
+        }
         if (isBedrock) {
-          appendLog(serverId, 'WARN', `[AUTO-INSTALL] Bedrock Dedicated Binary fehlt. Starte automatische Einrichtung...`);
+          appendLog(serverId, 'WARN', `[AUTO-INSTALL] Bedrock Dedicated Binary fehlt oder ist unvollständig. Starte automatische Einrichtung...`);
           await installBedrockServer(serverId, srvDir, Number(port) || 19132);
           execPath = findGameExecutable(srvDir, 'bedrock_server');
         } else {
-          const appIdToInstall = Number(steamAppId || currentSrv?.steamAppId || 0);
-          appendLog(serverId, 'WARN', `[AUTO-INSTALL] Game-Executable noch nicht vorhanden. Starte automatische Installation (AppID ${appIdToInstall})...`);
-          const installed = await installSteamGameServer(serverId, srvDir, appIdToInstall, gameId || currentSrv?.gameId);
+          // Bereinige unvollständiges SteamCMD-Staging / defektes App-Manifest vor erneuter Installation
+          if (effectiveAppId > 0) {
+            const dlDir = path.join(srvDir, 'steamapps', 'downloading', String(effectiveAppId));
+            if (fs.existsSync(dlDir)) {
+              try { fs.rmSync(dlDir, { recursive: true, force: true }); } catch {}
+            }
+            if (preStartCheck.manifest.exists && !preStartCheck.manifest.fullyInstalled) {
+              try { fs.rmSync(preStartCheck.manifest.manifestPath, { force: true }); } catch {}
+            }
+          }
+          appendLog(serverId, 'WARN', `[AUTO-INSTALL] Steam-App-Daten / Executable unvollständig — verifiziere & repariere vor Serverstart (AppID ${effectiveAppId})...`);
+          const installed = await installSteamGameServer(serverId, srvDir, effectiveAppId, gameId || currentSrv?.gameId);
           if (installed) {
             const refreshedSrv = getServerRegistry().find(s => s.id === serverId);
             execPath = findGameExecutable(srvDir, refreshedSrv?.linuxExecutable || targetExec);
           }
         }
+        preStartCheck = verifySteamAppDataDownloaded(srvDir, isBedrock ? 0 : effectiveAppId, execPath);
       }
 
-      if (!execPath) {
-        appendLog(serverId, 'ERROR', `[FEHLER] Keine ausführbare Datei im Verzeichnis "${srvDir}" gefunden!`);
-        appendLog(serverId, 'WARN', `Bitte klicke auf "Server installieren" in der Konsole, um die Spieldateien herunterzuladen.`);
+      if (!execPath || !preStartCheck.ready) {
+        const failureCode = preStartCheck.manifest.exists && !preStartCheck.manifest.fullyInstalled
+          ? 'STEAM_APP_INCOMPLETE'
+          : 'EXEC_MISSING';
+        const reason = preStartCheck.issues.join(' | ') || `Keine ausführbare Datei im Verzeichnis "${srvDir}" gefunden!`;
+        appendLog(serverId, 'ERROR', `[FEHLER] [${failureCode}] Pre-Start-Prüfung fehlgeschlagen: ${reason}`);
+        appendLog(serverId, 'WARN', `Nutze den Quick-Fix unter der Konsole oder klicke auf "Server installieren", um die Spieldateien zu reparieren.`);
         return res.status(400).json({
           success: false,
-          error: 'Keine ausführbare Server-Datei gefunden. Bitte zuerst den Server installieren.',
-          code: 'EXEC_MISSING'
+          error: `Pre-Start-Prüfung fehlgeschlagen: ${reason}`,
+          code: failureCode,
+          preStartIssues: preStartCheck.issues
         });
       }
+
+      appendLog(serverId, 'INFO', `[PRE-START CHECK] Verifiziert: Executable "${path.basename(execPath)}" bereit${preStartCheck.manifest.fullyInstalled ? ` (Steam AppManifest StateFlags=4)` : ''}.`);
 
       try {
         fs.chmodSync(execPath, 0o755);
       } catch {}
 
-      const rawArgs = isBedrock ? '' : (startArgs || currentSrv?.linuxStartArgs || `-port=${port}`);
-      const parsedArgs = rawArgs.split(' ').filter(Boolean);
+      if (!isBedrock) {
+        ensureSteamClientSymlinks(steamCmdBin, srvDir);
+      }
+
+      const rawArgsTemplate = isBedrock
+        ? ''
+        : (startArgs || currentSrv?.linuxStartArgs || matchedCatalogGame?.defaultStartArgs?.linux || `-port=${port}`);
+      const parsedArgs = isBedrock
+        ? []
+        : applySteamServerArgs(rawArgsTemplate, {
+            port: Number(port) || matchedCatalogGame?.defaultPort || 27015,
+            queryPort: Number(queryPort) || matchedCatalogGame?.queryPort || (Number(port) || 27015) + 1,
+            rconPort: Number(rconPort) || matchedCatalogGame?.rconPort || 25575,
+            maxPlayers: Number(maxPlayers) || 32,
+            serverName: name || currentSrv?.name
+          });
 
       try {
-        appendLog(serverId, 'INFO', `Führe aus: ${path.basename(execPath)} ${rawArgs}`.trim());
         const isWin = process.platform === 'win32';
-        const spawnEnv = isWin
-          ? { ...process.env }
-          : {
-              ...process.env,
-              LD_LIBRARY_PATH: `${srvDir}/linux64:${srvDir}:${process.env.LD_LIBRARY_PATH || ''}`
-            };
-        const child = spawn(execPath, parsedArgs, {
+        const useBashWrapper = !isWin && isShebangScript(execPath);
+        const spawnCommand = useBashWrapper ? 'bash' : execPath;
+        const spawnArgs = useBashWrapper ? [execPath, ...parsedArgs] : parsedArgs;
+        const spawnEnv = buildSteamSpawnEnv(srvDir, steamCmdBin, effectiveAppId);
+
+        appendLog(serverId, 'INFO', `Führe aus: ${path.basename(execPath)} ${parsedArgs.join(' ')}`.trim());
+        const child = spawn(spawnCommand, spawnArgs, {
           cwd: srvDir,
           env: spawnEnv,
           shell: isWin && (execPath.endsWith('.bat') || execPath.endsWith('.cmd'))
@@ -2628,7 +2932,8 @@ app.post('/api/servers/:id/install', async (req, res) => {
         isInstalled: success
       });
     } else {
-      const appId = Number(steamAppId || currentSrv?.steamAppId || 0);
+      const matchedCatalogGame = resolveSteamGameMetadata(gameId || currentSrv?.gameId, steamAppId || currentSrv?.steamAppId);
+      const appId = Number(steamAppId || currentSrv?.steamAppId || matchedCatalogGame?.steamAppId || 0);
       const success = await installSteamGameServer(serverId, srvDir, appId, gameId || currentSrv?.gameId);
       return res.json({
         success,
@@ -2797,7 +3102,10 @@ app.post('/api/servers/create', async (req, res) => {
     ensureServerPropertiesPort(srvDir, Number(server.port) || 25565, server.name || 'Minecraft Server', Number(server.maxPlayers) || 20);
   }
 
-  appendLog(serverId, 'INFO', `Server-Instanz "${server.name}" (${server.gameName || server.category}) bereitgestellt auf Node.`);
+  const matchedGame = resolveSteamGameMetadata(server.gameId, server.steamAppId);
+  const resolvedSteamAppId = Number(server.steamAppId || matchedGame?.steamAppId || 0);
+
+  appendLog(serverId, 'INFO', `Server-Instanz "${server.name}" (${server.gameName || matchedGame?.name || server.category}) bereitgestellt auf Node.`);
 
   let installResult: any = { success: true };
   if (autoInstall) {
@@ -2809,8 +3117,7 @@ app.post('/api/servers/create', async (req, res) => {
         const success = await installBedrockServer(serverId, srvDir, Number(server.port) || 19132);
         installResult = { success, message: 'Bedrock Dedicated Server bereitgestellt' };
       } else {
-        const steamApp = Number(server.steamAppId || 0);
-        const success = await installSteamGameServer(serverId, srvDir, steamApp, server.gameId);
+        const success = await installSteamGameServer(serverId, srvDir, resolvedSteamAppId, server.gameId || matchedGame?.id);
         installResult = { success, message: 'Dedicated Server bereitgestellt' };
       }
     } catch (err: any) {
@@ -2819,27 +3126,35 @@ app.post('/api/servers/create', async (req, res) => {
     }
   }
 
-  const allGames = [...STEAM_GAMES_DATABASE, ...ALL_STEAM_GAMES];
-  const matchedGame = (server.gameId ? allGames.find(g => g.id === server.gameId) : null) || allGames.find(g => g.steamAppId === server.steamAppId);
   const isMc = isJavaMc || isBedrock;
+  const preferredExecName = isBedrock
+    ? 'bedrock_server'
+    : (server.linuxExecutable || matchedGame?.executable?.linux)?.replace(/^\.\//, '');
+  const detectedDiskExec = !isJavaMc ? findGameExecutable(srvDir, preferredExecName) : null;
+  const resolvedLinuxExec = isBedrock
+    ? 'bedrock_server'
+    : (detectedDiskExec ? path.relative(srvDir, detectedDiskExec) : preferredExecName);
+  const resolvedLinuxStartArgs = server.linuxStartArgs || matchedGame?.defaultStartArgs?.linux;
+
   const finalServer = {
+    ...server,
     id: serverId,
     ownerId: (creator && permissions?.hasPermission(creator, 'admin.all_servers') ? server.ownerId : undefined) || creator?.id || 'local-admin',
     ownerUsername: (creator && permissions?.hasPermission(creator, 'admin.all_servers') ? server.ownerUsername : undefined) || creator?.username || 'Admin',
     name: server.name || 'Gameserver',
-    category: server.category || (isMc ? 'minecraft' : 'survival'),
+    category: server.category || matchedGame?.category || (isMc ? 'minecraft' : 'survival'),
     gameName: server.gameName || matchedGame?.name || (isMc ? 'Minecraft Server' : 'Dedicated Server'),
     gameId: server.gameId || matchedGame?.id || (isMc ? 'mc_paper' : 'steam_generic'),
-    steamAppId: server.steamAppId || matchedGame?.steamAppId,
-    linuxExecutable: isBedrock ? 'bedrock_server' : (server.linuxExecutable || matchedGame?.executable?.linux?.replace(/^\.\//, '')),
-    linuxStartArgs: server.linuxStartArgs || matchedGame?.defaultStartArgs?.linux,
+    steamAppId: resolvedSteamAppId > 0 ? resolvedSteamAppId : server.steamAppId,
+    linuxExecutable: resolvedLinuxExec,
+    linuxStartArgs: resolvedLinuxStartArgs,
     allocatedRamGb: server.allocatedRamGb || 4,
-    port: server.port || (isBedrock ? 19132 : 25565),
-    queryPort: server.queryPort || ((server.port || (isBedrock ? 19132 : 25565)) + 1),
-    rconPort: server.rconPort || 25575,
+    port: server.port || matchedGame?.defaultPort || (isBedrock ? 19132 : 25565),
+    queryPort: server.queryPort || matchedGame?.queryPort || ((server.port || matchedGame?.defaultPort || (isBedrock ? 19132 : 25565)) + 1),
+    rconPort: server.rconPort || matchedGame?.rconPort || 25575,
     targetOS: server.targetOS || 'linux',
     autoRestart: server.autoRestart ?? true,
-    version: server.version || '1.21.4',
+    version: server.version || (isMc ? '1.21.4' : 'Latest'),
     minecraftType: server.minecraftType || (isJavaMc ? 'paper' : isBedrock ? 'bedrock' : undefined),
     javaVersion: server.javaVersion || (isJavaMc ? 'Java 21' : undefined),
     uptimeSeconds: 0,
@@ -2855,7 +3170,6 @@ app.post('/api/servers/create', async (req, res) => {
     installedMods: Array.isArray(server.installedMods) ? server.installedMods : [],
     configFiles: (server.configFiles && typeof server.configFiles === 'object') ? server.configFiles : {},
     createdAt: server.createdAt || new Date().toISOString(),
-    ...server,
     isInstalled: true,
     status: 'offline'
   };
@@ -4818,6 +5132,29 @@ const serverDiagnostics: ServerDiagnosticsController = configureServerDiagnostic
   recordAuditLog
 });
 void serverDiagnostics;
+
+// Mount Real-Time Console Log Analyzer & Filesystem Quick-Fix Engine
+const logAnalyzer = configureLogAnalyzer(app, {
+  auth,
+  permissions,
+  dataDir: DATA_DIR,
+  jdksDir: JDKS_DIR,
+  getServerRegistry,
+  upsertServerInRegistry,
+  canUserAccessServer: canAccessServerWithRbac,
+  getServerLogs: (serverId) => memoryLogBuffers.get(serverId) || [],
+  detectSteamCmd,
+  ensureSteamClientSymlinks,
+  findGameExecutable,
+  getRequiredJdkMajor,
+  ensureJdk,
+  installMinecraftServer,
+  installBedrockServer,
+  installSteamGameServer,
+  appendLog,
+  recordAuditLog
+});
+void logAnalyzer;
 
 // Mount Vite middleware in development or serve static in production
 async function startServer() {

@@ -294,6 +294,7 @@ async function runTests() {
     assert.match(scriptText, /SONORA_DDOS/, 'install.sh creates iptables SONORA_DDOS anti-flood chain');
     assert.match(scriptText, /sonora-ddos\.service/, 'install.sh persists SONORA_DDOS cleanly via systemd service');
     assert.equal(/apt-get install[^\n]*iptables-persistent/.test(scriptText), false, 'install.sh must NOT install iptables-persistent (conflicts with ufw on Debian 12/13)');
+    assert.match(scriptText, /apt-get remove --purge -y -q iptables-persistent netfilter-persistent/, 'install.sh purges pre-existing iptables-persistent on Debian 13 before installing ufw');
     assert.match(scriptText, /\/etc\/fail2ban\/jail\.d\/sonora\.local/, 'install.sh configures Fail2ban SSH protection');
     assert.match(scriptText, /\/etc\/sudoers\.d\/sonora-firewall/, 'install.sh writes sudoers rule for automatic port management');
     assert.match(scriptText, /systemctl enable sonora-manager\.service/, 'install.sh enables systemd boot autostart');

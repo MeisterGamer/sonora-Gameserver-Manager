@@ -105,16 +105,50 @@ fi
 echo -e "${GREEN}[1/11] Root-Rechte bestätigt (OS: $(grep -E '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)).${NC}"
 
 # 2. Debian/Ubuntu Paketlisten aktualisieren & Basistools + Firewall/DDoS-Pakete installieren
-# Hinweis: iptables-persistent wird bewusst NICHT installiert, da ufw unter Debian 12/13
-# mit iptables-persistent kollidiert (Breaks: iptables-persistent). Die SONORA_DDOS-Regeln
-# werden stattdessen konfliktfrei über den eigenen systemd-Dienst sonora-ddos.service persistiert.
-echo -e "${BLUE}[2/11] Aktualisiere Paketlisten und installiere Debian-Basiskomponenten, Git, Firewall & DDoS-Tools...${NC}"
+# Debian 13 (Trixie) Fix: ufw deklariert "Breaks: iptables-persistent".
+# Wir priorisieren konsequent UFW statt iptables-persistent, um Paketkonflikte auf Debian 13
+# vollständig zu vermeiden. Die SONORA_DDOS-Regeln werden stattdessen konfliktfrei über den
+# eigenen systemd-Dienst sonora-ddos.service bootfest persistiert.
+# Zusätzlich nutzen apt_has_candidate / apt_install_preferred lokale APT-Repositories als Fallback,
+# wenn bestimmte Paketversionen (z. B. OpenJDK 21, NodeSource, Debian-13 t64-Pakete) fehlen.
+echo -e "${BLUE}[2/11] Aktualisiere Paketlisten und installiere Debian-Basiskomponenten, Git, Firewall (UFW) & DDoS-Tools...${NC}"
 export DEBIAN_FRONTEND=noninteractive
+
+apt_has_candidate() {
+  local pkg="$1"
+  local candidate
+  candidate="$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+  [ -n "$candidate" ] && [ "$candidate" != "(none)" ]
+}
+
+apt_install_preferred() {
+  local pkg
+  for pkg in "$@"; do
+    if apt_has_candidate "$pkg"; then
+      if apt-get install -y -q --no-install-recommends "$pkg" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+dpkg --configure -a >/dev/null 2>&1 || true
+if dpkg -s iptables-persistent >/dev/null 2>&1 || dpkg -s netfilter-persistent >/dev/null 2>&1; then
+  echo -e "${YELLOW}Priorisiere UFW: Entferne kollidierendes Paket iptables-persistent / netfilter-persistent (Debian 13 Kompatibilität)...${NC}"
+  apt-get remove --purge -y -q iptables-persistent netfilter-persistent >/dev/null 2>&1 || true
+fi
+apt-get -f install -y -q >/dev/null 2>&1 || true
 apt-get update -y -q || true
-apt-get install -y -q \
-  curl wget git unzip tar ca-certificates gnupg lsb-release \
-  build-essential net-tools iproute2 sudo || true
-apt-get install -y -q ufw iptables fail2ban || true
+
+for base_pkg in curl wget git unzip tar ca-certificates gnupg lsb-release build-essential net-tools iproute2 sudo; do
+  apt_install_preferred "$base_pkg" || true
+done
+
+# UFW mit höchster Priorität installieren (niemals iptables-persistent verwenden)
+apt_install_preferred ufw || apt-get install -y -q ufw || true
+apt_install_preferred iptables || true
+apt_install_preferred fail2ban || true
 
 # 3. Repository-Download & Quellverzeichnis ermitteln (In-Place vs. GitHub-Auto-Download)
 echo -e "${BLUE}[3/11] Prüfe Projektdateien / Lade Sonora Gameserver Manager von GitHub...${NC}"
@@ -224,9 +258,9 @@ if command -v java &>/dev/null; then
 fi
 
 if [ "$NEED_JAVA" = true ]; then
-  echo -e "${YELLOW}Installiere OpenJDK 21 LTS für Minecraft Gameserver...${NC}"
-  apt-get install -y -q openjdk-21-jre-headless openjdk-21-jdk-headless 2>/dev/null \
-    || apt-get install -y -q default-jre-headless default-jdk-headless || true
+  echo -e "${YELLOW}Installiere Java-Laufzeit aus lokalen APT-Repositories (bevorzugt OpenJDK 21 LTS, Fallback auf default-jre)...${NC}"
+  apt_install_preferred openjdk-21-jre-headless openjdk-17-jre-headless default-jre-headless || true
+  apt_install_preferred openjdk-21-jdk-headless openjdk-17-jdk-headless default-jdk-headless || true
   echo -e "${GREEN}✓ Java erfolgreich installiert ($(java -version 2>&1 | head -n 1 || echo 'bereit')).${NC}"
 fi
 
@@ -234,7 +268,7 @@ fi
 mkdir -p "$RUNTIME_ROOT/jdks"
 (cd "$SOURCE_DIR" && node -e 'import("./backend/java.ts").then(m=>m.ensureJdk(process.cwd()+"/.runtime/jdks",25)).catch(()=>{})') 2>/dev/null || true
 
-# 5. Valve SteamCMD & 32-Bit Multiarch-Bibliotheken einrichten (Debian non-free & i386)
+# 5. Valve SteamCMD & 32-Bit Multiarch-Bibliotheken einrichten (Debian 11/12/13 t64 & i386)
 echo -e "${BLUE}[5/11] Prüfe Valve SteamCMD & 32-Bit Laufzeitbibliotheken...${NC}"
 dpkg --add-architecture i386 2>/dev/null || true
 if [ -f /etc/apt/sources.list ] && grep -qi "debian" /etc/os-release 2>/dev/null; then
@@ -244,12 +278,19 @@ else
   add-apt-repository -y multiverse 2>/dev/null || true
   apt-get update -y -q 2>/dev/null || true
 fi
-apt-get install -y -q lib32gcc-s1 lib32stdc++6 libsdl2-2.0-0 libc6-i386 zlib1g:i386 libstdc++6:i386 2>/dev/null || true
+# Lokale APT-Repository-Fallbacks für Debian 12/13 (inkl. t64-Übergangspakete)
+apt_install_preferred lib32gcc-s1 lib32gcc1 || true
+apt_install_preferred lib32stdc++6 || true
+apt_install_preferred libsdl2-2.0-0t64 libsdl2-2.0-0 || true
+apt_install_preferred libc6-i386 libc6:i386 || true
+apt_install_preferred zlib1g:i386 || true
+apt_install_preferred libstdc++6:i386 || true
+apt_install_preferred libcurl4t64:i386 libcurl4:i386 || true
 
-# Pre-seed steamcmd license agreement
+# Pre-seed steamcmd license agreement (nur falls in lokalen APT-Quellen verfügbar)
 echo steam steam/question select "I AGREE" | debconf-set-selections 2>/dev/null || true
 echo steam steam/license note '' | debconf-set-selections 2>/dev/null || true
-apt-get install -y -q steamcmd 2>/dev/null || true
+apt_install_preferred steamcmd || true
 
 # Standalone SteamCMD in /opt/steamcmd als robuster primärer Pfad für Debian
 mkdir -p /opt/steamcmd
@@ -259,19 +300,110 @@ if [ ! -f /opt/steamcmd/steamcmd.sh ]; then
 fi
 chmod +x /opt/steamcmd/steamcmd.sh 2>/dev/null || true
 
-# SteamCMD Wrapper in /usr/bin/steamcmd anlegen
-if [ -f /usr/games/steamcmd ]; then
-  ln -sf /usr/games/steamcmd /usr/bin/steamcmd
-elif [ -f /opt/steamcmd/steamcmd.sh ]; then
+# Robuste SteamCMD-Verifikation & Pre-Start-Prüfung für Steam-Spieldaten
+verify_steamcmd_ready() {
+  local steam_dir="/opt/steamcmd"
+  if [ ! -x "${steam_dir}/steamcmd.sh" ]; then
+    echo -e "${YELLOW}[WARN] SteamCMD-Skript fehlt unter ${steam_dir}/steamcmd.sh.${NC}"
+    return 1
+  fi
+  if [ ! -s "${steam_dir}/linux32/steamcmd" ]; then
+    echo -e "${YELLOW}[WARN] SteamCMD-Kernbinary (${steam_dir}/linux32/steamcmd) fehlt oder ist leer.${NC}"
+    return 1
+  fi
+
+  # Einmaliges Bootstrap mit Retry bei SteamCMD-Selbstupdate (Exit-Code 7 oder 8)
+  local attempt rc=0
+  for attempt in 1 2; do
+    rc=0
+    timeout 90 "${steam_dir}/steamcmd.sh" +quit >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      break
+    elif [ "$rc" -eq 7 ] || [ "$rc" -eq 8 ]; then
+      echo -e "${YELLOW}SteamCMD hat Selbstupdate durchgeführt (Code ${rc}) — verifiziere Abschluss (Versuch ${attempt}/2)...${NC}"
+      continue
+    else
+      break
+    fi
+  done
+
+  mkdir -p /root/.steam/sdk64 /root/.steam/sdk32
+  [ -f "${steam_dir}/linux64/steamclient.so" ] && ln -sf "${steam_dir}/linux64/steamclient.so" /root/.steam/sdk64/steamclient.so || true
+  [ -f "${steam_dir}/linux32/steamclient.so" ] && ln -sf "${steam_dir}/linux32/steamclient.so" /root/.steam/sdk32/steamclient.so || true
+
+  if [ -r /root/.steam/sdk64/steamclient.so ] || [ -r /root/.steam/sdk32/steamclient.so ] || [ -f "${steam_dir}/package/steam_cmd_linux.installed" ]; then
+    printf 'verified_at=%s\nsteamcmd_rc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" > "${steam_dir}/.sonora-steamcmd-verified"
+    return 0
+  fi
+
+  echo -e "${YELLOW}[WARN] SteamCMD-Bootstrap konnte nicht vollständig verifiziert werden (Exit-Code ${rc}).${NC}"
+  return 1
+}
+
+# Pre-Start-Prüfskript für SteamCMD-Abschluss, App-Manifest (StateFlags=4) & Spiel-Executable installieren
+cat <<'VERIFY_STEAM_EOF' > /usr/local/sbin/sonora-verify-steam.sh
+#!/usr/bin/env bash
+# Prüft vor dem Serverstart, ob SteamCMD vollständig eingerichtet ist und
+# die Steam-App-Daten (appmanifest StateFlags=4 + Executable) korrekt heruntergeladen wurden.
+set -euo pipefail
+
+SRV_DIR="${1:-}"
+APP_ID="${2:-0}"
+EXPECTED_EXEC="${3:-}"
+
+if [ -z "$SRV_DIR" ] || [ ! -d "$SRV_DIR" ]; then
+  echo "[PRE-START FEHLER] Server-Verzeichnis fehlt: ${SRV_DIR:-<leer>}" >&2
+  exit 10
+fi
+
+if [ ! -x /opt/steamcmd/steamcmd.sh ] && ! command -v steamcmd >/dev/null 2>&1; then
+  echo "[PRE-START WARNUNG] SteamCMD ist nicht auf dem Host installiert." >&2
+fi
+
+if [ "$APP_ID" -gt 0 ] 2>/dev/null; then
+  DOWNLOADING_DIR="${SRV_DIR}/steamapps/downloading/${APP_ID}"
+  if [ -d "$DOWNLOADING_DIR" ] && [ -n "$(ls -A "$DOWNLOADING_DIR" 2>/dev/null)" ]; then
+    echo "[PRE-START FEHLER] Unvollständiger SteamCMD-Download in ${DOWNLOADING_DIR} erkannt." >&2
+    exit 11
+  fi
+
+  MANIFEST_FILE="${SRV_DIR}/steamapps/appmanifest_${APP_ID}.acf"
+  if [ -f "$MANIFEST_FILE" ]; then
+    STATE_FLAGS="$(awk -F'"' '/"StateFlags"/ {print $4; exit}' "$MANIFEST_FILE" 2>/dev/null || true)"
+    if [ "$STATE_FLAGS" != "4" ]; then
+      echo "[PRE-START FEHLER] Steam App ${APP_ID} ist nicht vollständig installiert (StateFlags=${STATE_FLAGS:-unbekannt}, erwartet 4)." >&2
+      exit 12
+    fi
+  fi
+fi
+
+if [ -n "$EXPECTED_EXEC" ]; then
+  CLEAN_EXEC="${EXPECTED_EXEC#./}"
+  if [ ! -s "${SRV_DIR}/${CLEAN_EXEC}" ]; then
+    echo "[PRE-START FEHLER] Erwartete Server-Executable fehlt oder ist leer: ${SRV_DIR}/${CLEAN_EXEC}" >&2
+    exit 13
+  fi
+  chmod +x "${SRV_DIR}/${CLEAN_EXEC}" 2>/dev/null || true
+fi
+
+exit 0
+VERIFY_STEAM_EOF
+chmod 0755 /usr/local/sbin/sonora-verify-steam.sh 2>/dev/null || true
+
+# SteamCMD verifizieren & Wrapper in /usr/bin/steamcmd anlegen
+if [ -f /opt/steamcmd/steamcmd.sh ]; then
+  verify_steamcmd_ready || true
   cat <<'WRAPPER_EOF' > /usr/bin/steamcmd
 #!/usr/bin/env bash
 exec /opt/steamcmd/steamcmd.sh "$@"
 WRAPPER_EOF
   chmod +x /usr/bin/steamcmd
+elif [ -f /usr/games/steamcmd ]; then
+  ln -sf /usr/games/steamcmd /usr/bin/steamcmd
 fi
-echo -e "${GREEN}✓ SteamCMD einsatzbereit.${NC}"
+echo -e "${GREEN}✓ SteamCMD, Pre-Start-Verifikation & steamclient.so Laufzeit-Symlinks einsatzbereit.${NC}"
 
-# 6. Node.js (v22 LTS) & npm prüfen / installieren
+# 6. Node.js (v22 LTS mit lokalem APT-Fallback) & npm prüfen / installieren
 echo -e "${BLUE}[6/11] Prüfe Node.js & npm...${NC}"
 NEED_NODE=true
 if command -v node &>/dev/null; then
@@ -284,10 +416,18 @@ if command -v node &>/dev/null; then
 fi
 
 if [ "$NEED_NODE" = true ]; then
-  echo -e "${YELLOW}Installiere modernes Node.js 22 LTS via NodeSource...${NC}"
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - || true
-  apt-get install -y -q nodejs || true
-  echo -e "${GREEN}✓ Node.js $(node -v) und npm $(npm -v) erfolgreich installiert.${NC}"
+  echo -e "${YELLOW}Installiere Node.js (NodeSource 22 LTS oder lokales Debian APT-Repository als Fallback)...${NC}"
+  if curl -fsSL --max-time 20 https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1; then
+    apt-get install -y -q nodejs || true
+  fi
+  # Fallback auf lokale Debian APT-Repositories, falls NodeSource für Debian 13/System nicht verfügbar ist
+  if ! command -v node &>/dev/null || ! command -v npm &>/dev/null; then
+    rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/sources.list.d/nodesource.sources 2>/dev/null || true
+    apt-get update -y -q >/dev/null 2>&1 || true
+    apt_install_preferred nodejs || apt-get install -y -q nodejs || true
+    apt_install_preferred npm || apt-get install -y -q npm || true
+  fi
+  echo -e "${GREEN}✓ Node.js $(node -v 2>/dev/null || echo 'bereit') und npm $(npm -v 2>/dev/null || echo 'bereit') erfolgreich installiert.${NC}"
 fi
 
 # Optionale Node-Archiv-Prüfsumme

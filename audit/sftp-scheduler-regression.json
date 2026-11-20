@@ -1,0 +1,25 @@
+{
+  "checks": [
+    "SftpAccessSection displays Host, Port, Username, and Temporary Password generator with zero browser alerts",
+    "ServerSchedulerView implements Start/Stop/Restart Cron scheduler with presets, live validation, and zero browser alerts",
+    "ServerDetail.tsx wires both SFTP-Zugriff and Server-Zeitplaner tabs and panels",
+    "NetworkPortsView also embeds SftpAccessSection inside Ports, Domains & SFTP tab",
+    "server.ts exposes SFTP temp-password endpoints and mounts configureServerScheduler",
+    "Temporary SFTP password generates 20-char secret with apex_ username and future expiry",
+    "Valid temporary SFTP password passes scrypt constant-time verification",
+    "Invalid temporary SFTP password is rejected",
+    "Temporary SFTP password is isolated strictly to its serverId",
+    "Temporary SFTP metadata reports active status without exposing plaintext password",
+    "Revoking temporary SFTP password immediately invalidates authentication",
+    "Cron validator accepts standard 5-field expression and computes 3 upcoming runs",
+    "Cron validator supports step intervals (0 */6 * * *)",
+    "Cron validator rejects malformed expressions with clear error",
+    "POST /api/servers/:id/schedules persists new Cron task and computes nextRunAt",
+    "POST /api/servers/:id/schedules rejects invalid Cron expression with HTTP 400",
+    "Scheduled task with onlyIfRunning=true skips gracefully when server is offline",
+    "Cron engine executes matching task once per minute and deduplicates subsequent ticks",
+    "PATCH /api/servers/:id/schedules/:taskId pauses task and clears nextRunAt",
+    "Schedules are persisted atomically to manager/schedules.json",
+    "DELETE /api/servers/:id/schedules/:taskId removes schedule cleanly"
+  ]
+}

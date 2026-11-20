@@ -43,6 +43,8 @@ interface CRMViewProps {
   onFastForwardTime: (days: number) => void;
   onCreateTicket: (subject: string, serverName: string, text: string) => void;
   onReplyTicket: (ticketId: string, text: string) => void;
+  onUpdateTicketStatus?: (ticketId: string, status: 'open' | 'in_progress' | 'closed') => void;
+  onMarkNotificationsRead?: () => void;
   onDeleteServer?: (serverId: string) => void;
 }
 
@@ -60,15 +62,19 @@ export const CRMView: React.FC<CRMViewProps> = ({
   onFastForwardTime,
   onCreateTicket,
   onReplyTicket,
+  onUpdateTicketStatus,
+  onMarkNotificationsRead,
   onDeleteServer
 }) => {
   const [activeTab, setActiveTab] = useState<'contracts' | 'payment' | 'customers' | 'invoices' | 'tickets'>('contracts');
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [customerSearch, setCustomerSearch] = useState('');
 
   // Top up payment form state
   const [payAmount, setPayAmount] = useState<number>(25);
   const [selectedPayMethod, setSelectedPayMethod] = useState<'PayPal' | 'Kreditkarte' | 'Sofort / Klarna' | 'Paysafecard' | 'Krypto (BTC/ETH)'>('PayPal');
   const [showTopUpDialog, setShowTopUpDialog] = useState(false);
+  const [topUpSuccessMsg, setTopUpSuccessMsg] = useState<string | null>(null);
 
   // New ticket state
   const [showNewTicketModal, setShowNewTicketModal] = useState(false);
@@ -133,17 +139,44 @@ export const CRMView: React.FC<CRMViewProps> = ({
             <span>Guthaben aufladen</span>
           </button>
 
-          {/* Test Expiry Fast Forward */}
-          <button
-            onClick={() => onFastForwardTime(5)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-amber-300 border border-amber-800/60 rounded-lg text-xs font-medium cursor-pointer transition-colors"
-            title="Spult das Datum um 5 Tage vor, um das Warnungssystem und Karenzzeiten live zu testen"
-          >
-            <Clock className="w-3.5 h-3.5" />
-            <span>+5 Tage vorspulen (Test)</span>
-          </button>
+          {/* Test Expiry Fast Forward (Admin only) */}
+          {currentUser.role === 'admin' && (
+            <button
+              onClick={() => onFastForwardTime(5)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-amber-300 border border-amber-800/60 rounded-lg text-xs font-medium cursor-pointer transition-colors"
+              title="Spult das Datum um 5 Tage vor, um das Warnungssystem und Karenzzeiten live zu testen"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>+5 Tage vorspulen (Admin)</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Unread Expiry Notifications Alert */}
+      {notifications.some(n => !n.read) && (
+        <div className="bg-amber-950/50 border border-amber-800/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="space-y-1">
+            <div className="font-semibold text-amber-300 flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>Wichtige Laufzeit-Benachrichtigungen ({notifications.filter(n => !n.read).length})</span>
+            </div>
+            <ul className="space-y-0.5 text-amber-200/90">
+              {notifications.filter(n => !n.read).slice(0, 3).map(n => (
+                <li key={n.id}>• {n.message} <span className="text-amber-400/70 font-mono">({n.timestamp})</span></li>
+              ))}
+            </ul>
+          </div>
+          {onMarkNotificationsRead && (
+            <button
+              onClick={onMarkNotificationsRead}
+              className="px-3 py-1.5 bg-amber-900/60 hover:bg-amber-800 text-amber-100 rounded-lg font-medium shrink-0 cursor-pointer transition-colors"
+            >
+              Als gelesen markieren
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex items-center gap-1 bg-neutral-900 p-1 rounded-lg border border-neutral-800 text-xs w-fit overflow-x-auto">
@@ -216,6 +249,11 @@ export const CRMView: React.FC<CRMViewProps> = ({
             </div>
 
             <div className="divide-y divide-neutral-800/80">
+              {contracts.length === 0 && (
+                <div className="p-10 text-center text-neutral-500 text-xs">
+                  Es sind noch keine aktiven Prepaid-Serververträge vorhanden. Miete deinen ersten Gameserver im Tab &quot;Shop &amp; Mieten&quot;.
+                </div>
+              )}
               {contracts.map((c) => {
                 let badgeStyle = 'bg-emerald-950 text-emerald-400 border-emerald-800';
                 let statusLabel = `${c.daysRemaining} Tage verbleibend`;
@@ -359,12 +397,19 @@ export const CRMView: React.FC<CRMViewProps> = ({
             <button
               onClick={() => {
                 onTopUpBalance(payAmount, selectedPayMethod);
-                alert(`Erfolgreich +${payAmount}.00 € via ${selectedPayMethod} aufgeladen!`);
+                setTopUpSuccessMsg(`Erfolgreich +${payAmount}.00 € via ${selectedPayMethod} aufgeladen!`);
+                setTimeout(() => setTopUpSuccessMsg(null), 4000);
               }}
               className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold text-xs cursor-pointer transition-colors shadow-sm"
             >
               +{payAmount}.00 € jetzt verbindlich aufladen
             </button>
+            {topUpSuccessMsg && (
+              <div className="p-2.5 rounded-lg bg-emerald-950/60 border border-emerald-700 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{topUpSuccessMsg}</span>
+              </div>
+            )}
           </div>
 
           {/* Transactions Ledger */}
@@ -378,6 +423,11 @@ export const CRMView: React.FC<CRMViewProps> = ({
             </div>
 
             <div className="divide-y divide-neutral-800/80">
+              {transactions.length === 0 && (
+                <div className="p-10 text-center text-neutral-500 text-xs">
+                  Noch keine Transaktionen vorhanden. Lade links Guthaben auf, um direkt loszulegen.
+                </div>
+              )}
               {transactions.map((tx) => (
                 <div key={tx.id} className="p-3.5 flex items-center justify-between gap-4 text-xs">
                   <div>
@@ -416,6 +466,11 @@ export const CRMView: React.FC<CRMViewProps> = ({
           </div>
 
           <div className="divide-y divide-neutral-800">
+            {invoices.length === 0 && (
+              <div className="p-10 text-center text-neutral-500 text-xs">
+                Es wurden noch keine Rechnungsbelege erstellt. Rechnungen werden automatisch bei jeder Serverbuchung und Vertragsverlängerung generiert.
+              </div>
+            )}
             {invoices.map((inv) => (
               <div key={inv.id} className="p-4 flex items-center justify-between gap-4 text-xs">
                 <div className="flex items-center gap-3">
@@ -457,13 +512,35 @@ export const CRMView: React.FC<CRMViewProps> = ({
       {/* Tab 4: Customer Directory & Master Data */}
       {activeTab === 'customers' && (
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 space-y-6">
-          <div>
-            <h3 className="font-semibold text-neutral-100 text-sm">Kunden-Stammdaten & Adressbuch</h3>
-            <p className="text-xs text-neutral-400 mt-0.5">Hinterlegte Stammdaten für Rechnungsstellung und Server-Verträge.</p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-neutral-100 text-sm">Kunden-Stammdaten &amp; Adressbuch ({customers.length})</h3>
+              <p className="text-xs text-neutral-400 mt-0.5">Hinterlegte Stammdaten für Rechnungsstellung und Server-Verträge. Eigene Daten können im UserCP bearbeitet werden.</p>
+            </div>
+            {customers.length > 1 && (
+              <input
+                type="text"
+                value={customerSearch}
+                onChange={e => setCustomerSearch(e.target.value)}
+                placeholder="Kunde, E-Mail oder KD-Nr. suchen..."
+                className="px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-200 focus:outline-none focus:border-emerald-500 w-full sm:w-64"
+              />
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {customers.map((cust) => (
+            {customers
+              .filter(c => {
+                if (!customerSearch.trim()) return true;
+                const q = customerSearch.trim().toLowerCase();
+                return (
+                  c.fullName.toLowerCase().includes(q) ||
+                  c.username.toLowerCase().includes(q) ||
+                  c.email.toLowerCase().includes(q) ||
+                  c.customerNumber.toLowerCase().includes(q)
+                );
+              })
+              .map((cust) => (
               <div key={cust.id} className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 space-y-3 text-xs">
                 <div className="flex items-start justify-between">
                   <div>
@@ -504,20 +581,39 @@ export const CRMView: React.FC<CRMViewProps> = ({
           </div>
 
           <div className="space-y-4">
+            {tickets.length === 0 && (
+              <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-10 text-center text-neutral-500 text-xs">
+                Derzeit sind keine Support-Tickets vorhanden. Klicke oben rechts auf &quot;Neues Ticket erstellen&quot;.
+              </div>
+            )}
             {tickets.map((t) => (
               <div key={t.id} className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-neutral-800 text-xs">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-neutral-100 text-sm">{t.subject}</span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 uppercase">
-                        {t.status}
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded border uppercase ${
+                        t.status === 'closed'
+                          ? 'bg-neutral-800 text-neutral-400 border-neutral-700'
+                          : t.status === 'in_progress'
+                          ? 'bg-sky-950 text-sky-300 border-sky-800'
+                          : 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                      }`}>
+                        {t.status === 'closed' ? 'Geschlossen' : t.status === 'in_progress' ? 'In Bearbeitung' : 'Offen'}
                       </span>
                     </div>
                     <div className="text-[11px] text-neutral-400 mt-0.5">
-                      Ticket-ID: <span className="font-mono text-neutral-300">{t.ticketNumber}</span> · Bezug: {t.serverName} · Erstellt: {t.createdAt}
+                      Ticket-ID: <span className="font-mono text-neutral-300">{t.ticketNumber}</span> · Kunde: {t.customerName} · Bezug: {t.serverName} · Erstellt: {t.createdAt}
                     </div>
                   </div>
+                  {onUpdateTicketStatus && (
+                    <button
+                      onClick={() => onUpdateTicketStatus(t.id, t.status === 'closed' ? 'open' : 'closed')}
+                      className="px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-medium cursor-pointer transition-colors self-start sm:self-center"
+                    >
+                      {t.status === 'closed' ? 'Wieder öffnen' : 'Ticket schließen'}
+                    </button>
+                  )}
                 </div>
 
                 {/* Conversation message stream */}

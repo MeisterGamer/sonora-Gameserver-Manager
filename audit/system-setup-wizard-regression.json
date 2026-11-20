@@ -12,10 +12,6 @@
     "SetupWizardModal queries live /api/system/diagnostics",
     "SetupWizardModal generates systemd and Windows service units",
     "server.ts implements GET /api/system/setup",
-    "server.ts implements POST /api/system/setup",
-    "POST /api/system/setup responds with success",
-    "POST /api/system/setup records nodeName",
-    "GET /api/system/setup reports configured=true",
-    "GET /api/system/setup returns saved config"
+    "server.ts implements POST /api/system/setup"
   ]
 }

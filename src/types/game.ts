@@ -79,6 +79,8 @@ export type JavaVersion =
 
 export interface ServerInstance {
   id: string;
+  ownerId?: string;
+  ownerUsername?: string;
   name: string;
   gameId: string;
   gameName: string;
@@ -210,9 +212,12 @@ export interface LogMessage {
 export interface BackupItem {
   id: string;
   name: string;
+  label?: string;
+  notes?: string;
   createdAt: string;
   fileSizeMb: number;
-  type: 'manual' | 'scheduled';
+  fileCount?: number;
+  type: 'manual' | 'scheduled' | 'pre_rollback';
   sha256?: string;
   server?: any;
 }

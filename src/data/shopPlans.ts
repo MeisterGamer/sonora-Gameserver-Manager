@@ -1,4 +1,4 @@
-import { ShopPlan } from '../types/auth';
+import type { ShopPlan } from '../types/auth.ts';
 
 export const SHOP_PLANS: ShopPlan[] = [
   {

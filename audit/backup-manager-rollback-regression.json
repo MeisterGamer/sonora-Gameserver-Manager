@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "ServerDetail.tsx displays Backup-Manager tab and renders BackupsView",
+    "RealBackupsView implements Backup-Manager with manual creation, list, search/filter, and 1-click Rollback",
+    "backend/backups.ts supports /rollback alias, pre-rollback safety snapshot, and autoStop",
+    "POST /backups creates manual backup with custom label, notes, fileCount, and SHA-256",
+    "GET /backups lists existing archives with totalSizeMb",
+    "POST /rollback stops running server, creates pre_rollback safety snapshot, and restores archive",
+    "Rollback atomically restores State v1 files and removes v2 artifacts",
+    "Pre-rollback safety snapshot can undo a rollback cleanly",
+    "DELETE /backups/:backupId removes archive and metadata cleanly"
+  ]
+}

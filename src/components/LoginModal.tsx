@@ -24,17 +24,19 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [passwordInput, setPasswordInput] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setLoginError(null);
     const found = users.find(u => u.email.toLowerCase() === emailInput.toLowerCase() || u.username.toLowerCase() === emailInput.toLowerCase());
     if (found) {
       onSelectUser(found);
       onClose();
     } else {
-      alert('Kein Benutzer mit dieser E-Mail / diesem Benutzernamen gefunden. Wähle "Schnell-Wechsel" oder erstelle ein Konto!');
+      setLoginError('Kein Benutzer mit dieser E-Mail / diesem Benutzernamen gefunden. Wähle "Schnell-Wechsel" oder erstelle ein Konto.');
     }
   };
 
@@ -188,6 +190,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 />
               </div>
             </div>
+
+            {loginError && (
+              <div role="alert" className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-800 text-rose-200 text-xs">
+                {loginError}
+              </div>
+            )}
 
             <button
               type="submit"

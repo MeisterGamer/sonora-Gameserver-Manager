@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Shield, 
   Server, 
@@ -24,13 +24,19 @@ import {
   CheckCircle2, 
   Radio, 
   Sparkles,
-  Info
+  Info,
+  Trash2,
+  Flame,
+  Lock
 } from 'lucide-react';
 import { UserAccount, NodeInfo, AuditLogItem } from '../types/auth';
-import { AdminSettings, SteamOperationMode } from '../types/adminSettings';
+import { AdminSettings } from '../types/adminSettings';
 import { getStoredAdminSettings, saveStoredAdminSettings, DEFAULT_ADMIN_SETTINGS } from '../data/adminSettingsStore';
-import { INITIAL_NODES, INITIAL_AUDIT_LOGS } from '../data/authStore';
 import { MINECRAFT_VERSIONS } from '../data/minecraftTypes';
+import { apiRequest } from '../services/api';
+import { AdminRbacPanel } from './AdminRbacPanel';
+import { AdminFirewallPanel } from './AdminFirewallPanel';
+import { hasPermission, getEffectiveRole, getRoleLabel } from '../utils/permissions';
 
 interface AdminControlViewProps {
   currentUser: UserAccount;
@@ -40,6 +46,8 @@ interface AdminControlViewProps {
   onUpdateUserRole: (userId: string, newRole: 'admin' | 'user') => void;
   onAdjustUserBalance: (userId: string, newBalance: number) => void;
   onToggleUserStatus: (userId: string) => void;
+  onDeleteUser?: (userId: string) => void;
+  onRefreshUsers?: () => void;
   onOpenSetupWizard?: () => void;
 }
 
@@ -51,13 +59,34 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
   onUpdateUserRole,
   onAdjustUserBalance,
   onToggleUserStatus,
+  onDeleteUser,
+  onRefreshUsers,
   onOpenSetupWizard
 }) => {
-  const [activeTab, setActiveTab] = useState<'settings' | 'nodes' | 'users' | 'audit'>('settings');
-  const [nodes, setNodes] = useState<NodeInfo[]>(INITIAL_NODES);
-  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>(INITIAL_AUDIT_LOGS);
+  const canEditSettings = hasPermission(currentUser, 'admin.settings');
+  const canManageRbac = hasPermission(currentUser, 'admin.permissions');
+  const canManageFirewall = hasPermission(currentUser, 'admin.firewall');
+  const canViewNodes = hasPermission(currentUser, 'admin.system');
+  const canManageUsers = hasPermission(currentUser, 'admin.users');
+
+  const defaultAdminTab: 'settings' | 'rbac' | 'firewall' | 'nodes' | 'users' | 'audit' = canEditSettings
+    ? 'settings'
+    : canManageUsers
+    ? 'users'
+    : canManageRbac
+    ? 'rbac'
+    : canManageFirewall
+    ? 'firewall'
+    : canViewNodes
+    ? 'nodes'
+    : 'audit';
+
+  const [activeTab, setActiveTab] = useState<'settings' | 'rbac' | 'firewall' | 'nodes' | 'users' | 'audit'>(defaultAdminTab);
+  const [nodes, setNodes] = useState<NodeInfo[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
   const [balanceEditId, setBalanceEditId] = useState<string | null>(null);
   const [balanceInput, setBalanceInput] = useState<number>(0);
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
 
   // Settings State
   const [settingsForm, setSettingsForm] = useState<AdminSettings>(() => {
@@ -68,10 +97,56 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
   const [showSteamKey, setShowSteamKey] = useState(false);
   const [showModrinthToken, setShowModrinthToken] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
-  const [testWebhookStatus, setTestWebhookStatus] = useState<'idle' | 'testing' | 'success'>('idle');
+  const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [testWebhookStatus, setTestWebhookStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [webhookFeedback, setWebhookFeedback] = useState<string | null>(null);
+  const [refreshingNodes, setRefreshingNodes] = useState(false);
 
-  const handleRebootNode = (nodeId: string) => {
-    alert(`Signal gesendet: Node ${nodeId} führt einen kontrollierten Rolling-Reboot durch.`);
+  const loadSystemData = useCallback(async () => {
+    setRefreshingNodes(true);
+    try {
+      const [settingsRes, nodesRes, auditRes] = await Promise.allSettled([
+        apiRequest('/api/admin/settings'),
+        apiRequest('/api/system/nodes'),
+        apiRequest('/api/audit')
+      ]);
+
+      if (settingsRes.status === 'fulfilled' && settingsRes.value?.settings) {
+        const merged = { ...DEFAULT_ADMIN_SETTINGS, ...settingsRes.value.settings };
+        setSettingsForm(merged);
+        saveStoredAdminSettings(merged);
+        onUpdateAdminSettings?.(merged);
+      }
+      if (nodesRes.status === 'fulfilled' && Array.isArray(nodesRes.value?.nodes)) {
+        setNodes(nodesRes.value.nodes);
+      }
+      if (auditRes.status === 'fulfilled' && Array.isArray(auditRes.value?.logs)) {
+        setAuditLogs(
+          auditRes.value.logs.map((entry: any) => ({
+            id: entry.id,
+            action: String(entry.action || 'info').toUpperCase(),
+            target: `${entry.serverId && entry.serverId !== 'system' ? `[${entry.serverId}] ` : ''}${entry.details || ''}`,
+            actor: entry.user || 'System',
+            timestamp: entry.timestamp ? new Date(entry.timestamp).toLocaleString('de-DE') : '',
+            severity: entry.severity === 'warning' ? 'warn' : 'info'
+          }))
+        );
+      }
+    } finally {
+      setRefreshingNodes(false);
+    }
+  }, [onUpdateAdminSettings]);
+
+  useEffect(() => {
+    loadSystemData();
+  }, [loadSystemData]);
+
+  const handleRefreshNode = async (nodeId: string) => {
+    setErrorBanner(null);
+    await loadSystemData();
+    setSaveSuccessMsg(`Live-Telemetrie für Host-Node "${nodeId}" aktualisiert.`);
+    setTimeout(() => setSaveSuccessMsg(null), 3500);
   };
 
   const handleSaveBalance = (userId: string) => {
@@ -79,39 +154,56 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
     setBalanceEditId(null);
   };
 
-  const handleSaveSettings = (e?: React.FormEvent) => {
+  const handleSaveSettings = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    saveStoredAdminSettings(settingsForm);
-    if (onUpdateAdminSettings) {
-      onUpdateAdminSettings(settingsForm);
+    setErrorBanner(null);
+    try {
+      const res = await apiRequest('/api/admin/settings', 'POST', { settings: settingsForm });
+      const saved = res.settings ? { ...DEFAULT_ADMIN_SETTINGS, ...res.settings } : settingsForm;
+      setSettingsForm(saved);
+      saveStoredAdminSettings(saved);
+      onUpdateAdminSettings?.(saved);
+      setSaveSuccessMsg('System- und Steam-Einstellungen dauerhaft auf dem Server gespeichert!');
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (err: any) {
+      setErrorBanner(err.message || 'Einstellungen konnten nicht gespeichert werden.');
     }
-    setSaveSuccessMsg('System- und Steam-Einstellungen erfolgreich gespeichert!');
-    setTimeout(() => setSaveSuccessMsg(null), 4000);
   };
 
-  const handleResetSettings = () => {
-    if (window.confirm('Möchtest du wirklich alle Admin-Einstellungen auf Standardwerte zurücksetzen?')) {
+  const handleResetSettings = async () => {
+    setErrorBanner(null);
+    try {
+      await apiRequest('/api/admin/settings', 'POST', { settings: DEFAULT_ADMIN_SETTINGS });
       setSettingsForm(DEFAULT_ADMIN_SETTINGS);
       saveStoredAdminSettings(DEFAULT_ADMIN_SETTINGS);
-      if (onUpdateAdminSettings) {
-        onUpdateAdminSettings(DEFAULT_ADMIN_SETTINGS);
-      }
+      onUpdateAdminSettings?.(DEFAULT_ADMIN_SETTINGS);
+      setConfirmReset(false);
       setSaveSuccessMsg('Einstellungen auf Werkseinstellungen zurückgesetzt.');
       setTimeout(() => setSaveSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorBanner(err.message || 'Zurücksetzen fehlgeschlagen.');
     }
   };
 
-  const handleTestWebhook = () => {
+  const handleTestWebhook = async () => {
     setTestWebhookStatus('testing');
-    setTimeout(() => {
+    setWebhookFeedback(null);
+    try {
+      const res = await apiRequest('/api/webhooks/test', 'POST', {
+        webhookUrl: settingsForm.discordWebhookUrl,
+        botName: 'ApexHost Admin Monitor'
+      });
       setTestWebhookStatus('success');
-      setTimeout(() => setTestWebhookStatus('idle'), 3000);
-    }, 1000);
+      setWebhookFeedback(res.message || 'Test-Ping erfolgreich gesendet.');
+    } catch (err: any) {
+      setTestWebhookStatus('error');
+      setWebhookFeedback(err.message || 'Webhook-Test fehlgeschlagen.');
+    }
   };
 
   const totalClusterServers = nodes.reduce((sum, n) => sum + n.activeServersCount, 0);
   const totalClusterRam = nodes.reduce((sum, n) => sum + n.maxRamGb, 0);
-  const usedClusterRam = nodes.reduce((sum, n) => sum + n.ramUsageGb, 0);
+  const usedClusterRam = Math.round(nodes.reduce((sum, n) => sum + n.ramUsageGb, 0) * 10) / 10;
 
   return (
     <div className="space-y-6">
@@ -147,57 +239,93 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
           <div className="flex items-center gap-3 text-xs text-neutral-400 bg-neutral-950 p-2.5 rounded-lg border border-neutral-800">
             <span>Angemeldet als: <strong className="text-neutral-200">{currentUser.username}</strong></span>
             <span>·</span>
-            <span className="font-mono text-rose-400 uppercase font-semibold">Rolle: {currentUser.role}</span>
+            <span className="font-mono text-rose-400 uppercase font-semibold">{getRoleLabel(getEffectiveRole(currentUser))}</span>
           </div>
         </div>
       </div>
 
-      {/* Save Success Toast Banner */}
+      {/* Save Success / Error Toast Banners */}
       {saveSuccessMsg && (
         <div className="bg-emerald-950/80 border border-emerald-700/60 text-emerald-200 px-4 py-3 rounded-xl flex items-center justify-between text-xs transition-all animate-fadeIn">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span className="font-medium">{saveSuccessMsg}</span>
           </div>
-          <span className="text-[11px] text-emerald-400 font-mono">Gespeichert</span>
+          <span className="text-[11px] text-emerald-400 font-mono">OK</span>
+        </div>
+      )}
+      {errorBanner && (
+        <div role="alert" className="bg-rose-950/80 border border-rose-700/60 text-rose-200 px-4 py-3 rounded-xl flex items-center gap-2 text-xs">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <span className="font-medium">{errorBanner}</span>
         </div>
       )}
 
       {/* Navigation tabs */}
       <div className="flex flex-wrap items-center gap-1.5 bg-neutral-900 p-1.5 rounded-lg border border-neutral-800 text-xs w-fit">
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer ${
-            activeTab === 'settings' ? 'bg-neutral-800 text-rose-400 font-semibold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
-          }`}
-        >
-          <Settings className="w-3.5 h-3.5" />
-          <span>Admin Settings & Steam-Modus</span>
-        </button>
+        {canEditSettings && (
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+              activeTab === 'settings' ? 'bg-neutral-800 text-rose-400 font-semibold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span>Admin Settings &amp; Steam</span>
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('nodes')}
-          className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer ${
-            activeTab === 'nodes' ? 'bg-neutral-800 text-rose-400 font-semibold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
-          }`}
-        >
-          <Server className="w-3.5 h-3.5" />
-          <span>Server Nodes & Cluster ({nodes.length})</span>
-        </button>
+        {canManageRbac && (
+          <button
+            onClick={() => setActiveTab('rbac')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+              activeTab === 'rbac' ? 'bg-neutral-800 text-rose-400 font-semibold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span>Rechtesystem &amp; Rollen</span>
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer ${
-            activeTab === 'users' ? 'bg-neutral-800 text-rose-400 font-semibold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
-          }`}
-        >
-          <Users className="w-3.5 h-3.5" />
-          <span>Benutzer-Verwaltung ({users.length})</span>
-        </button>
+        {canManageFirewall && (
+          <button
+            onClick={() => setActiveTab('firewall')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+              activeTab === 'firewall' ? 'bg-neutral-800 text-rose-400 font-semibold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <Flame className="w-3.5 h-3.5" />
+            <span>Firewall &amp; DDoS-Schutz</span>
+          </button>
+        )}
+
+        {canViewNodes && (
+          <button
+            onClick={() => setActiveTab('nodes')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+              activeTab === 'nodes' ? 'bg-neutral-800 text-rose-400 font-semibold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5" />
+            <span>Server Nodes ({nodes.length})</span>
+          </button>
+        )}
+
+        {canManageUsers && (
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
+              activeTab === 'users' ? 'bg-neutral-800 text-rose-400 font-semibold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Benutzer-Verwaltung ({users.length})</span>
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab('audit')}
-          className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-1.5 font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${
             activeTab === 'audit' ? 'bg-neutral-800 text-rose-400 font-semibold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
           }`}
         >
@@ -206,8 +334,18 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
         </button>
       </div>
 
+      {/* TAB: RECHTESYSTEM & ROLLEN (RBAC) */}
+      {activeTab === 'rbac' && canManageRbac && (
+        <AdminRbacPanel onPermissionsChanged={onRefreshUsers} />
+      )}
+
+      {/* TAB: FIREWALL & DDOS-SCHUTZ */}
+      {activeTab === 'firewall' && canManageFirewall && (
+        <AdminFirewallPanel />
+      )}
+
       {/* TAB: SETTINGS & STEAM CONFIGURATION */}
-      {activeTab === 'settings' && (
+      {activeTab === 'settings' && canEditSettings && (
         <form onSubmit={handleSaveSettings} className="space-y-6">
           {/* SECTION 1: STEAM BETRIEBSMODUS & STATUS (WICHTIG WENN STEAM NICHT VERFÜGBAR IST) */}
           <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 space-y-5">
@@ -727,7 +865,7 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
 
               <div>
                 <label className="block text-neutral-400 mb-1 font-medium flex items-center justify-between">
-                  <span>Discord Webhook (Warnungen & Status)</span>
+                  <span>Discord Webhook (Warnungen &amp; Status)</span>
                   <button
                     type="button"
                     onClick={handleTestWebhook}
@@ -735,7 +873,15 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
                     className="text-[10px] text-sky-400 hover:text-sky-300 cursor-pointer flex items-center gap-1"
                   >
                     <Send className="w-2.5 h-2.5" />
-                    <span>{testWebhookStatus === 'testing' ? 'Sende...' : testWebhookStatus === 'success' ? 'Erfolgreich!' : 'Test-Ping'}</span>
+                    <span>
+                      {testWebhookStatus === 'testing'
+                        ? 'Sende...'
+                        : testWebhookStatus === 'success'
+                        ? 'Erfolgreich!'
+                        : testWebhookStatus === 'error'
+                        ? 'Erneut testen'
+                        : 'Test-Ping'}
+                    </span>
                   </button>
                 </label>
                 <input
@@ -745,6 +891,11 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
                   placeholder="https://discord.com/api/webhooks/..."
                   className="w-full px-2.5 py-1.5 bg-neutral-950 border border-neutral-800 rounded-lg text-neutral-100 font-mono text-xs focus:border-rose-500 focus:outline-none"
                 />
+                {webhookFeedback && (
+                  <p className={`text-[11px] mt-1 ${testWebhookStatus === 'error' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    {webhookFeedback}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -792,14 +943,34 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
 
           {/* SAVE & RESET ACTIONS */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-neutral-900 border border-neutral-800 rounded-xl p-4">
-            <button
-              type="button"
-              onClick={handleResetSettings}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-neutral-400 hover:text-neutral-200 text-xs transition-colors cursor-pointer w-full sm:w-auto justify-center"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Auf Werkseinstellungen zurücksetzen</span>
-            </button>
+            {confirmReset ? (
+              <div className="flex items-center gap-2 bg-rose-950/60 border border-rose-800 rounded-lg px-3 py-1.5 text-xs">
+                <span className="text-rose-200">Standardwerte wiederherstellen?</span>
+                <button
+                  type="button"
+                  onClick={handleResetSettings}
+                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded font-semibold cursor-pointer"
+                >
+                  Ja, zurücksetzen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmReset(false)}
+                  className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded cursor-pointer"
+                >
+                  Abbrechen
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmReset(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-neutral-400 hover:text-neutral-200 text-xs transition-colors cursor-pointer w-full sm:w-auto justify-center"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Auf Werkseinstellungen zurücksetzen</span>
+              </button>
+            )}
 
             <div className="flex items-center gap-3 w-full sm:w-auto">
               <span className="text-[11px] text-neutral-500 font-mono hidden md:inline">
@@ -890,11 +1061,12 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
                 <div className="pt-3 border-t border-neutral-800 flex items-center justify-between text-xs mt-4">
                   <span className="text-neutral-400">{node.activeServersCount} aktive Server</span>
                   <button
-                    onClick={() => handleRebootNode(node.id)}
+                    onClick={() => handleRefreshNode(node.id)}
+                    disabled={refreshingNodes}
                     className="flex items-center gap-1 text-neutral-400 hover:text-neutral-200 text-xs cursor-pointer"
                   >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>Reboot</span>
+                    <RefreshCw className={`w-3 h-3 ${refreshingNodes ? 'animate-spin' : ''}`} />
+                    <span>Telemetrie aktualisieren</span>
                   </button>
                 </div>
               </div>
@@ -906,12 +1078,23 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
       {/* TAB: USERS MANAGEMENT */}
       {activeTab === 'users' && (
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
-          <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
+          <div className="p-4 border-b border-neutral-800 flex items-center justify-between gap-3">
             <div>
-              <h3 className="font-semibold text-neutral-100 text-sm">Registrierte Benutzerkonten</h3>
-              <p className="text-xs text-neutral-400 mt-0.5">Rollen anpassen, Guthaben manuell buchen und Zugänge sperren.</p>
+              <h3 className="font-semibold text-neutral-100 text-sm">Registrierte Benutzer- &amp; Kundenkonten</h3>
+              <p className="text-xs text-neutral-400 mt-0.5">Rollen anpassen, Prepaid-Guthaben buchen, Zugänge sperren oder entfernen (100% serverseitig gespeichert).</p>
             </div>
-            <span className="text-xs font-mono text-neutral-400 tabular-nums">{users.length} Konten</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-mono text-neutral-400 tabular-nums">{users.length} Konten</span>
+              {onRefreshUsers && (
+                <button
+                  onClick={onRefreshUsers}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg text-xs cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Aktualisieren</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="divide-y divide-neutral-800/80">
@@ -924,8 +1107,13 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
                     {u.avatarInitials}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold text-xs text-neutral-100">{u.username}</span>
+                      {u.customerNumber && (
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-neutral-950 text-emerald-400 border border-neutral-800">
+                          {u.customerNumber}
+                        </span>
+                      )}
                       <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded uppercase ${
                         u.role === 'admin' ? 'bg-rose-950/80 text-rose-300 border border-rose-800' : 'bg-neutral-800 text-neutral-400'
                       }`}>
@@ -938,18 +1126,20 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
                       )}
                     </div>
                     <div className="text-[11px] text-neutral-400 font-mono mt-0.5">
-                      {u.email} · Registriert am {u.createdAt}
+                      {u.email || 'Keine E-Mail'} · Registriert: {(u.createdAt || '').slice(0, 10)}
+                      {typeof u.serverCount === 'number' ? ` · ${u.serverCount} Server` : ''}
+                      {typeof u.contractCount === 'number' ? ` · ${u.contractCount} Verträge` : ''}
                     </div>
                   </div>
                 </div>
 
-                {/* Balance & Role Management */}
-                <div className="flex items-center gap-3 text-xs">
-                  {/* Balance Display & Quick Editor */}
+                {/* Balance, Role, Status & Delete Management */}
+                <div className="flex flex-wrap items-center gap-2 text-xs">
                   {balanceEditId === u.id ? (
                     <div className="flex items-center gap-1.5">
                       <input
                         type="number"
+                        step="0.5"
                         value={balanceInput}
                         onChange={(e) => setBalanceInput(parseFloat(e.target.value) || 0)}
                         className="w-20 px-2 py-1 bg-neutral-950 border border-neutral-700 rounded text-xs text-neutral-100 font-mono"
@@ -959,6 +1149,12 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
                         className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs cursor-pointer"
                       >
                         OK
+                      </button>
+                      <button
+                        onClick={() => setBalanceEditId(null)}
+                        className="px-2 py-1 bg-neutral-800 text-neutral-300 rounded text-xs cursor-pointer"
+                      >
+                        ✕
                       </button>
                     </div>
                   ) : (
@@ -974,7 +1170,6 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
                     </button>
                   )}
 
-                  {/* Role Toggle */}
                   <button
                     onClick={() => onUpdateUserRole(u.id, u.role === 'admin' ? 'user' : 'admin')}
                     className="px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white transition-colors cursor-pointer"
@@ -982,16 +1177,44 @@ export const AdminControlView: React.FC<AdminControlViewProps> = ({
                     {u.role === 'admin' ? 'Zu Kunde herabstufen' : 'Zu Admin befördern'}
                   </button>
 
-                  {/* Suspend Toggle */}
-                  <button
-                    onClick={() => onToggleUserStatus(u.id)}
-                    className={`p-1.5 rounded transition-colors cursor-pointer ${
-                      u.status === 'active' ? 'text-neutral-400 hover:text-rose-400 hover:bg-neutral-800' : 'text-emerald-400 hover:bg-neutral-800'
-                    }`}
-                    title={u.status === 'active' ? 'Konto sperren' : 'Konto reaktivieren'}
-                  >
-                    {u.status === 'active' ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
-                  </button>
+                  {u.id !== currentUser.id && (
+                    <button
+                      onClick={() => onToggleUserStatus(u.id)}
+                      className={`p-1.5 rounded transition-colors cursor-pointer ${
+                        u.status === 'active' ? 'text-neutral-400 hover:text-rose-400 hover:bg-neutral-800' : 'text-emerald-400 hover:bg-neutral-800'
+                      }`}
+                      title={u.status === 'active' ? 'Konto sperren' : 'Konto reaktivieren'}
+                    >
+                      {u.status === 'active' ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                    </button>
+                  )}
+
+                  {onDeleteUser && u.id !== currentUser.id && u.id !== 'local-admin' && (
+                    confirmDeleteUserId === u.id ? (
+                      <div className="flex items-center gap-1 bg-rose-950/70 border border-rose-800 rounded px-2 py-0.5">
+                        <button
+                          onClick={() => { onDeleteUser(u.id); setConfirmDeleteUserId(null); }}
+                          className="text-rose-200 font-semibold hover:text-white cursor-pointer"
+                        >
+                          Löschen?
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteUserId(null)}
+                          className="text-neutral-400 hover:text-neutral-200 cursor-pointer ml-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDeleteUserId(u.id)}
+                        className="p-1.5 text-neutral-500 hover:text-rose-400 rounded hover:bg-neutral-800 transition-colors cursor-pointer"
+                        title="Benutzerkonto dauerhaft löschen"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
             ))}

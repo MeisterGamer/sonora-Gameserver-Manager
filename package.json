@@ -14,7 +14,7 @@
     "clean": "node scripts/clean.mjs",
     "lint": "tsc --noEmit",
     "admin:reset": "tsx scripts/reset-admin.ts",
-    "test": "node audit/frontend-regression.mjs && node audit/installer-regression.mjs && node audit/java-regression.mjs && node audit/launch-regression.mjs && node audit/forge-neoforge-regression.mjs && node audit/status-badges-regression.mjs && node audit/backup-regression.mjs && node audit/gemini-autoresolve-regression.mjs && node audit/file-explorer-regression.mjs && node audit/syntax-highlighting-regression.mjs && node audit/mod-plugin-installation-regression.mjs && node audit/windows-compatibility-regression.mjs && node audit/file-manager-advanced-regression.mjs && node audit/system-setup-wizard-regression.mjs && node audit/realtime-telemetry-regression.mjs"
+    "test": "node audit/frontend-regression.mjs && node audit/installer-regression.mjs && node audit/java-regression.mjs && node audit/launch-regression.mjs && node audit/forge-neoforge-regression.mjs && node audit/status-badges-regression.mjs && node audit/backup-regression.mjs && node audit/gemini-autoresolve-regression.mjs && node audit/file-explorer-regression.mjs && node audit/syntax-highlighting-regression.mjs && node audit/mod-plugin-installation-regression.mjs && node audit/windows-compatibility-regression.mjs && node audit/file-manager-advanced-regression.mjs && node audit/system-setup-wizard-regression.mjs && node audit/realtime-telemetry-regression.mjs && node audit/missing-features-completion-regression.mjs && node audit/user-customer-system-regression.mjs && node audit/performance-monitor-regression.mjs && node audit/sftp-scheduler-regression.mjs && node audit/backup-manager-rollback-regression.mjs && node audit/security-network-regression.mjs && tsx audit/installer-rbac-firewall-regression.mjs && tsx audit/server-diagnostics-tool-regression.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -27,6 +27,7 @@
     "motion": "^12.23.24",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "recharts": "^3.11.0",
     "ssh2": "^1.17.0",
     "tsx": "^4.21.0",
     "vite": "^8.3.0"

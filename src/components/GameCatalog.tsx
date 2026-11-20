@@ -267,16 +267,56 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
       {showImportModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 max-w-lg w-full space-y-4">
-            <h3 className="text-base font-bold text-neutral-100">Spiele-Manifest JSON importieren</h3>
-            <p className="text-xs text-neutral-400">
-              Füge hier ein JSON-Array von Spiel-Definitionen ein, um den Katalog beliebig zu erweitern.
-            </p>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-base font-bold text-neutral-100">Spiele-Manifest JSON importieren</h3>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Füge hier ein JSON-Array von Spiel-Definitionen ein, um den Katalog beliebig zu erweitern.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const exampleManifest = [
+                    {
+                      id: 'factorio_custom_example',
+                      name: 'Factorio Space Age (Beispiel)',
+                      category: 'simulation',
+                      steamAppId: 427520,
+                      bannerColor: '#f59e0b',
+                      defaultPort: 34197,
+                      queryPort: 34197,
+                      minRamGb: 2,
+                      recommendedRamGb: 6,
+                      modFramework: 'custom',
+                      supportedPlatforms: ['linux', 'windows'],
+                      executable: {
+                        linux: './bin/x64/factorio',
+                        windows: 'bin\\x64\\factorio.exe',
+                        macos: './factorio'
+                      },
+                      defaultStartArgs: {
+                        linux: '--start-server ./saves/map.zip',
+                        windows: '--start-server saves\\map.zip',
+                        macos: '--start-server ./saves/map.zip'
+                      },
+                      configFiles: [],
+                      description: 'Beispiel-Manifest für einen automatisierten Factorio Dedicated Server.'
+                    }
+                  ];
+                  setImportJsonText(JSON.stringify(exampleManifest, null, 2));
+                }}
+                className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-emerald-400 border border-emerald-500/30 rounded text-[11px] font-semibold cursor-pointer shrink-0"
+              >
+                Beispiel-Manifest laden
+              </button>
+            </div>
 
             <textarea
               value={importJsonText}
               onChange={(e) => setImportJsonText(e.target.value)}
               placeholder='[ { "id": "my_game", "name": "Mein Spiel", "defaultPort": 7777, ... } ]'
-              className="w-full h-44 bg-neutral-950 border border-neutral-800 rounded-lg p-3 font-mono text-xs text-neutral-200 focus:outline-none focus:border-emerald-500"
+              className="w-full h-52 bg-neutral-950 border border-neutral-800 rounded-lg p-3 font-mono text-xs text-neutral-200 focus:outline-none focus:border-emerald-500"
             />
 
             <div className="flex items-center justify-end gap-2">
@@ -292,9 +332,10 @@ export const GameCatalog: React.FC<GameCatalogProps> = ({
                   setShowImportModal(false);
                   setImportJsonText('');
                 }}
-                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold cursor-pointer"
+                disabled={!importJsonText.trim()}
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded text-xs font-semibold cursor-pointer"
               >
-                Importieren & Speichern
+                Importieren &amp; Speichern
               </button>
             </div>
           </div>

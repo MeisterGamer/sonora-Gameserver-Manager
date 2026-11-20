@@ -10,6 +10,7 @@ export function FileManagerView({ server }: Props) {
   const [content, setContent] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null);
   const base = '/api/servers/' + server.id;
   const refresh = async () => { const result = await apiRequest(base + '/files?path=' + encodeURIComponent(directory)); setFiles(result.files); };
   useEffect(() => { setSelected(null); refresh().catch(error => setMessage(error.message)); }, [server.id, directory]);
@@ -55,10 +56,14 @@ export function FileManagerView({ server }: Props) {
       <button disabled={busy} onClick={() => open(file)} className="flex-1 text-left">{file.type === 'directory' ? '📁 ' : ''}{file.name}</button>
       <span className="text-xs text-neutral-400">{file.type === 'file' ? file.sizeBytes + ' Bytes' : 'Ordner'}</span>
       {file.type === 'file' && <a href={base + '/download?path=' + encodeURIComponent(file.path)}>Download</a>}
-      <button disabled={busy} onClick={() => {
-        if (!window.confirm('Auf dem Host löschen: ' + file.path + '? Ordner müssen leer sein.')) return;
-        action(async () => { await apiRequest(base + '/file', 'DELETE', { path: file.path }); if (selected?.path === file.path) setSelected(null); }, 'Auf dem Host gelöscht.');
-      }} className="text-red-400">Löschen</button>
+      {confirmDeletePath === file.path ? (
+        <span className="flex items-center gap-1 text-xs">
+          <button disabled={busy} onClick={() => { setConfirmDeletePath(null); action(async () => { await apiRequest(base + '/file', 'DELETE', { path: file.path }); if (selected?.path === file.path) setSelected(null); }, 'Auf dem Host gelöscht.'); }} className="text-red-400 font-semibold">Ja</button>
+          <button disabled={busy} onClick={() => setConfirmDeletePath(null)} className="text-neutral-400">Nein</button>
+        </span>
+      ) : (
+        <button disabled={busy} onClick={() => setConfirmDeletePath(file.path)} className="text-red-400">Löschen</button>
+      )}
     </div>)}</div>
     {selected && <div className="space-y-2">
       <h3>{selected.path}</h3>

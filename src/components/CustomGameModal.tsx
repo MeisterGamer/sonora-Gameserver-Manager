@@ -1,12 +1,92 @@
 import React, { useState } from 'react';
-import { X, Plus, Sparkles, Check } from 'lucide-react';
-import { GameDefinition, GameCategory, ModdingFramework, PlatformOS } from '../types/game';
+import { X, Sparkles } from 'lucide-react';
+import { GameDefinition, GameCategory, ModdingFramework } from '../types/game';
 
 interface CustomGameModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (game: GameDefinition) => void;
 }
+
+interface CustomGameExamplePreset {
+  id: string;
+  label: string;
+  name: string;
+  slug: string;
+  category: GameCategory;
+  steamAppId: string;
+  defaultPort: number;
+  queryPort: number;
+  recommendedRamGb: number;
+  modFramework: ModdingFramework;
+  windowsExe: string;
+  linuxExe: string;
+  macosExe: string;
+  startArgs: string;
+  configFileName: string;
+  configContent: string;
+  description: string;
+}
+
+const CUSTOM_GAME_EXAMPLES: CustomGameExamplePreset[] = [
+  {
+    id: 'terraria_tmod',
+    label: 'Terraria (tModLoader)',
+    name: 'Terraria tModLoader',
+    slug: 'terraria_tmodloader',
+    category: 'sandbox',
+    steamAppId: '1281930',
+    defaultPort: 7777,
+    queryPort: 7778,
+    recommendedRamGb: 4,
+    modFramework: 'custom',
+    windowsExe: 'tModLoaderServer.exe',
+    linuxExe: './start-tModLoaderServer.sh',
+    macosExe: './start-tModLoaderServer.sh',
+    startArgs: '-config serverconfig.txt -port 7777',
+    configFileName: 'serverconfig.txt',
+    configContent: 'worldname=SonoraWorld\nmaxplayers=16\nport=7777\ndifficulty=1\n',
+    description: 'Gemoddeter Terraria Dedicated Server mit tModLoader und Workshop-Unterstützung.'
+  },
+  {
+    id: 'satisfactory_example',
+    label: 'Satisfactory Dedicated',
+    name: 'Satisfactory Dedicated',
+    slug: 'satisfactory_custom',
+    category: 'simulation',
+    steamAppId: '1690800',
+    defaultPort: 7777,
+    queryPort: 15777,
+    recommendedRamGb: 12,
+    modFramework: 'custom',
+    windowsExe: 'FactoryServer.exe',
+    linuxExe: './FactoryServer.sh',
+    macosExe: './FactoryServer.sh',
+    startArgs: '-Port=7777 -log -unattended',
+    configFileName: 'Engine.ini',
+    configContent: '[/Script/OnlineSubsystemUtils.IpNetDriver]\nMaxClientRate=1048576\n',
+    description: 'Fabrikbau- & Automatisierungs-Server für kooperative Multiplayer-Fabriken.'
+  },
+  {
+    id: 'vintage_story',
+    label: 'Vintage Story',
+    name: 'Vintage Story Dedicated',
+    slug: 'vintage_story',
+    category: 'survival',
+    steamAppId: '',
+    defaultPort: 42420,
+    queryPort: 42420,
+    recommendedRamGb: 6,
+    modFramework: 'custom',
+    windowsExe: 'VintagestoryServer.exe',
+    linuxExe: './VintagestoryServer',
+    macosExe: './VintagestoryServer',
+    startArgs: '--dataPath ./data --port 42420',
+    configFileName: 'serverconfig.json',
+    configContent: '{\n  "ServerName": "Sonora Vintage Story",\n  "Port": 42420,\n  "MaxClients": 16,\n  "AllowPvP": true\n}',
+    description: 'Kompromissloses Voxel-Survival-Spiel mit eigenem .NET-Server ohne Steam-Abhängigkeit.'
+  }
+];
 
 export const CustomGameModal: React.FC<CustomGameModalProps> = ({
   isOpen,
@@ -30,6 +110,24 @@ export const CustomGameModal: React.FC<CustomGameModalProps> = ({
   const [configContent, setConfigContent] = useState('{\n  "ServerName": "ApexHost Custom Server",\n  "Port": 7777,\n  "MaxPlayers": 16\n}');
 
   if (!isOpen) return null;
+
+  const applyPreset = (preset: CustomGameExamplePreset) => {
+    setName(preset.name);
+    setGameId(preset.slug);
+    setCategory(preset.category);
+    setSteamAppId(preset.steamAppId);
+    setDefaultPort(preset.defaultPort);
+    setQueryPort(preset.queryPort);
+    setRecommendedRamGb(preset.recommendedRamGb);
+    setModFramework(preset.modFramework);
+    setWindowsExe(preset.windowsExe);
+    setLinuxExe(preset.linuxExe);
+    setMacosExe(preset.macosExe);
+    setStartArgs(preset.startArgs);
+    setConfigFileName(preset.configFileName);
+    setConfigContent(preset.configContent);
+    setDescription(preset.description);
+  };
 
   const handleNameChange = (val: string) => {
     setName(val);
@@ -68,7 +166,7 @@ export const CustomGameModal: React.FC<CustomGameModalProps> = ({
         {
           name: configFileName || 'config.json',
           path: configFileName || 'config.json',
-          type: 'json',
+          type: configFileName.endsWith('.json') ? 'json' : 'ini',
           defaultContent: configContent
         }
       ],
@@ -101,6 +199,25 @@ export const CustomGameModal: React.FC<CustomGameModalProps> = ({
           </button>
         </div>
 
+        {/* Interactive 1-Click Examples Bar */}
+        <div className="bg-neutral-950 border border-neutral-800 rounded-lg p-3 space-y-2">
+          <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
+            Spiel-Beispiele (1-Klick Vorlage laden)
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {CUSTOM_GAME_EXAMPLES.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applyPreset(preset)}
+                className="px-2.5 py-1.5 rounded bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-emerald-500/50 text-xs text-neutral-200 transition-colors cursor-pointer"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -110,7 +227,7 @@ export const CustomGameModal: React.FC<CustomGameModalProps> = ({
                 required
                 value={name}
                 onChange={(e) => handleNameChange(e.target.value)}
-                placeholder="z. B. Star Citizen Server, Godot Multi..."
+                placeholder="z. B. Vintage Story, Terraria tModLoader..."
                 className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded text-neutral-200 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -122,7 +239,7 @@ export const CustomGameModal: React.FC<CustomGameModalProps> = ({
                 required
                 value={gameId}
                 onChange={(e) => setGameId(e.target.value)}
-                placeholder="z. B. godot_multiplayer"
+                placeholder="z. B. vintage_story"
                 className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded font-mono text-neutral-200 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -134,12 +251,12 @@ export const CustomGameModal: React.FC<CustomGameModalProps> = ({
                 onChange={(e) => setCategory(e.target.value as GameCategory)}
                 className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded text-neutral-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
               >
-                <option value="survival">Survival & Crafting</option>
+                <option value="survival">Survival &amp; Crafting</option>
                 <option value="fps">Taktik-Shooter / FPS</option>
-                <option value="sandbox">Sandbox & Bauen</option>
-                <option value="simulation">Simulation & Logistik</option>
-                <option value="coop">Ko-Op & Party</option>
-                <option value="rpg">RPG & Rollenspiel</option>
+                <option value="sandbox">Sandbox &amp; Bauen</option>
+                <option value="simulation">Simulation &amp; Logistik</option>
+                <option value="coop">Ko-Op &amp; Party</option>
+                <option value="rpg">RPG &amp; Rollenspiel</option>
                 <option value="custom">Benutzerdefiniert</option>
               </select>
             </div>
@@ -150,7 +267,7 @@ export const CustomGameModal: React.FC<CustomGameModalProps> = ({
                 type="number"
                 value={steamAppId}
                 onChange={(e) => setSteamAppId(e.target.value)}
-                placeholder="z. B. 2394010"
+                placeholder="z. B. 1281930"
                 className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded font-mono text-neutral-200 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -160,7 +277,7 @@ export const CustomGameModal: React.FC<CustomGameModalProps> = ({
               <input
                 type="number"
                 value={defaultPort}
-                onChange={(e) => setDefaultPort(parseInt(e.target.value, 10))}
+                onChange={(e) => setDefaultPort(parseInt(e.target.value, 10) || 7777)}
                 className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded font-mono text-neutral-200 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -170,7 +287,7 @@ export const CustomGameModal: React.FC<CustomGameModalProps> = ({
               <input
                 type="number"
                 value={recommendedRamGb}
-                onChange={(e) => setRecommendedRamGb(parseInt(e.target.value, 10))}
+                onChange={(e) => setRecommendedRamGb(parseInt(e.target.value, 10) || 4)}
                 className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded font-mono text-neutral-200 focus:outline-none focus:border-emerald-500"
               />
             </div>

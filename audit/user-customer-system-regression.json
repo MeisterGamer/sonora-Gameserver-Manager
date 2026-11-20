@@ -1,0 +1,28 @@
+{
+  "checks": [
+    "backend/auth.ts implements real multi-user registration, email/username login, logout-all, and API token auth",
+    "backend/customerSystem.ts implements full UserCP, CRM, Shop, Billing, Tickets, Sub-Users, and Admin User APIs",
+    "RealLoginModal.tsx includes Konto registrieren tab calling /api/auth/register and zero alert()/confirm()",
+    "UserControlView.tsx implements full 5-tab UserCP (overview, profile, security, subusers, api) with no mock dialogs",
+    "App.tsx wires Shop, CRM, UserCP, and Admin User Management to real backend endpoints",
+    "First-time admin setup succeeds and creates session token",
+    "Real customer registration succeeds with customerNumber and welcome bonus",
+    "Duplicate username registration is rejected with HTTP 409",
+    "Registered customer can log in using email address",
+    "UserCP profile update persists full address for DIN 5008 invoices",
+    "UserCP 2FA activation generates Base32 secret & otpauth URI",
+    "UserCP API token generator creates real working Bearer token",
+    "Generated REST API token authenticates real API calls",
+    "Prepaid top-up persists new balance (+50 EUR -> 75 EUR)",
+    "Shop purchase deducts authoritative price and creates server, order, contract, DIN 5008 invoice & transaction",
+    "UserCP Sub-User creation persists and links to owned server",
+    "Owner can access purchased server via customerSystem.canUserAccessServer",
+    "Prepaid contract renewal extends expiry and creates invoice",
+    "Support ticket creation persists ticket with TKT- number",
+    "Admin can reply to customer ticket as support staff",
+    "Customer is strictly blocked from /api/admin/users with HTTP 403",
+    "Admin sees all registered accounts with server & contract counts",
+    "Admin suspending a customer invalidates their active session",
+    "Suspended customer cannot access UserCP anymore (HTTP 401)"
+  ]
+}

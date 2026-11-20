@@ -26,9 +26,15 @@ import {
   Coffee,
   AlertCircle,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  LineChart,
+  KeyRound,
+  CalendarClock,
+  Stethoscope
 } from 'lucide-react';
 import { ServerInstance, LogMessage, ModItem, JavaVersion } from '../types/game';
+import { UserAccount } from '../types/auth';
+import { hasPermission } from '../utils/permissions';
 import { ConsoleView } from './ConsoleView';
 import { ModPluginBrowser } from './ModPluginBrowser';
 import { ConfigFileEditor } from './ConfigFileEditor';
@@ -38,14 +44,21 @@ import { CrossPlatformView } from './CrossPlatformView';
 import { FileManagerView } from './RealFileManagerView';
 import { HierarchicalFileExplorer } from './HierarchicalFileExplorer';
 import { MetricsView } from './MetricsView';
+import { PerformanceMonitorView } from './PerformanceMonitorView';
+import { SftpAccessSection } from './SftpAccessSection';
+import { ServerSchedulerView } from './ServerSchedulerView';
+import { SecurityStatusBlock } from './SecurityStatusBlock';
+import { NetworkOverviewView } from './NetworkOverviewView';
 import { NetworkPortsView } from './NetworkPortsView';
 import { UpdateManagerView } from './RealUpdateManagerView';
 import { AuditLogView } from './AuditLogView';
 import { WebhooksView } from './WebhooksView';
 import { JavaRuntimeModal } from './JavaRuntimeModal';
+import { ServerDiagnosticsTool } from './ServerDiagnosticsTool';
 
 interface ServerDetailProps {
   server: ServerInstance;
+  currentUser?: UserAccount;
   onBack: () => void;
   onStartServer: (id: string) => void;
   onStopServer: (id: string) => void;
@@ -63,10 +76,12 @@ interface ServerDetailProps {
   onDeleteServer?: (id: string) => void;
   allServers?: ServerInstance[];
   onNotify?: (msg: string) => void;
+  onServerUpdated?: () => void;
 }
 
 export const ServerDetail: React.FC<ServerDetailProps> = ({
   server,
+  currentUser,
   onBack,
   onStartServer,
   onStopServer,
@@ -83,10 +98,19 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   onUpdateJavaVersion,
   onDeleteServer,
   allServers,
-  onNotify
+  onNotify,
+  onServerUpdated
 }) => {
+  const canFiles = !currentUser || hasPermission(currentUser, 'servers.files');
+  const canQuickFix = !currentUser || hasPermission(currentUser, 'servers.files') || hasPermission(currentUser, 'servers.power');
+  const canBackups = !currentUser || hasPermission(currentUser, 'servers.backups');
+  const canMods = !currentUser || hasPermission(currentUser, 'servers.mods');
+  const canScheduler = !currentUser || hasPermission(currentUser, 'servers.scheduler');
+  const canSecurity = !currentUser || hasPermission(currentUser, 'servers.security');
+  const canAdminSystem = !currentUser || hasPermission(currentUser, 'admin.system');
+
   const [activeTab, setActiveTab] = useState<
-    'console' | 'metrics' | 'files' | 'mods' | 'config' | 'network' | 'players' | 'backups' | 'updates' | 'audit' | 'webhooks' | 'crossplatform'
+    'console' | 'metrics' | 'performance' | 'network_overview' | 'diagnostics' | 'files' | 'sftp' | 'scheduler' | 'mods' | 'config' | 'network' | 'players' | 'backups' | 'updates' | 'audit' | 'webhooks' | 'crossplatform'
   >('console');
   const [isJavaModalOpen, setIsJavaModalOpen] = useState(false);
   const [isRetryingInstall, setIsRetryingInstall] = useState(false);
@@ -322,6 +346,13 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
             >
               <RotateCw className={`w-3.5 h-3.5 ${isRetryingInstall ? 'animate-spin' : ''}`} />
               <span>{isRetryingInstall ? 'Wird gestartet...' : 'Installation jetzt wiederholen'}</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('diagnostics')}
+              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Stethoscope className="w-3.5 h-3.5" />
+              <span>Diagnose &amp; Quick-Fix öffnen</span>
             </button>
             <button
               onClick={() => setActiveTab('updates')}
@@ -580,6 +611,9 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </div>
       </div>
 
+      {/* Sicherheits-Status Block (DDoS-Filter & Blockierte Angriffe) */}
+      {canSecurity && <SecurityStatusBlock server={server} onNotify={onNotify} />}
+
       {/* Main Tab Navigation */}
       <div className="flex items-center gap-1 border-b border-neutral-800 pb-2 overflow-x-auto text-xs">
         <button
@@ -596,51 +630,123 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
 
         <button
           onClick={() => setActiveTab('metrics')}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
             activeTab === 'metrics'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
               : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
           }`}
         >
           <Activity className="w-3.5 h-3.5 text-sky-400" />
-          <span>Performance & Metriken</span>
+          <span>Performance &amp; Metriken</span>
         </button>
 
         <button
-          onClick={() => setActiveTab('files')}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-            activeTab === 'files'
+          onClick={() => setActiveTab('performance')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+            activeTab === 'performance'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
               : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
           }`}
         >
-          <Folder className="w-3.5 h-3.5 text-amber-400" />
-          <span>Datei-Explorer & SFTP</span>
+          <LineChart className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Leistungs-Monitor</span>
         </button>
 
+        {canSecurity && (
+          <button
+            onClick={() => setActiveTab('network_overview')}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+              activeTab === 'network_overview'
+                ? 'bg-neutral-800 text-emerald-400 font-semibold'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+            }`}
+          >
+            <Wifi className="w-3.5 h-3.5 text-sky-400" />
+            <span>Netzwerk-Übersicht</span>
+          </button>
+        )}
+
         <button
-          onClick={() => setActiveTab('mods')}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-            activeTab === 'mods'
+          onClick={() => setActiveTab('diagnostics')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+            activeTab === 'diagnostics'
               ? 'bg-neutral-800 text-emerald-400 font-semibold'
               : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
           }`}
         >
-          <Package className="w-3.5 h-3.5 text-purple-400" />
-          <span>Mods & Plugins ({server.installedMods?.length || 0})</span>
+          <Stethoscope className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Server-Diagnose</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('config')}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-            activeTab === 'config'
-              ? 'bg-neutral-800 text-emerald-400 font-semibold'
-              : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
-          }`}
-        >
-          <FileCode className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Config-Editor</span>
-        </button>
+        {canFiles && (
+          <>
+            <button
+              onClick={() => setActiveTab('files')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+                activeTab === 'files'
+                  ? 'bg-neutral-800 text-emerald-400 font-semibold'
+                  : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+              }`}
+            >
+              <Folder className="w-3.5 h-3.5 text-amber-400" />
+              <span>Datei-Explorer & SFTP</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('sftp')}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+                activeTab === 'sftp'
+                  ? 'bg-neutral-800 text-emerald-400 font-semibold'
+                  : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+              }`}
+            >
+              <KeyRound className="w-3.5 h-3.5 text-sky-400" />
+              <span>SFTP-Zugriff</span>
+            </button>
+          </>
+        )}
+
+        {canScheduler && (
+          <button
+            onClick={() => setActiveTab('scheduler')}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+              activeTab === 'scheduler'
+                ? 'bg-neutral-800 text-emerald-400 font-semibold'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+            }`}
+          >
+            <CalendarClock className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Server-Zeitplaner</span>
+          </button>
+        )}
+
+        {canMods && (
+          <button
+            onClick={() => setActiveTab('mods')}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+              activeTab === 'mods'
+                ? 'bg-neutral-800 text-emerald-400 font-semibold'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+            }`}
+          >
+            <Package className="w-3.5 h-3.5 text-purple-400" />
+            <span>Mods &amp; Plugins ({server.installedMods?.length || 0})</span>
+          </button>
+        )}
+
+        {canFiles && (
+          <button
+            onClick={() => setActiveTab('config')}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+              activeTab === 'config'
+                ? 'bg-neutral-800 text-emerald-400 font-semibold'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+            }`}
+          >
+            <FileCode className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Config-Editor</span>
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab('network')}
@@ -651,7 +757,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           }`}
         >
           <Radio className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Ports, Domains & SFTP</span>
+          <span>Ports, Domains &amp; SFTP</span>
         </button>
 
         <button
@@ -666,17 +772,19 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           <span>Spieler ({server.currentPlayers || 0})</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('backups')}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-            activeTab === 'backups'
-              ? 'bg-neutral-800 text-emerald-400 font-semibold'
-              : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
-          }`}
-        >
-          <Archive className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Backups & Zeitpläne</span>
-        </button>
+        {canBackups && (
+          <button
+            onClick={() => setActiveTab('backups')}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+              activeTab === 'backups'
+                ? 'bg-neutral-800 text-emerald-400 font-semibold'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+            }`}
+          >
+            <Archive className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Backup-Manager</span>
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab('updates')}
@@ -687,7 +795,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           }`}
         >
           <DownloadCloud className="w-3.5 h-3.5 text-sky-400" />
-          <span>Updates & Versionen</span>
+          <span>Updates &amp; Versionen</span>
         </button>
 
         <button
@@ -711,20 +819,22 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           }`}
         >
           <Bell className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Discord & Webhooks</span>
+          <span>Discord &amp; Webhooks</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('crossplatform')}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-            activeTab === 'crossplatform'
-              ? 'bg-neutral-800 text-emerald-400 font-semibold'
-              : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
-          }`}
-        >
-          <Layers className="w-3.5 h-3.5 text-purple-400" />
-          <span>Remote-Nodes & OS</span>
-        </button>
+        {canAdminSystem && (
+          <button
+            onClick={() => setActiveTab('crossplatform')}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+              activeTab === 'crossplatform'
+                ? 'bg-neutral-800 text-rose-400 font-semibold'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-rose-400" />
+            <span>Remote-Nodes &amp; OS (Admin)</span>
+          </button>
+        )}
       </div>
 
       {/* Tab Panels */}
@@ -749,10 +859,47 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         />
       )}
 
+      {activeTab === 'performance' && (
+        <PerformanceMonitorView
+          server={server}
+          onNotify={onNotify}
+        />
+      )}
+
+      {activeTab === 'network_overview' && (
+        <NetworkOverviewView
+          server={server}
+          onNotify={onNotify}
+        />
+      )}
+
+      {activeTab === 'diagnostics' && (
+        <ServerDiagnosticsTool
+          server={server}
+          canQuickFix={canQuickFix}
+          onNotify={onNotify}
+          onServerUpdated={onServerUpdated}
+        />
+      )}
+
       {activeTab === 'files' && (
         <HierarchicalFileExplorer
           server={server}
           onSaveConfigFile={(fn, c) => onSaveConfigFile(server.id, fn, c)}
+          onNotify={onNotify}
+        />
+      )}
+
+      {activeTab === 'sftp' && (
+        <SftpAccessSection
+          server={server}
+          onNotify={onNotify}
+        />
+      )}
+
+      {activeTab === 'scheduler' && (
+        <ServerSchedulerView
+          server={server}
           onNotify={onNotify}
         />
       )}
@@ -789,11 +936,12 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           onKickPlayer={(u) => onSendCommand(server.id, `kick ${u}`)}
           onBanPlayer={(u) => onSendCommand(server.id, `ban ${u}`)}
           onToggleOp={(u) => onSendCommand(server.id, `op ${u}`)}
+          onNotify={onNotify}
         />
       )}
 
       {activeTab === 'backups' && (
-        <BackupsView server={server} />
+        <BackupsView server={server} onNotify={onNotify} />
       )}
 
       {activeTab === 'updates' && (
@@ -812,7 +960,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         <WebhooksView server={server} onNotify={onNotify} />
       )}
 
-      {activeTab === 'crossplatform' && (
+      {activeTab === 'crossplatform' && canAdminSystem && (
         <CrossPlatformView selectedServer={server} />
       )}
 

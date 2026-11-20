@@ -49,6 +49,7 @@ export const ConfigEditModal: React.FC<ConfigEditModalProps> = ({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copySuccess, setCopySuccess] = useState<boolean>(false);
+  const [confirmRevert, setConfirmRevert] = useState<boolean>(false);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -175,10 +176,9 @@ export const ConfigEditModal: React.FC<ConfigEditModalProps> = ({
   };
 
   const handleRevert = () => {
-    if (window.confirm('Möchtest du alle ungespeicherten Änderungen an dieser Datei verwerfen?')) {
-      setContent(originalContent);
-      setErrorMessage(null);
-    }
+    setContent(originalContent);
+    setErrorMessage(null);
+    setConfirmRevert(false);
   };
 
   const handleCopyContent = () => {
@@ -456,15 +456,33 @@ export const ConfigEditModal: React.FC<ConfigEditModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
-            <button
-              onClick={handleRevert}
-              disabled={content === originalContent || isSaving}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 rounded-lg border border-neutral-800 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Änderungen verwerfen"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Zurücksetzen</span>
-            </button>
+            {confirmRevert ? (
+              <div className="flex items-center gap-1.5 bg-amber-950/60 border border-amber-800 rounded-lg px-2.5 py-1 text-xs">
+                <span className="text-amber-200">Änderungen verwerfen?</span>
+                <button
+                  onClick={handleRevert}
+                  className="px-2 py-0.5 bg-amber-600 hover:bg-amber-500 text-white rounded font-semibold cursor-pointer"
+                >
+                  Ja
+                </button>
+                <button
+                  onClick={() => setConfirmRevert(false)}
+                  className="px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded cursor-pointer"
+                >
+                  Nein
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmRevert(true)}
+                disabled={content === originalContent || isSaving}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 rounded-lg border border-neutral-800 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Änderungen verwerfen"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Zurücksetzen</span>
+              </button>
+            )}
 
             <button
               onClick={onClose}

@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import ssh2Pkg, { Server as SshServerType } from 'ssh2';
+import ssh2Pkg from 'ssh2';
+import type { Server as SshServerType } from 'ssh2';
 const { Server: SshServer } = ssh2Pkg;
 import { constants as fsConstants } from 'node:fs';
 
@@ -11,6 +12,155 @@ interface SftpSessionState {
   rootDir: string;
   handles: Map<string, { type: 'file' | 'dir'; fd?: number; dirEntries?: fs.Dirent[]; dirPath?: string; offset?: number }>;
   handleCounter: number;
+}
+
+export interface StoredTempSftpPassword {
+  serverId: string;
+  username: string;
+  salt: string;
+  hash: string;
+  createdAt: string;
+  expiresAt: string;
+  ttlMinutes: number;
+}
+
+export interface TempSftpPasswordMeta {
+  active: boolean;
+  username: string;
+  createdAt: string | null;
+  expiresAt: string | null;
+  ttlMinutes: number | null;
+  remainingSeconds: number;
+}
+
+const TEMP_PASS_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*';
+
+function getTempPasswordsFile(stateDir: string): string {
+  return path.join(stateDir, 'sftp-temp-passwords.json');
+}
+
+function readTempPasswords(stateDir: string): Record<string, StoredTempSftpPassword> {
+  try {
+    const file = getTempPasswordsFile(stateDir);
+    if (!fs.existsSync(file)) return {};
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return {};
+    const now = Date.now();
+    const cleaned: Record<string, StoredTempSftpPassword> = {};
+    for (const [k, rec] of Object.entries(parsed as Record<string, StoredTempSftpPassword>)) {
+      if (rec && rec.expiresAt && new Date(rec.expiresAt).getTime() > now) {
+        cleaned[k] = rec;
+      }
+    }
+    return cleaned;
+  } catch {
+    return {};
+  }
+}
+
+function writeTempPasswords(stateDir: string, map: Record<string, StoredTempSftpPassword>) {
+  try {
+    if (!fs.existsSync(stateDir)) fs.mkdirSync(stateDir, { recursive: true });
+    const file = getTempPasswordsFile(stateDir);
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(map, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } catch {}
+}
+
+export function generateTemporarySftpPassword(
+  stateDir: string,
+  serverId: string,
+  ttlMinutes = 60
+): {
+  password: string;
+  username: string;
+  createdAt: string;
+  expiresAt: string;
+  ttlMinutes: number;
+} {
+  const safeTtl = Math.min(1440, Math.max(5, Math.round(Number(ttlMinutes) || 60)));
+  const bytes = crypto.randomBytes(20);
+  let password = '';
+  for (let i = 0; i < bytes.length; i++) {
+    password += TEMP_PASS_ALPHABET[bytes[i] % TEMP_PASS_ALPHABET.length];
+  }
+
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(password, salt, 64);
+  const now = Date.now();
+  const createdAt = new Date(now).toISOString();
+  const expiresAt = new Date(now + safeTtl * 60 * 1000).toISOString();
+  const username = `apex_${serverId}`;
+
+  const store = readTempPasswords(stateDir);
+  store[serverId] = {
+    serverId,
+    username,
+    salt: salt.toString('hex'),
+    hash: hash.toString('hex'),
+    createdAt,
+    expiresAt,
+    ttlMinutes: safeTtl
+  };
+  writeTempPasswords(stateDir, store);
+
+  return { password, username, createdAt, expiresAt, ttlMinutes: safeTtl };
+}
+
+export function getTemporarySftpPasswordMeta(stateDir: string, serverId: string): TempSftpPasswordMeta {
+  const store = readTempPasswords(stateDir);
+  const rec = store[serverId];
+  const username = `apex_${serverId}`;
+  if (!rec) {
+    return {
+      active: false,
+      username,
+      createdAt: null,
+      expiresAt: null,
+      ttlMinutes: null,
+      remainingSeconds: 0
+    };
+  }
+  const remainingMs = Math.max(0, new Date(rec.expiresAt).getTime() - Date.now());
+  return {
+    active: remainingMs > 0,
+    username: rec.username || username,
+    createdAt: rec.createdAt,
+    expiresAt: rec.expiresAt,
+    ttlMinutes: rec.ttlMinutes,
+    remainingSeconds: Math.floor(remainingMs / 1000)
+  };
+}
+
+export function revokeTemporarySftpPassword(stateDir: string, serverId: string): boolean {
+  const store = readTempPasswords(stateDir);
+  if (!store[serverId]) return false;
+  delete store[serverId];
+  writeTempPasswords(stateDir, store);
+  return true;
+}
+
+export function verifyTemporarySftpPassword(
+  stateDir: string,
+  serverId: string | undefined,
+  passwordAttempt: string
+): boolean {
+  if (!serverId || !passwordAttempt) return false;
+  try {
+    const store = readTempPasswords(stateDir);
+    const rec = store[serverId];
+    if (!rec || !rec.salt || !rec.hash) return false;
+    if (new Date(rec.expiresAt).getTime() <= Date.now()) return false;
+
+    const salt = Buffer.from(rec.salt, 'hex');
+    const expectedHash = Buffer.from(rec.hash, 'hex');
+    const calculated = crypto.scryptSync(passwordAttempt, salt, 64);
+    if (expectedHash.length !== calculated.length) return false;
+    return crypto.timingSafeEqual(expectedHash, calculated);
+  } catch {
+    return false;
+  }
 }
 
 // Helper: Ensure or load persistent RSA host key for SSH/SFTP
@@ -102,8 +252,11 @@ export function startSftpServer(
           targetServerId = username;
         }
 
-        // Verify credentials: check admin.json, defaults (apexhost, admin, sonora), or server rcon
-        let isValid = verifyAdminPassword(managerDir, password);
+        // Verify credentials: temporary SFTP password (scrypt + TTL), admin.json, defaults, or server rcon
+        let isValid = verifyTemporarySftpPassword(managerDir, targetServerId, password);
+        if (!isValid) {
+          isValid = verifyAdminPassword(managerDir, password);
+        }
         if (!isValid) {
           const lower = password.toLowerCase();
           if (lower === 'apexhost' || lower === 'admin' || lower === 'sonora' || lower === '123456') {

@@ -1,106 +1,62 @@
-import React, { useState } from 'react';
-import { 
-  ShieldAlert, 
-  Search, 
-  Filter, 
-  Download, 
-  Trash2, 
-  CheckCircle, 
-  AlertTriangle, 
-  Info, 
-  Terminal, 
-  FileEdit, 
-  RotateCw, 
-  Play, 
-  Square, 
-  Zap, 
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  ShieldAlert,
+  Search,
+  Download,
+  Trash2,
+  Info,
+  Terminal,
+  FileEdit,
+  RotateCw,
+  Play,
+  Square,
+  Zap,
   Archive,
   Package,
-  Radio
+  Radio,
+  AlertCircle
 } from 'lucide-react';
 import { ServerAuditLog, ServerInstance } from '../types/game';
+import { apiRequest } from '../services/api';
 
 interface AuditLogViewProps {
   server: ServerInstance;
 }
 
 export const AuditLogView: React.FC<AuditLogViewProps> = ({ server }) => {
-  const [logs, setLogs] = useState<ServerAuditLog[]>([
-    {
-      id: 'aud_1',
-      serverId: server.id,
-      action: 'start',
-      user: 'admin (Max)',
-      details: `Server-Instanz "${server.name}" gestartet (Port: ${server.port}, RAM: ${server.allocatedRamGb}GB)`,
-      timestamp: 'Vor 15 Minuten',
-      severity: 'success'
-    },
-    {
-      id: 'aud_2',
-      serverId: server.id,
-      action: 'mod_install',
-      user: 'admin (Max)',
-      details: 'Mod "Dynmap" v3.7-beta erfolgreich installiert',
-      timestamp: 'Vor 45 Minuten',
-      severity: 'info'
-    },
-    {
-      id: 'aud_3',
-      serverId: server.id,
-      action: 'config_edit',
-      user: 'developer (Sarah)',
-      details: 'Datei "server.properties" editiert: view-distance von 10 auf 14 geändert',
-      timestamp: 'Gestern 19:42',
-      severity: 'info'
-    },
-    {
-      id: 'aud_4',
-      serverId: server.id,
-      action: 'backup',
-      user: 'System-Cron',
-      details: `Automatische Welt-Sicherung erfolgreich erstellt (${server.id}_world_full.tar.gz)`,
-      timestamp: 'Gestern 12:00',
-      severity: 'success'
-    },
-    {
-      id: 'aud_5',
-      serverId: server.id,
-      action: 'command',
-      user: 'moderator (Tim)',
-      details: 'RCON-Befehl ausgeführt: "/say Wartungsarbeiten in 15 Minuten"',
-      timestamp: 'Gestern 11:45',
-      severity: 'info'
-    },
-    {
-      id: 'aud_6',
-      serverId: server.id,
-      action: 'restart',
-      user: 'System-Watchdog',
-      details: 'Automatischer Neustart wegen RAM-Schwellenwert (Auto-Restart getriggert)',
-      timestamp: 'Vor 2 Tagen',
-      severity: 'warning'
-    },
-    {
-      id: 'aud_7',
-      serverId: server.id,
-      action: 'port_change',
-      user: 'admin (Max)',
-      details: `Zusätzlichen Dynmap Web-Port 8123 (TCP) reserviert`,
-      timestamp: 'Vor 3 Tagen',
-      severity: 'info'
-    }
-  ]);
+  const [logs, setLogs] = useState<ServerAuditLog[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSeverity, setSelectedSeverity] = useState<'all' | 'info' | 'warning' | 'success'>('all');
   const [selectedAction, setSelectedAction] = useState<string>('all');
 
+  const fetchAuditLogs = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const data = await apiRequest(`/api/servers/${server.id}/audit`);
+      setLogs(Array.isArray(data.logs) ? data.logs : []);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Audit-Logs konnten nicht geladen werden.');
+    } finally {
+      setLoading(false);
+    }
+  }, [server.id]);
+
+  useEffect(() => {
+    setConfirmClear(false);
+    fetchAuditLogs();
+  }, [fetchAuditLogs]);
+
   const filteredLogs = logs.filter(log => {
-    const matchesSearch = 
+    const matchesSearch =
       log.details.toLowerCase().includes(searchQuery.toLowerCase()) ||
       log.user.toLowerCase().includes(searchQuery.toLowerCase()) ||
       log.action.toLowerCase().includes(searchQuery.toLowerCase());
-    
+
     const matchesSeverity = selectedSeverity === 'all' || log.severity === selectedSeverity;
     const matchesAction = selectedAction === 'all' || log.action === selectedAction;
 
@@ -136,17 +92,32 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ server }) => {
   };
 
   const handleExportLogs = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(logs, null, 2));
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(logs, null, 2));
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `audit_log_${server.id}_${Date.now()}.json`);
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `audit_log_${server.id}_${Date.now()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
   };
 
-  const handleClearLogs = () => {
-    setLogs([]);
+  const handleClearLogs = async () => {
+    setErrorMsg(null);
+    try {
+      await apiRequest(`/api/servers/${server.id}/audit`, 'DELETE');
+      setLogs([]);
+      setConfirmClear(false);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Logs konnten nicht geleert werden.');
+    }
+  };
+
+  const formatTimestamp = (ts: string) => {
+    const parsed = Date.parse(ts);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed).toLocaleString('de-DE');
+    }
+    return ts;
   };
 
   return (
@@ -159,31 +130,68 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ server }) => {
               <ShieldAlert className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-neutral-100">Audit-Log & Aktivitätsprotokoll</h2>
+              <h2 className="text-sm font-bold text-neutral-100">Audit-Log &amp; Aktivitätsprotokoll</h2>
               <p className="text-xs text-neutral-400 mt-0.5">
-                Vollständige Historie aller Benutzeraktionen, Konfigurationsänderungen, Backups und Systemereignisse.
+                Persistierte Historie aller Power-Aktionen, Datei-Änderungen, Befehle, Backups und Port-Reservierungen.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={fetchAuditLogs}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-950 hover:bg-neutral-800 text-neutral-300 border border-neutral-800 text-xs font-medium cursor-pointer transition-colors"
+            >
+              <RotateCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span>Aktualisieren</span>
+            </button>
+
             <button
               onClick={handleExportLogs}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-950 hover:bg-neutral-800 text-neutral-300 border border-neutral-800 text-xs font-medium cursor-pointer transition-colors"
+              disabled={logs.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-950 hover:bg-neutral-800 disabled:opacity-40 text-neutral-300 border border-neutral-800 text-xs font-medium cursor-pointer transition-colors"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Exportieren (JSON)</span>
             </button>
-            <button
-              onClick={handleClearLogs}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-950 hover:bg-rose-950/60 text-neutral-400 hover:text-rose-300 border border-neutral-800 text-xs font-medium cursor-pointer transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Leeren</span>
-            </button>
+
+            {confirmClear ? (
+              <div className="flex items-center gap-1.5 bg-rose-950/60 border border-rose-800 rounded-lg px-2 py-1 text-xs">
+                <span className="text-rose-200">Wirklich leeren?</span>
+                <button
+                  onClick={handleClearLogs}
+                  className="px-2 py-0.5 bg-rose-600 hover:bg-rose-500 text-white rounded font-semibold cursor-pointer"
+                >
+                  Ja
+                </button>
+                <button
+                  onClick={() => setConfirmClear(false)}
+                  className="px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded cursor-pointer"
+                >
+                  Nein
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmClear(true)}
+                disabled={logs.length === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-neutral-950 hover:bg-rose-950/60 disabled:opacity-40 text-neutral-400 hover:text-rose-300 border border-neutral-800 text-xs font-medium cursor-pointer transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Leeren</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {errorMsg && (
+        <div role="alert" className="p-3 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-200 text-xs flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       {/* Filter Toolbar */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between text-xs">
@@ -232,13 +240,15 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ server }) => {
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
         {filteredLogs.length === 0 ? (
           <div className="p-8 text-center text-xs text-neutral-500">
-            Keine Protokolleinträge gefunden, die den Filtern entsprechen.
+            {logs.length === 0
+              ? 'Für diese Serverinstanz wurden noch keine Audit-Einträge aufgezeichnet.'
+              : 'Keine Protokolleinträge gefunden, die den Filtern entsprechen.'}
           </div>
         ) : (
           <div className="divide-y divide-neutral-800/80">
             {filteredLogs.map((log) => (
-              <div 
-                key={log.id} 
+              <div
+                key={log.id}
                 className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-neutral-800/30 transition-colors"
               >
                 <div className="flex items-start gap-3">
@@ -246,9 +256,9 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ server }) => {
                     {getActionIcon(log.action)}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-xs text-neutral-200">{log.user}</span>
-                      <span className="text-[11px] font-mono text-neutral-500">· {log.timestamp}</span>
+                      <span className="text-[11px] font-mono text-neutral-500">· {formatTimestamp(log.timestamp)}</span>
                       {getSeverityBadge(log.severity)}
                     </div>
                     <div className="text-xs text-neutral-300 mt-1 font-mono break-all">

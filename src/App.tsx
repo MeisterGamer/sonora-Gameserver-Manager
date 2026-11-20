@@ -17,7 +17,8 @@ import {
   UserAccount, 
   SubUser, 
   ShopPlan, 
-  ShopOrder 
+  ShopOrder,
+  ActiveSessionInfo
 } from './types/auth';
 import { 
   CustomerContract, 
@@ -81,6 +82,7 @@ import { ExpiryWarningBanner } from './components/ExpiryWarningBanner';
 import { DeleteServerModal } from './components/DeleteServerModal';
 import { SetupWizardModal, SetupWizardResult } from './components/SetupWizardModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { canAccessAdminArea, hasPermission, getEffectiveRole, getRoleLabel } from './utils/permissions';
 
 export default function App() {
   const [servers, setServers] = useState<ServerInstance[]>([]);
@@ -93,6 +95,7 @@ export default function App() {
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [currentUser, setCurrentUser] = useState<UserAccount>({ id: '', username: 'Nicht angemeldet', email: '', role: 'user', balance: 0, status: 'active', avatarInitials: '?', createdAt: '', twoFactorEnabled: false, apiToken: '' });
   const [subUsers, setSubUsers] = useState<SubUser[]>([]);
+  const [sessions, setSessions] = useState<ActiveSessionInfo[]>([]);
   const [userOrders, setUserOrders] = useState<ShopOrder[]>([]);
 
   // CRM, Contracts & Billing State
@@ -129,12 +132,56 @@ export default function App() {
     const data = await apiRequest('/api/servers');
     setServers(data.servers);
   };
+
+  const refreshAdminUsers = async () => {
+    try {
+      const res = await apiRequest('/api/admin/users');
+      if (Array.isArray(res?.users)) {
+        setUsers(res.users);
+      }
+    } catch {}
+  };
+
+  const refreshCustomerData = async (roleOverride?: 'admin' | 'user') => {
+    const [crmRes, usercpRes] = await Promise.allSettled([
+      apiRequest('/api/crm/state'),
+      apiRequest('/api/usercp/overview')
+    ]);
+
+    if (crmRes.status === 'fulfilled' && crmRes.value?.success) {
+      const d = crmRes.value;
+      if (Array.isArray(d.contracts)) setContracts(d.contracts);
+      if (Array.isArray(d.customers)) setCustomers(d.customers);
+      if (Array.isArray(d.invoices)) setInvoices(d.invoices);
+      if (Array.isArray(d.transactions)) setTransactions(d.transactions);
+      if (Array.isArray(d.tickets)) setTickets(d.tickets);
+      if (Array.isArray(d.notifications)) setNotifications(d.notifications);
+      if (Array.isArray(d.orders)) setUserOrders(d.orders);
+      if (d.user) setCurrentUser(prev => ({ ...prev, ...d.user }));
+    }
+
+    if (usercpRes.status === 'fulfilled' && usercpRes.value?.success) {
+      const u = usercpRes.value;
+      if (Array.isArray(u.subUsers)) setSubUsers(u.subUsers);
+      if (Array.isArray(u.sessions)) setSessions(u.sessions);
+      if (u.user) setCurrentUser(prev => ({ ...prev, ...u.user }));
+    }
+
+    const effectiveRole = roleOverride || currentUser.role;
+    if (effectiveRole === 'admin' || hasPermission(currentUser, 'admin.users')) {
+      await refreshAdminUsers();
+    } else {
+      setUsers([]);
+    }
+  };
+
   useEffect(() => {
     const requireLogin = () => setIsLoginModalOpen(true);
     window.addEventListener('sonora-login-required', requireLogin);
     apiRequest('/api/auth/session').then(data => {
       if (data && data.user) {
         setCurrentUser(data.user);
+        if (Array.isArray(data.sessions)) setSessions(data.sessions);
         setIsLoginModalOpen(false);
       } else {
         setIsLoginModalOpen(true);
@@ -148,29 +195,19 @@ export default function App() {
     if (!currentUser.id) return;
     const refresh = () => refreshServers().catch(error => showToast(error.message));
     refresh();
+    refreshCustomerData(currentUser.role).catch(() => {});
+    apiRequest('/api/admin/settings').then(res => {
+      if (res?.settings) {
+        setAdminSettings(prev => ({ ...prev, ...res.settings }));
+        saveStoredAdminSettings({ ...adminSettings, ...res.settings });
+      }
+    }).catch(() => {});
     apiRequest('/api/system/diagnostics').then(data => setSelectedOS(data.platform === 'win32' ? 'windows' : data.platform === 'darwin' ? 'macos' : 'linux')).catch(() => {});
     const timer = setInterval(refresh, 3000);
     return () => clearInterval(timer);
-  }, [currentUser.id]);
+  }, [currentUser.id, currentUser.role]);
 
-  // Sync real servers from backend host on startup
-  useEffect(() => {
-    fetch('/api/servers')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data && Array.isArray(data.servers) && data.servers.length > 0) {
-          setServers(prev => {
-            const map = new Map(prev.map(s => [s.id, s]));
-            for (const s of data.servers) {
-              const existing = map.get(s.id);
-              map.set(s.id, { ...existing, ...s });
-            }
-            return Array.from(map.values());
-          });
-        }
-      })
-      .catch(() => {});
-  }, []);
+  // Server list is strictly synced after authentication via refreshServers() above.
 
   // Poll real server logs from disk / daemon if server is selected
   useEffect(() => {
@@ -239,6 +276,7 @@ export default function App() {
     try {
       const data = await apiRequest('/api/servers/' + id, 'DELETE');
       await refreshServers();
+      await refreshCustomerData().catch(() => {});
       if (selectedServerId === id) setSelectedServerId(null);
       setServerToDelete(null);
       showToast(data.message);
@@ -264,7 +302,18 @@ export default function App() {
     showToast(javaVersion + ' installiert und gespeichert. Der Server bleibt gestoppt.');
   };
 
-  const handleCloneServer = () => showToast('Instanzklonen ist noch nicht implementiert; es wurde keine Kopie angelegt.');
+  const handleCloneServer = async (id: string) => {
+    try {
+      const data = await apiRequest('/api/servers/' + id + '/clone', 'POST', {});
+      await refreshServers();
+      if (data?.server?.id) {
+        setSelectedServerId(data.server.id);
+      }
+      showToast(data?.message || 'Server-Instanz erfolgreich geklont.');
+    } catch (error: any) {
+      showToast(error.message || 'Fehler beim Klonen der Server-Instanz');
+    }
+  };
 
 
   const handleSendCommand = async (id: string, command: string) => {
@@ -428,7 +477,7 @@ export default function App() {
   };
 
 
-  const handlePurchaseServer = (plan: ShopPlan, config: {
+  const handlePurchaseServer = async (plan: ShopPlan, config: {
     serverName: string;
     location: string;
     billingCycle: 'monthly' | 'quarterly' | 'yearly';
@@ -436,442 +485,271 @@ export default function App() {
     hasDedicatedIp: boolean;
     totalPrice: number;
   }) => {
-    // 1. Deduct balance
-    const updatedBalance = Math.round((currentUser.balance - config.totalPrice) * 100) / 100;
-    const updatedUser = { ...currentUser, balance: updatedBalance };
-    setCurrentUser(updatedUser);
-    setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
-
-    // 2. Generate Order record
-    const orderId = `ord_${Date.now().toString(36)}`;
-    const newServerId = `srv_${Date.now().toString(36)}`;
-    const newOrder: ShopOrder = {
-      id: orderId,
-      userId: currentUser.id,
-      planId: plan.id,
-      planName: `${plan.name} (${config.serverName})`,
-      gameName: plan.defaultGameName,
-      price: config.totalPrice,
-      billingCycle: config.billingCycle,
-      location: config.location,
-      serverId: newServerId,
-      createdAt: new Date().toISOString().slice(0, 10),
-      status: 'active'
-    };
-    saveOrder(newOrder);
-    setUserOrders([newOrder, ...userOrders]);
-
-    // 3. Instant Cloud Provisioning: deploy server instance!
-    const effectiveRam = plan.ramGb + config.extraRamGb;
-    const isMinecraft = plan.category === 'minecraft';
-    const chosenVersion = isMinecraft ? '26.3' : 'Latest';
-
-    const provisionedServer: ServerInstance = {
-      id: newServerId,
-      name: config.serverName,
-      gameId: plan.gameId,
-      gameName: plan.defaultGameName,
-      category: isMinecraft ? 'minecraft' : 'survival',
-      status: 'running',
-      allocatedRamGb: effectiveRam,
-      port: config.hasDedicatedIp ? 25565 : Math.floor(Math.random() * 5000 + 25000),
-      queryPort: 27015,
-      rconPort: 25575,
-      targetOS: selectedOS,
-      autoRestart: true,
-      version: chosenVersion,
-      javaVersion: 'Java 21',
-      uptimeSeconds: 1,
-      cpuUsagePercent: 8.5,
-      ramUsageMb: Math.round(effectiveRam * 1024 * 0.25),
-      maxRamMb: effectiveRam * 1024,
-      diskUsageMb: 850,
-      networkInKb: 12.0,
-      networkOutKb: 28.5,
-      currentPlayers: 0,
-      maxPlayers: plan.slots.includes('Unbegrenzt') ? 100 : 24,
-      tps: isMinecraft ? 20.0 : 60.0,
-      installedMods: [],
-      configFiles: {
-        'server.properties': `# ApexHost Auto-Provisioned Server (Minecraft 26.3)\nmotd=ApexHost ${config.serverName} [v26.3]\nserver-port=${config.hasDedicatedIp ? 25565 : 25565}\nmax-players=24\npvp=true`,
-        'eula.txt': 'eula=true'
-      },
-      createdAt: new Date().toISOString()
-    };
-
-    setServers([provisionedServer, ...servers]);
-    apiRequest('/api/servers/create', 'POST', { server: provisionedServer, autoInstall: true })
-      .then(() => refreshServers())
-      .catch(() => {});
-    setLogsMap(prev => ({
-      ...prev,
-      [newServerId]: [
-        { id: 'pv1', timestamp: new Date().toTimeString().slice(0, 8), level: 'INFO', message: `[Shop Provisioner] Mietauftrag #${orderId} autorisiert. Standort: ${config.location}` },
-        { id: 'pv2', timestamp: new Date().toTimeString().slice(0, 8), level: 'INFO', message: `[Cloud Node] NVMe Container bereitgestellt. Allokiert: ${effectiveRam} GB DDR5 RAM, ${plan.vCores} vCores.` },
-        { id: 'pv3', timestamp: new Date().toTimeString().slice(0, 8), level: 'SUCCESS', message: `[Server Daemon] ${provisionedServer.name} erfolgreich gestartet auf Port ${provisionedServer.port}!` }
-      ]
-    }));
-
-    // 4. Create Contract in CRM
-    const durationDays = config.billingCycle === 'yearly' ? 365 : config.billingCycle === 'quarterly' ? 90 : 30;
-    const newContract: CustomerContract = {
-      id: `cnt_${Date.now().toString(36)}`,
-      customerId: currentUser.id,
-      customerName: currentUser.username,
-      serverId: newServerId,
-      serverName: config.serverName,
-      gameName: plan.defaultGameName,
-      planName: plan.name,
-      monthlyPrice: plan.priceMonthly,
-      startDate: new Date().toISOString().slice(0, 10),
-      expiresAt: new Date(Date.now() + durationDays * 24 * 3600 * 1000).toISOString().slice(0, 10),
-      daysRemaining: durationDays,
-      autoRenew: true,
-      status: 'active',
-      location: config.location,
-      ipAddress: `185.120.44.10:${provisionedServer.port}`
-    };
-    setContracts([newContract, ...contracts]);
-
-    // 5. Generate Invoice
-    const subtotal = Math.round((config.totalPrice / 1.19) * 100) / 100;
-    const tax = Math.round((config.totalPrice - subtotal) * 100) / 100;
-    const newInvoice: Invoice = {
-      id: `inv_${Date.now().toString(36)}`,
-      invoiceNumber: `INV-2026-${Math.floor(Math.random() * 9000 + 1000)}`,
-      customerId: currentUser.id,
-      customerName: currentUser.username,
-      customerAddress: 'Kaiserstraße 42, 60311 Frankfurt am Main',
-      date: new Date().toISOString().slice(0, 10),
-      dueDate: new Date().toISOString().slice(0, 10),
-      paidDate: `${new Date().toISOString().slice(0, 10)} ${new Date().toTimeString().slice(0, 5)}`,
-      items: [
-        {
-          description: `Gameserver Miete: ${config.serverName} (${plan.name})`,
-          quantity: 1,
-          unitPrice: subtotal,
-          total: subtotal
-        }
-      ],
-      subtotal,
-      taxRate: 0.19,
-      taxAmount: tax,
-      total: config.totalPrice,
-      status: 'paid',
-      paymentMethod: 'Prepaid-Guthaben',
-      transactionReference: `TXN-${orderId.toUpperCase()}`
-    };
-    setInvoices([newInvoice, ...invoices]);
-
-    // 6. Log transaction
-    const newTx: PaymentTransaction = {
-      id: `tx_${Date.now()}`,
-      customerId: currentUser.id,
-      amount: -config.totalPrice,
-      method: 'SEPA Prepaid',
-      timestamp: `${new Date().toISOString().slice(0, 10)} ${new Date().toTimeString().slice(0, 5)}`,
-      reference: newInvoice.invoiceNumber,
-      status: 'completed',
-      note: `Serverbuchung: ${config.serverName} (${durationDays} Tage)`
-    };
-    setTransactions([newTx, ...transactions]);
-
-    setSelectedServerId(newServerId);
-    setCurrentNavTab('servers');
-    showToast(`Glückwunsch! "${config.serverName}" wurde automatisch bereitgestellt und läuft bereits.`);
-  };
-
-  // User Top-up with Payment Gateway
-  const handleTopUpBalance = (amount: number, method: string = 'PayPal') => {
-    const updatedBalance = Math.round((currentUser.balance + amount) * 100) / 100;
-    const updatedUser = { ...currentUser, balance: updatedBalance };
-    setCurrentUser(updatedUser);
-    setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
-
-    // Log transaction
-    const newTx: PaymentTransaction = {
-      id: `tx_${Date.now()}`,
-      customerId: currentUser.id,
-      amount: amount,
-      method: method as any,
-      timestamp: `${new Date().toISOString().slice(0, 10)} ${new Date().toTimeString().slice(0, 5)}`,
-      reference: `GATEWAY-${method.toUpperCase().slice(0, 3)}-${Date.now().toString().slice(-6)}`,
-      status: 'completed',
-      note: `Prepaid Guthaben-Aufladung via ${method}`
-    };
-    setTransactions([newTx, ...transactions]);
-
-    showToast(`Erfolgreich +${amount}.00 € via ${method} aufgeladen! Neues Guthaben: ${updatedBalance.toFixed(2)} €`);
-  };
-
-  // Contract Renewal (Prepaid verlängern)
-  const handleRenewContract = (contractId: string, days: number = 30) => {
-    const contract = contracts.find(c => c.id === contractId);
-    if (!contract) return;
-
-    const cost = Math.round((contract.monthlyPrice * (days / 30)) * 100) / 100;
-    if (currentUser.balance < cost) {
-      alert(`Dein Prepaid-Guthaben (${currentUser.balance.toFixed(2)} €) reicht für die Verlängerung (${cost.toFixed(2)} €) nicht aus. Bitte lade zuerst dein Guthaben auf!`);
-      setCurrentNavTab('crm');
-      return;
-    }
-
-    // 1. Deduct balance
-    const updatedBalance = Math.round((currentUser.balance - cost) * 100) / 100;
-    const updatedUser = { ...currentUser, balance: updatedBalance };
-    setCurrentUser(updatedUser);
-    setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
-
-    // 2. Extend expiration date
-    const currentExpiryDate = new Date(contract.expiresAt);
-    const baseDate = currentExpiryDate > new Date() ? currentExpiryDate : new Date();
-    const newExpiryDate = new Date(baseDate.getTime() + days * 24 * 3600 * 1000);
-    const newDaysRemaining = Math.max(1, contract.daysRemaining + days);
-
-    const updatedContracts = contracts.map(c => {
-      if (c.id === contractId) {
-        return {
-          ...c,
-          expiresAt: newExpiryDate.toISOString().slice(0, 10),
-          daysRemaining: newDaysRemaining,
-          status: 'active' as const
-        };
+    try {
+      const result = await apiRequest('/api/shop/purchase', 'POST', {
+        planId: plan.id,
+        serverName: config.serverName,
+        location: config.location,
+        billingCycle: config.billingCycle,
+        extraRamGb: config.extraRamGb,
+        hasDedicatedIp: config.hasDedicatedIp,
+        autoInstall: true
+      });
+      if (result.user) setCurrentUser(result.user);
+      await Promise.all([refreshServers(), refreshCustomerData(result.user?.role || currentUser.role)]);
+      if (result.server?.id) {
+        setSelectedServerId(result.server.id);
       }
-      return c;
-    });
-    setContracts(updatedContracts);
-
-    // 3. Generate Invoice
-    const subtotal = Math.round((cost / 1.19) * 100) / 100;
-    const tax = Math.round((cost - subtotal) * 100) / 100;
-    const newInvoice: Invoice = {
-      id: `inv_${Date.now().toString(36)}`,
-      invoiceNumber: `INV-2026-${Math.floor(Math.random() * 9000 + 1000)}`,
-      customerId: currentUser.id,
-      customerName: currentUser.username,
-      customerAddress: 'Kaiserstraße 42, 60311 Frankfurt am Main',
-      date: new Date().toISOString().slice(0, 10),
-      dueDate: new Date().toISOString().slice(0, 10),
-      paidDate: `${new Date().toISOString().slice(0, 10)} ${new Date().toTimeString().slice(0, 5)}`,
-      items: [
-        {
-          description: `Prepaid-Verlängerung (+${days} Tage): ${contract.serverName}`,
-          quantity: 1,
-          unitPrice: subtotal,
-          total: subtotal
-        }
-      ],
-      subtotal,
-      taxRate: 0.19,
-      taxAmount: tax,
-      total: cost,
-      status: 'paid',
-      paymentMethod: 'Prepaid-Guthaben',
-      transactionReference: `RENEW-${contract.serverId.toUpperCase()}`
-    };
-    setInvoices([newInvoice, ...invoices]);
-
-    // 4. Log transaction
-    const newTx: PaymentTransaction = {
-      id: `tx_${Date.now()}`,
-      customerId: currentUser.id,
-      amount: -cost,
-      method: 'SEPA Prepaid',
-      timestamp: `${new Date().toISOString().slice(0, 10)} ${new Date().toTimeString().slice(0, 5)}`,
-      reference: newInvoice.invoiceNumber,
-      status: 'completed',
-      note: `Laufzeitverlängerung: ${contract.serverName} (+${days} Tage)`
-    };
-    setTransactions([newTx, ...transactions]);
-
-    showToast(`Server "${contract.serverName}" erfolgreich um ${days} Tage verlängert!`);
+      setCurrentNavTab('servers');
+      showToast(result.message || `Gameserver "${config.serverName}" erfolgreich bestellt und bereitgestellt!`);
+    } catch (error: any) {
+      showToast(error.message || 'Server-Bestellung fehlgeschlagen.');
+    }
   };
 
-  const handleToggleAutoRenew = (contractId: string) => {
-    setContracts(contracts.map(c => c.id === contractId ? { ...c, autoRenew: !c.autoRenew } : c));
-    showToast('Auto-Verlängerungs-Einstellung aktualisiert.');
+  // User Top-up with Payment Gateway (real backend persistence)
+  const handleTopUpBalance = async (amount: number, method: string = 'PayPal') => {
+    try {
+      const res = await apiRequest('/api/crm/topup', 'POST', { amount, method });
+      if (res.user) setCurrentUser(res.user);
+      await refreshCustomerData(res.user?.role || currentUser.role);
+      showToast(res.message || `Erfolgreich +${amount.toFixed(2)} € via ${method} aufgeladen!`);
+    } catch (error: any) {
+      showToast(error.message || 'Guthaben-Aufladung fehlgeschlagen.');
+    }
   };
 
-  // Simulate Fast-Forwarding Time (+N Days) to test expiration lifecycle & warning system
-  const handleFastForwardTime = (days: number = 5) => {
-    let renewedCount = 0;
-    let expiredCount = 0;
+  // Contract Renewal (real backend persistence)
+  const handleRenewContract = async (contractId: string, days: number = 30) => {
+    try {
+      const res = await apiRequest(`/api/crm/contracts/${contractId}/renew`, 'POST', { days });
+      if (res.user) setCurrentUser(res.user);
+      await refreshCustomerData(res.user?.role || currentUser.role);
+      showToast(res.message || `Vertrag erfolgreich um ${days} Tage verlängert!`);
+    } catch (error: any) {
+      showToast(error.message || 'Vertragsverlängerung fehlgeschlagen.');
+      if (String(error.message || '').includes('Guthaben')) {
+        setCurrentNavTab('crm');
+      }
+    }
+  };
 
-    const updatedContracts = contracts.map(c => {
-      const newDaysRemaining = c.daysRemaining - days;
-      let newStatus = c.status;
+  const handleToggleAutoRenew = async (contractId: string) => {
+    try {
+      const res = await apiRequest(`/api/crm/contracts/${contractId}/autorenew`, 'POST', {});
+      await refreshCustomerData();
+      showToast(res.message || 'Auto-Verlängerungs-Einstellung aktualisiert.');
+    } catch (error: any) {
+      showToast(error.message || 'Auto-Verlängerung konnte nicht geändert werden.');
+    }
+  };
 
-      if (newDaysRemaining <= 0) {
-        // Expired! Check if auto-renew is active and balance sufficient
-        if (c.autoRenew && currentUser.balance >= c.monthlyPrice) {
-          // Auto-renewed!
-          renewedCount++;
-          return {
-            ...c,
-            daysRemaining: 30 + newDaysRemaining,
-            expiresAt: new Date(Date.now() + (30 + newDaysRemaining) * 24 * 3600 * 1000).toISOString().slice(0, 10),
-            status: 'active' as const
-          };
-        } else {
-          // Enter 72h grace period or suspend
-          newStatus = newDaysRemaining < -3 ? 'suspended' : 'grace_period';
-          expiredCount++;
-        }
-      } else if (newDaysRemaining <= 7) {
-        newStatus = 'expiring_soon';
+  // Admin Time-Simulation for expiry lifecycle testing (real backend persistence)
+  const handleFastForwardTime = async (days: number = 5) => {
+    try {
+      const res = await apiRequest('/api/crm/simulate-days', 'POST', { days });
+      await Promise.all([refreshCustomerData(), refreshServers()]);
+      showToast(res.message || `Simulation: Zeit um ${days} Tage vorgespult.`);
+    } catch (error: any) {
+      showToast(error.message || 'Zeit-Simulation fehlgeschlagen.');
+    }
+  };
+
+  // Support tickets (real backend persistence)
+  const handleCreateTicket = async (subject: string, serverName: string, text: string) => {
+    try {
+      const res = await apiRequest('/api/crm/tickets', 'POST', { subject, serverName, text });
+      await refreshCustomerData();
+      showToast(res.message || 'Support-Ticket erfolgreich eröffnet!');
+    } catch (error: any) {
+      showToast(error.message || 'Ticket konnte nicht erstellt werden.');
+    }
+  };
+
+  const handleReplyTicket = async (ticketId: string, text: string) => {
+    try {
+      const res = await apiRequest(`/api/crm/tickets/${ticketId}/reply`, 'POST', { text });
+      await refreshCustomerData();
+      showToast(res.message || 'Antwort gesendet.');
+    } catch (error: any) {
+      showToast(error.message || 'Antwort konnte nicht gespeichert werden.');
+    }
+  };
+
+  const handleUpdateTicketStatus = async (ticketId: string, status: 'open' | 'in_progress' | 'closed') => {
+    try {
+      const res = await apiRequest(`/api/crm/tickets/${ticketId}/status`, 'PATCH', { status });
+      await refreshCustomerData();
+      showToast(res.message || 'Ticket-Status aktualisiert.');
+    } catch (error: any) {
+      showToast(error.message || 'Status konnte nicht geändert werden.');
+    }
+  };
+
+  const handleMarkNotificationsRead = async () => {
+    try {
+      await apiRequest('/api/crm/notifications/read', 'POST', {});
+      await refreshCustomerData();
+      showToast('Benachrichtigungen als gelesen markiert.');
+    } catch (error: any) {
+      showToast(error.message || 'Fehler beim Aktualisieren der Benachrichtigungen.');
+    }
+  };
+
+  // Admin controls (real backend persistence)
+  const handleUpdateUserRole = async (userId: string, newRole: 'admin' | 'user') => {
+    try {
+      const res = await apiRequest(`/api/admin/users/${userId}/role`, 'PATCH', { role: newRole });
+      await refreshCustomerData();
+      showToast(res.message || `Rolle auf "${newRole}" aktualisiert.`);
+    } catch (error: any) {
+      showToast(error.message || 'Rolle konnte nicht geändert werden.');
+    }
+  };
+
+  const handleAdjustUserBalance = async (userId: string, newBalance: number) => {
+    try {
+      const res = await apiRequest(`/api/admin/users/${userId}/balance`, 'PATCH', { balance: newBalance });
+      await refreshCustomerData();
+      showToast(res.message || `Guthaben angepasst: ${newBalance.toFixed(2)} €.`);
+    } catch (error: any) {
+      showToast(error.message || 'Guthaben konnte nicht geändert werden.');
+    }
+  };
+
+  const handleToggleUserStatus = async (userId: string) => {
+    try {
+      const res = await apiRequest(`/api/admin/users/${userId}/status`, 'PATCH', {});
+      await refreshCustomerData();
+      showToast(res.message || 'Benutzerstatus geändert.');
+    } catch (error: any) {
+      showToast(error.message || 'Benutzerstatus konnte nicht geändert werden.');
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    try {
+      const res = await apiRequest(`/api/admin/users/${userId}`, 'DELETE');
+      await refreshCustomerData();
+      showToast(res.message || 'Benutzerkonto gelöscht.');
+    } catch (error: any) {
+      showToast(error.message || 'Benutzerkonto konnte nicht gelöscht werden.');
+    }
+  };
+
+  // UserCP handlers (real backend persistence)
+  const handleUpdateProfile = async (profile: {
+    fullName: string;
+    email: string;
+    company: string;
+    phone: string;
+    street: string;
+    zipCity: string;
+    country: string;
+  }) => {
+    const res = await apiRequest('/api/usercp/profile', 'PUT', profile);
+    if (res.user) setCurrentUser(res.user);
+    await refreshCustomerData(res.user?.role || currentUser.role);
+    showToast(res.message || 'Kundenprofil gespeichert.');
+  };
+
+  const handleLogoutOtherSessions = async () => {
+    try {
+      const res = await apiRequest('/api/auth/logout-all', 'POST', {});
+      if (Array.isArray(res.sessions)) setSessions(res.sessions);
+      showToast(res.message || 'Alle anderen Sitzungen wurden beendet.');
+    } catch (error: any) {
+      showToast(error.message || 'Sitzungen konnten nicht beendet werden.');
+    }
+  };
+
+  const handleAddSubUser = async (subuser: Omit<SubUser, 'id' | 'addedAt'>) => {
+    const res = await apiRequest('/api/usercp/subusers', 'POST', subuser);
+    if (Array.isArray(res.subUsers)) {
+      setSubUsers(res.subUsers);
+    } else {
+      await refreshCustomerData();
+    }
+    showToast(res.message || `Team-Mitglied "${subuser.username}" erfolgreich hinzugefügt!`);
+  };
+
+  const handleRemoveSubUser = async (id: string) => {
+    try {
+      const res = await apiRequest(`/api/usercp/subusers/${id}`, 'DELETE');
+      if (Array.isArray(res.subUsers)) {
+        setSubUsers(res.subUsers);
       } else {
-        newStatus = 'active';
+        await refreshCustomerData();
       }
-
-      return {
-        ...c,
-        daysRemaining: newDaysRemaining,
-        status: newStatus
-      };
-    });
-
-    setContracts(updatedContracts);
-
-    // If auto-renewed any, deduct from balance
-    if (renewedCount > 0) {
-      const totalDeducted = renewedCount * 4.99;
-      const newBal = Math.max(0, currentUser.balance - totalDeducted);
-      setCurrentUser({ ...currentUser, balance: newBal });
-      setUsers(users.map(u => u.id === currentUser.id ? { ...u, balance: newBal } : u));
+      showToast(res.message || 'Sub-User Zugriff entzogen.');
+    } catch (error: any) {
+      showToast(error.message || 'Sub-User konnte nicht entfernt werden.');
     }
-
-    showToast(`Simulation: Zeit um ${days} Tage vorgespult! (${renewedCount} auto-verlängert, ${expiredCount} in Karenzzeit)`);
   };
 
-  // Support tickets
-  const handleCreateTicket = (subject: string, serverName: string, text: string) => {
-    const newTkt: SupportTicket = {
-      id: `tkt_${Date.now()}`,
-      ticketNumber: `TKT-2026-${Math.floor(Math.random() * 9000 + 1000)}`,
-      customerId: currentUser.id,
-      customerName: currentUser.username,
-      serverName,
-      subject,
-      priority: 'medium',
-      status: 'open',
-      createdAt: 'Gerade eben',
-      updatedAt: 'Gerade eben',
-      messages: [
-        {
-          id: `msg_${Date.now()}`,
-          sender: 'customer',
-          author: currentUser.username,
-          timestamp: 'Gerade eben',
-          text
-        }
-      ]
-    };
-    setTickets([newTkt, ...tickets]);
-    showToast(`Support-Ticket #${newTkt.ticketNumber} erfolgreich eröffnet!`);
-  };
-
-  const handleReplyTicket = (ticketId: string, text: string) => {
-    setTickets(tickets.map(t => {
-      if (t.id !== ticketId) return t;
-      const isStaff = currentUser.role === 'admin';
-      return {
-        ...t,
-        updatedAt: 'Gerade eben',
-        messages: [
-          ...t.messages,
-          {
-            id: `msg_${Date.now()}`,
-            sender: isStaff ? 'support' : 'customer',
-            author: currentUser.username,
-            timestamp: 'Gerade eben',
-            text
-          }
-        ]
-      };
-    }));
-    showToast('Antwort gesendet.');
-  };
-
-  // Admin controls
-  const handleUpdateUserRole = (userId: string, newRole: 'admin' | 'user') => {
-    const updatedUsers = users.map(u => u.id === userId ? { ...u, role: newRole } : u);
-    setUsers(updatedUsers);
-    if (currentUser.id === userId) {
-      setCurrentUser({ ...currentUser, role: newRole });
+  const handleToggle2FA = async () => {
+    try {
+      const res = await apiRequest('/api/usercp/2fa', 'POST', {});
+      if (res.user) setCurrentUser(res.user);
+      showToast(res.message || '2-Faktor-Authentifizierung aktualisiert.');
+    } catch (error: any) {
+      showToast(error.message || '2FA konnte nicht umgeschaltet werden.');
     }
-    showToast(`Rolle für Benutzer auf "${newRole}" aktualisiert.`);
   };
 
-  const handleAdjustUserBalance = (userId: string, newBalance: number) => {
-    const updatedUsers = users.map(u => u.id === userId ? { ...u, balance: newBalance } : u);
-    setUsers(updatedUsers);
-    if (currentUser.id === userId) {
-      setCurrentUser({ ...currentUser, balance: newBalance });
+  const handleRegenerateApiToken = async () => {
+    try {
+      const res = await apiRequest('/api/usercp/api-token', 'POST', {});
+      if (res.user) setCurrentUser(res.user);
+      showToast(res.message || 'Neuer API Token generiert!');
+    } catch (error: any) {
+      showToast(error.message || 'API Token konnte nicht generiert werden.');
     }
-    showToast(`Guthaben angepasst: ${newBalance.toFixed(2)} €.`);
   };
 
-  const handleToggleUserStatus = (userId: string) => {
-    const updatedUsers = users.map(u => u.id === userId ? { ...u, status: (u.status === 'active' ? 'suspended' : 'active') as any } : u);
-    setUsers(updatedUsers);
-    showToast('Benutzerstatus geändert.');
-  };
-
-  // Sub-User management
-  const handleAddSubUser = (subuser: Omit<SubUser, 'id' | 'addedAt'>) => {
-    const newSub: SubUser = {
-      ...subuser,
-      id: `sub_${Date.now()}`,
-      addedAt: new Date().toISOString().slice(0, 10)
-    };
-    setSubUsers([newSub, ...subUsers]);
-    showToast(`Team-Mitglied "${newSub.username}" erfolgreich hinzugefügt!`);
-  };
-
-  const handleRemoveSubUser = (id: string) => {
-    setSubUsers(subUsers.filter(s => s.id !== id));
-    showToast('Sub-User Zugriff entzogen.');
-  };
-
-  const handleToggle2FA = () => {
-    const updatedUser = { ...currentUser, twoFactorEnabled: !currentUser.twoFactorEnabled };
-    setCurrentUser(updatedUser);
-    setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
-    showToast(`2-Faktor Authentifizierung ${updatedUser.twoFactorEnabled ? 'aktiviert' : 'deaktiviert'}.`);
-  };
-
-  const handleRegenerateApiToken = () => {
-    const newToken = `apex_live_${Math.random().toString(36).substring(2, 15)}_${Date.now().toString(36)}`;
-    const updatedUser = { ...currentUser, apiToken: newToken };
-    setCurrentUser(updatedUser);
-    setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
-    showToast('Neuer API Token für Node.js 24 generiert!');
+  const handleRevokeApiToken = async () => {
+    try {
+      const res = await apiRequest('/api/usercp/api-token', 'DELETE');
+      if (res.user) setCurrentUser(res.user);
+      showToast(res.message || 'API Token widerrufen.');
+    } catch (error: any) {
+      showToast(error.message || 'API Token konnte nicht widerrufen werden.');
+    }
   };
 
   // Switch / Login user
   const handleSelectUser = (user: UserAccount) => {
     setCurrentUser(user);
-    if (!user.id) { setServers([]); setLogsMap({}); setSelectedServerId(null); return; }
+    if (!user.id) {
+      setServers([]);
+      setLogsMap({});
+      setSelectedServerId(null);
+      setContracts([]);
+      setCustomers([]);
+      setInvoices([]);
+      setTransactions([]);
+      setTickets([]);
+      setNotifications([]);
+      setSubUsers([]);
+      setSessions([]);
+      setUserOrders([]);
+      setUsers([]);
+      return;
+    }
+    if (!canAccessAdminArea(user) && currentNavTab === 'admincontrol') {
+      setCurrentNavTab('servers');
+    }
+    if (!hasPermission(user, 'admin.system') && currentNavTab === 'crossplatform') {
+      setCurrentNavTab('servers');
+    }
     refreshServers().catch(error => showToast(error.message));
-    showToast(`Angemeldet als ${user.username} (${user.role.toUpperCase()})`);
+    refreshCustomerData(user.role).catch(() => {});
+    showToast(`Angemeldet als ${user.username} (${getRoleLabel(getEffectiveRole(user))})`);
   };
 
-  const handleRegisterUser = (username: string, email: string) => {
-    const newUser: UserAccount = {
-      id: `usr_${Date.now().toString(36)}`,
-      username,
-      email,
-      role: 'user',
-      balance: adminSettings.welcomeBonusEur,
-      status: 'active',
-      avatarInitials: username.slice(0, 2).toUpperCase(),
-      createdAt: new Date().toISOString().slice(0, 10),
-      twoFactorEnabled: false,
-      apiToken: `apex_live_usr_${Date.now().toString(36)}`
-    };
-    const updatedUsers = [...users, newUser];
-    setUsers(updatedUsers);
-    handleSelectUser(newUser);
+  const handleRegisterUser = (_username: string, _email: string) => {
+    // Registration is handled directly via POST /api/auth/register in RealLoginModal
+    refreshCustomerData().catch(() => {});
   };
 
   // Custom Game Creation
@@ -900,7 +778,7 @@ export default function App() {
       setAvailableGames(getAllAvailableGames());
       showToast(`Erfolgreich ${res.count} Spiele importiert!`);
     } else {
-      alert(`Fehler beim Import: ${res.error}`);
+      showToast(`Fehler beim Import: ${res.error}`);
     }
   };
 
@@ -942,12 +820,24 @@ export default function App() {
       <TopNav
         currentTab={currentNavTab}
         onTabChange={(tab) => {
+          if (tab === 'admincontrol' && !canAccessAdminArea(currentUser)) {
+            showToast('Kein Zugriff: Dieser Bereich ist Administratoren vorbehalten.');
+            return;
+          }
+          if (tab === 'crossplatform' && !hasPermission(currentUser, 'admin.system')) {
+            showToast('Kein Zugriff: System- & OS-Verwaltung ist Administratoren vorbehalten.');
+            return;
+          }
           setCurrentNavTab(tab);
           if (tab !== 'servers') {
             setSelectedServerId(null);
           }
         }}
         onOpenCreateModal={() => {
+          if (!hasPermission(currentUser, 'servers.create')) {
+            showToast('Keine Berechtigung zum Erstellen neuer Server (servers.create).');
+            return;
+          }
           setPreselectedGame(null);
           setIsCreateModalOpen(true);
         }}
@@ -961,6 +851,13 @@ export default function App() {
         steamMode={adminSettings.steamMode}
       />
 
+      {/* Active Prepaid Expiry / Grace Period Warning Banner */}
+      <ExpiryWarningBanner
+        contracts={contracts}
+        onQuickRenew={(contractId) => handleRenewContract(contractId, 30)}
+        onOpenCRM={() => setCurrentNavTab('crm')}
+      />
+
       {/* Main Content Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
         <ErrorBoundary fallbackTitle="Fehler beim Laden dieser Ansicht" onReset={() => setSelectedServerId(null)}>
@@ -968,6 +865,7 @@ export default function App() {
           selectedServer ? (
             <ServerDetail
               server={selectedServer}
+              currentUser={currentUser}
               onBack={() => setSelectedServerId(null)}
               onStartServer={handleStartServer}
               onStopServer={handleStopServer}
@@ -985,10 +883,12 @@ export default function App() {
               onDeleteServer={handleDeleteServer}
               allServers={servers}
               onNotify={showToast}
+              onServerUpdated={() => { refreshServers().catch(() => {}); }}
             />
           ) : (
             <ServerList
               servers={servers}
+              currentUser={currentUser}
               onSelectServer={(srv) => setSelectedServerId(srv.id)}
               onStartServer={handleStartServer}
               onStopServer={handleStopServer}
@@ -999,7 +899,7 @@ export default function App() {
                 setPreselectedGame(null);
                 setIsCreateModalOpen(true);
               }}
-              onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
+              onOpenSetupWizard={hasPermission(currentUser, 'admin.system') ? () => setIsSetupWizardOpen(true) : undefined}
             />
           )
         )}
@@ -1008,10 +908,20 @@ export default function App() {
           <GameCatalog
             games={availableGames}
             onSelectGameToDeploy={(game) => {
+              if (!hasPermission(currentUser, 'servers.create')) {
+                showToast('Keine Berechtigung zum Bereitstellen neuer Server.');
+                return;
+              }
               setPreselectedGame(game);
               setIsCreateModalOpen(true);
             }}
-            onOpenAddCustomGame={() => setIsCustomGameModalOpen(true)}
+            onOpenAddCustomGame={() => {
+              if (!hasPermission(currentUser, 'admin.system')) {
+                showToast('Nur Administratoren dürfen benutzerdefinierte Spiele registrieren.');
+                return;
+              }
+              setIsCustomGameModalOpen(true);
+            }}
             onExportManifest={handleExportManifest}
             onImportManifest={handleImportManifest}
           />
@@ -1021,7 +931,7 @@ export default function App() {
           <CentralModHub
             servers={servers}
             onInstallModToServer={handleInstallMod}
-            onNavigateToAdminSettings={() => setCurrentNavTab('admincontrol')}
+            onNavigateToAdminSettings={canAccessAdminArea(currentUser) ? () => setCurrentNavTab('admincontrol') : undefined}
           />
         )}
 
@@ -1049,11 +959,13 @@ export default function App() {
             onFastForwardTime={handleFastForwardTime}
             onCreateTicket={handleCreateTicket}
             onReplyTicket={handleReplyTicket}
+            onUpdateTicketStatus={handleUpdateTicketStatus}
+            onMarkNotificationsRead={handleMarkNotificationsRead}
             onDeleteServer={handleDeleteServer}
           />
         )}
 
-        {currentNavTab === 'admincontrol' && (
+        {currentNavTab === 'admincontrol' && canAccessAdminArea(currentUser) && (
           <AdminControlView
             currentUser={currentUser}
             users={users}
@@ -1062,7 +974,9 @@ export default function App() {
             onUpdateUserRole={handleUpdateUserRole}
             onAdjustUserBalance={handleAdjustUserBalance}
             onToggleUserStatus={handleToggleUserStatus}
-            onOpenSetupWizard={() => setIsSetupWizardOpen(true)}
+            onDeleteUser={handleDeleteUser}
+            onRefreshUsers={refreshAdminUsers}
+            onOpenSetupWizard={hasPermission(currentUser, 'admin.system') ? () => setIsSetupWizardOpen(true) : undefined}
           />
         )}
 
@@ -1071,14 +985,26 @@ export default function App() {
             currentUser={currentUser}
             servers={servers}
             subUsers={subUsers}
+            contracts={contracts}
+            invoices={invoices}
+            transactions={transactions}
+            tickets={tickets}
+            sessions={sessions}
             onAddSubUser={handleAddSubUser}
             onRemoveSubUser={handleRemoveSubUser}
             onToggle2FA={handleToggle2FA}
             onRegenerateApiToken={handleRegenerateApiToken}
+            onRevokeApiToken={handleRevokeApiToken}
+            onUpdateProfile={handleUpdateProfile}
+            onLogoutOtherSessions={handleLogoutOtherSessions}
+            onNavigateTab={(tab) => {
+              setCurrentNavTab(tab);
+              setSelectedServerId(null);
+            }}
           />
         )}
 
-        {currentNavTab === 'crossplatform' && (
+        {currentNavTab === 'crossplatform' && hasPermission(currentUser, 'admin.system') && (
           <CrossPlatformView selectedServer={selectedServer || servers[0]} />
         )}
         </ErrorBoundary>
@@ -1141,7 +1067,7 @@ export default function App() {
         />
       )}
 
-      {isSetupWizardOpen && (
+      {isSetupWizardOpen && hasPermission(currentUser, 'admin.system') && (
         <SetupWizardModal
           isOpen={isSetupWizardOpen}
           onClose={() => setIsSetupWizardOpen(false)}

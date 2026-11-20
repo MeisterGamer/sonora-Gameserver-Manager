@@ -244,6 +244,36 @@ export function generateOSScripts(server: ServerInstance) {
   const linuxSystemd = root && user && !/[\r\n%"\\]/.test(root) && /^[a-zA-Z0-9_-]+$/.test(server.id)
     ? '[Unit]\nDescription=Sonora game instance\nAfter=network.target\n[Service]\nType=simple\nUser=' + user + '\nWorkingDirectory=' + root + '/data/servers/' + server.id + '\nExecStart=/usr/bin/env bash "' + root + '/data/servers/' + server.id + '/start.sh"\nRestart=on-failure\nRestartSec=10\n# Configure User= for the owner of this installation before registering this standalone unit.\n# Do not start the same instance simultaneously through the manager.\n[Install]\nWantedBy=multi-user.target\n'
     : '# Installation directory is not known. Refresh the instance from the backend before exporting a unit.\n';
-  const dockerfile = '# Docker deployment is not implemented for this installation.\n# No unverified Java image or runtime is generated.\n';
-  return { linuxSh, windowsBat, windowsPs1, macCommand, linuxSystemd, dockerfile };
+  const safeId = /^[a-zA-Z0-9_-]+$/.test(server.id) ? server.id : 'gameserver';
+  const port = Number(server.port) || 25565;
+  const queryPort = Number(server.queryPort) || (port + 1);
+  const dockerfile = [
+    'FROM ubuntu:24.04',
+    'ENV DEBIAN_FRONTEND=noninteractive',
+    'RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates curl libstdc++6 libc6 && rm -rf /var/lib/apt/lists/*',
+    `WORKDIR /opt/sonora/data/servers/${safeId}`,
+    `COPY . /opt/sonora/data/servers/${safeId}/`,
+    'RUN chmod +x start.sh || true',
+    `EXPOSE ${port}/tcp ${port}/udp ${queryPort}/udp`,
+    'CMD ["bash", "start.sh"]',
+    ''
+  ].join('\n');
+  const dockerCompose = [
+    'services:',
+    `  ${safeId}:`,
+    '    build: .',
+    `    container_name: sonora-${safeId}`,
+    '    restart: unless-stopped',
+    '    ports:',
+    `      - "${port}:${port}/tcp"`,
+    `      - "${port}:${port}/udp"`,
+    `      - "${queryPort}:${queryPort}/udp"`,
+    '    volumes:',
+    `      - ./:/opt/sonora/data/servers/${safeId}`,
+    '      - ../../../.runtime:/opt/sonora/.runtime:ro',
+    '    stdin_open: true',
+    '    tty: true',
+    ''
+  ].join('\n');
+  return { linuxSh, windowsBat, windowsPs1, macCommand, linuxSystemd, dockerfile, dockerCompose };
 }

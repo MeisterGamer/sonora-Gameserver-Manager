@@ -28,11 +28,9 @@ export const ModBundlesView: React.FC<ModBundlesViewProps> = ({
   const [installingBundleId, setInstallingBundleId] = useState<string | null>(null);
   const [installedBundles, setInstalledBundles] = useState<string[]>([]);
 
-  const handleInstallBundle = (bundle: ModBundlePreset) => {
+  const handleInstallBundle = async (bundle: ModBundlePreset) => {
     setInstallingBundleId(bundle.id);
-
-    setTimeout(() => {
-      // Find all mods belonging to this bundle
+    try {
       const modsToInstall: ModItem[] = bundle.modIds.map(id => {
         const found = MODS_AND_PLUGINS_DATABASE.find(m => m.id === id);
         if (found) return found;
@@ -51,15 +49,17 @@ export const ModBundlesView: React.FC<ModBundlesViewProps> = ({
         };
       });
 
-      // Install each mod
-      modsToInstall.forEach(mod => {
-        onInstallMod(mod);
-      });
+      for (const mod of modsToInstall) {
+        await Promise.resolve(onInstallMod(mod));
+      }
 
-      setInstalledBundles(prev => [...prev, bundle.id]);
-      setInstallingBundleId(null);
+      setInstalledBundles(prev => (prev.includes(bundle.id) ? prev : [...prev, bundle.id]));
       onNotify?.(`Bundle "${bundle.name}" (${bundle.modIds.length} Erweiterungen) erfolgreich installiert!`);
-    }, 1400);
+    } catch (err: any) {
+      onNotify?.(`Bundle-Installation fehlgeschlagen: ${err.message || 'Unbekannter Fehler'}`);
+    } finally {
+      setInstallingBundleId(null);
+    }
   };
 
   return (

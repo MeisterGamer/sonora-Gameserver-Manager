@@ -1,0 +1,28 @@
+{
+  "checks": [
+    "server.ts defines clone, players, webhooks, audit, ports, mods/check-updates, admin settings, and nodes endpoints",
+    "server.ts /api/servers/:id/stats exposes pid, threads, diskBreakdown, hostIp, hostName",
+    "generateOSScripts generates Dockerfile + dockerCompose without temurin:21",
+    "CrossPlatformView removes \"nicht implementiert\" placeholders and includes compose tab",
+    "MetricsView polls real /api/servers/:id/stats without Math.random() or hardcoded #49102 / 38 Threads / timings.aikar.co",
+    "ServerList displays totalPlayers without \"Noch nicht abgefragt\"",
+    "PlayerManager uses real /api/servers/:id/players endpoints with no hardcoded mock players",
+    "WebhooksView uses real /api/servers/:id/webhooks endpoints, Discord payload examples, and no token_demo",
+    "AuditLogView uses real /api/servers/:id/audit endpoint without hardcoded Gamer/Sarah fixture",
+    "NetworkPortsView uses real /api/servers/:id/ports and /domain without hardcoded 185.228.138.44 or confirm()",
+    "ModPluginBrowser uses real /api/servers/:id/mods/check-updates instead of idx % 2 fake update logic",
+    "ModBundlesView has no fake 1400ms setTimeout",
+    "AdminControlView uses real /api/admin/settings, /api/system/nodes, /api/audit, /api/webhooks/test without alert()/confirm()",
+    "App.tsx wires handleCloneServer to POST /api/servers/:id/clone and has no alert()",
+    "CustomGameModal provides interactive game example presets",
+    "GameCatalog provides example manifest loader button",
+    "ConfigFileEditor provides example config presets",
+    "src/components/ConfigEditModal.tsx has no window.alert / window.confirm / alert(",
+    "src/components/RealBackupsView.tsx has no window.alert / window.confirm / alert(",
+    "src/components/CRMView.tsx has no window.alert / window.confirm / alert(",
+    "src/components/ShopView.tsx has no window.alert / window.confirm / alert(",
+    "src/components/LoginModal.tsx has no window.alert / window.confirm / alert(",
+    "src/components/RealFileManagerView.tsx has no window.alert / window.confirm / alert(",
+    "src/components/RealModPluginBrowser.tsx has no window.alert / window.confirm / alert("
+  ]
+}

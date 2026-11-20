@@ -12,6 +12,7 @@ export function ModPluginBrowser({ server, onInstallMod, onUninstallMod, onToggl
   const [results, setResults] = useState<ModItem[]>([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const run = async (task: () => Promise<unknown>, success: string) => {
     setBusy(true); setMessage('');
     try { await task(); setMessage(success); } catch (error: any) { setMessage(error.message); } finally { setBusy(false); }
@@ -33,7 +34,14 @@ export function ModPluginBrowser({ server, onInstallMod, onUninstallMod, onToggl
     {(server.installedMods || []).map(mod => <div key={mod.id} className="flex gap-3 items-center border-b border-neutral-800 pb-2">
       <span className="flex-1">{mod.name} · {mod.version} · {mod.enabled ? 'aktiv' : 'deaktiviert'}</span>
       <button disabled={busy || server.status !== 'offline'} onClick={() => run(async () => { await onToggleMod(mod.id, !mod.enabled); }, 'Plugindatei umbenannt.')}>{mod.enabled ? 'Deaktivieren' : 'Aktivieren'}</button>
-      <button disabled={busy || server.status !== 'offline'} className="text-red-400" onClick={() => { if (window.confirm('Plugindatei entfernen?')) run(async () => { await onUninstallMod(mod.id); }, 'Plugindatei entfernt.'); }}>Entfernen</button>
+      {confirmRemoveId === mod.id ? (
+        <span className="flex gap-2 text-xs">
+          <button disabled={busy || server.status !== 'offline'} className="text-red-400 font-semibold" onClick={() => { setConfirmRemoveId(null); run(async () => { await onUninstallMod(mod.id); }, 'Plugindatei entfernt.'); }}>Ja</button>
+          <button disabled={busy} className="text-neutral-400" onClick={() => setConfirmRemoveId(null)}>Nein</button>
+        </span>
+      ) : (
+        <button disabled={busy || server.status !== 'offline'} className="text-red-400" onClick={() => setConfirmRemoveId(mod.id)}>Entfernen</button>
+      )}
     </div>)}
   </section>;
 }

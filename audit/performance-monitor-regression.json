@@ -1,0 +1,15 @@
+{
+  "checks": [
+    "recharts is installed in package.json dependencies",
+    "PerformanceMonitorView imports Recharts components (ResponsiveContainer, AreaChart, ComposedChart, Tooltip)",
+    "PerformanceMonitorView visualizes CPU, RAM, and Network (Inbound/Outbound) over 24h with no mock randomness or browser alerts",
+    "ServerDetail.tsx registers the Leistungs-Monitor tab and renders PerformanceMonitorView",
+    "server.ts wires configurePerformanceHistory and cleans up history on server deletion",
+    "GET /metrics/history?range=24h succeeds and prunes samples older than 24h",
+    "Summary computes accurate peak CPU, RAM, and network statistics",
+    "GET /metrics/history?range=6h filters samples strictly within 6 hours",
+    "POST /metrics/sample captures and persists a new live telemetry point",
+    "24h performance history is persisted atomically on disk",
+    "DELETE /metrics/history resets stored samples and records fresh baseline"
+  ]
+}

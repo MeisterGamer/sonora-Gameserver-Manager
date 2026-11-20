@@ -223,29 +223,30 @@ export const ModPluginBrowser: React.FC<ModPluginBrowserProps> = ({
     }, 450);
   };
 
-  // Check for updates simulation
-  const handleCheckUpdates = () => {
+  // Live Modrinth update check via backend
+  const handleCheckUpdates = async () => {
     setIsCheckingUpdates(true);
-    setTimeout(() => {
-      const updates: Record<string, string> = {};
-      (server.installedMods || []).forEach((inst, idx) => {
-        // simulate available update for some mods
-        if (idx % 2 === 0) {
-          const parts = inst.version.split('.');
-          if (parts.length >= 2) {
-            const lastNum = parseInt(parts[parts.length - 1], 10) || 1;
-            parts[parts.length - 1] = `${lastNum + 1}`;
-            updates[inst.id] = parts.join('.');
-          } else {
-            updates[inst.id] = `${inst.version}.1-hotfix`;
-          }
-        }
+    try {
+      const res = await fetch(`/api/servers/${server.id}/mods/check-updates`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Update-Prüfung fehlgeschlagen');
+      const updates: Record<string, string> = data.updates || {};
       setUpdatesAvailableMap(updates);
-      setIsCheckingUpdates(false);
       const count = Object.keys(updates).length;
-      showToast(`${count} ${count === 1 ? 'Update gefunden' : 'Updates gefunden'}!`);
-    }, 1200);
+      showToast(
+        count > 0
+          ? `${count} ${count === 1 ? 'Update gefunden' : 'Updates gefunden'}!`
+          : `${data.checkedCount ?? 0} Erweiterungen geprüft — alle aktuell.`
+      );
+    } catch (err: any) {
+      showToast(`Update-Prüfung fehlgeschlagen: ${err.message}`);
+    } finally {
+      setIsCheckingUpdates(false);
+    }
   };
 
   const handleUpdateSingleMod = (installedId: string) => {

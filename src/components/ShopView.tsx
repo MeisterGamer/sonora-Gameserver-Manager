@@ -36,6 +36,7 @@ export const ShopView: React.FC<ShopViewProps> = ({
   const [cfgDedicatedIp, setCfgDedicatedIp] = useState(false);
   const [showTopUpModal, setShowTopUpModal] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState<number>(25);
+  const [balanceNotice, setBalanceNotice] = useState<string | null>(null);
 
   const filteredPlans = SHOP_PLANS.filter((p) => {
     if (selectedCategory === 'all') return true;
@@ -74,10 +75,11 @@ export const ShopView: React.FC<ShopViewProps> = ({
     const total = calculateTotal(configuringPlan);
 
     if (currentUser.balance < total) {
-      alert(`Dein Guthaben (${currentUser.balance.toFixed(2)} €) reicht nicht aus für diesen Kauf (${total.toFixed(2)} €). Bitte lade zuerst dein Guthaben auf!`);
+      setBalanceNotice(`Dein Guthaben (${currentUser.balance.toFixed(2)} €) reicht nicht aus für diesen Kauf (${total.toFixed(2)} €). Bitte lade zuerst dein Guthaben auf!`);
       setShowTopUpModal(true);
       return;
     }
+    setBalanceNotice(null);
 
     onPurchaseServer(configuringPlan, {
       serverName: cfgName.trim() || `${configuringPlan.defaultGameName} Server`,
@@ -464,6 +466,12 @@ export const ShopView: React.FC<ShopViewProps> = ({
               </h3>
               <button onClick={() => setShowTopUpModal(false)} className="text-neutral-400 hover:text-neutral-200">✕</button>
             </div>
+
+            {balanceNotice && (
+              <div role="alert" className="p-2.5 rounded-lg bg-amber-950/60 border border-amber-800 text-amber-200 text-xs">
+                {balanceNotice}
+              </div>
+            )}
 
             <p className="text-xs text-neutral-400">
               Wähle den Betrag, der deinem Prepaid-Konto gutgeschrieben werden soll:

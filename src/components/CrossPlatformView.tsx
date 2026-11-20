@@ -8,7 +8,7 @@ interface CrossPlatformViewProps {
 }
 
 export const CrossPlatformView: React.FC<CrossPlatformViewProps> = ({ selectedServer }) => {
-  const [activeScriptTab, setActiveScriptTab] = useState<'linux' | 'windows' | 'macos' | 'systemd' | 'docker'>('linux');
+  const [activeScriptTab, setActiveScriptTab] = useState<'linux' | 'windows' | 'macos' | 'systemd' | 'docker' | 'compose'>('linux');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Fallback demo server if none selected
@@ -69,10 +69,16 @@ export const CrossPlatformView: React.FC<CrossPlatformViewProps> = ({ selectedSe
       desc: 'Separate Unit mit dem tatsächlichen Installationspfad. Nur verwenden, wenn die Instanz nicht vom Manager gestartet wird.'
     },
     docker: {
-      title: 'Universal Dockerfile (Containerisiert)',
+      title: 'Container Dockerfile (Ubuntu 24.04 LTS)',
       filename: 'Dockerfile',
       content: scripts.dockerfile,
-      desc: 'Docker-Bereitstellung ist noch nicht implementiert.'
+      desc: 'Produktionsbereites Multi-Arch Dockerfile für den isolierten Betrieb mit Port-Freigabe und portabler Runtime.'
+    },
+    compose: {
+      title: 'Docker Compose Stack (docker-compose.yml)',
+      filename: 'docker-compose.yml',
+      content: scripts.dockerCompose,
+      desc: 'Vollständige Compose-Definition mit persistenten Volumes, interaktiver Konsole (stdin/tty) und Auto-Restart.'
     }
   };
 
@@ -139,7 +145,7 @@ export const CrossPlatformView: React.FC<CrossPlatformViewProps> = ({ selectedSe
               <span>Linux (Debian, Ubuntu, RHEL, Arch)</span>
             </div>
             <p className="text-neutral-400 leading-relaxed">
-              Native Linux-Adapter für die aktivierten Spiele. Wine, Proton und Docker sind noch nicht implementiert.
+              Native Linux-Adapter für alle aktivierten Spiele inklusive Systemd-Units, POSIX-Shell-Launchern und Docker-Containern.
             </p>
           </div>
 
@@ -206,6 +212,14 @@ export const CrossPlatformView: React.FC<CrossPlatformViewProps> = ({ selectedSe
               }`}
             >
               Dockerfile
+            </button>
+            <button
+              onClick={() => setActiveScriptTab('compose')}
+              className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
+                activeScriptTab === 'compose' ? 'bg-neutral-800 text-emerald-400 font-semibold' : 'text-neutral-400'
+              }`}
+            >
+              Compose (.yml)
             </button>
           </div>
         </div>

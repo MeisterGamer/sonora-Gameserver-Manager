@@ -119,8 +119,8 @@ export const ConfigFileEditor: React.FC<ConfigFileEditorProps> = ({
       {/* Editor Content Area */}
       <div className="flex-1 flex flex-col bg-neutral-900">
         {/* Top Control Bar */}
-        <div className="px-4 py-2.5 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        <div className="px-4 py-2.5 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
             <span className="text-xs font-mono font-semibold text-neutral-200">{selectedFile}</span>
             {isPropertiesFile && (
               <div className="flex items-center gap-1 bg-neutral-950 p-0.5 rounded border border-neutral-800 text-xs">
@@ -138,6 +138,42 @@ export const ConfigFileEditor: React.FC<ConfigFileEditorProps> = ({
                   <Code2 className="w-3 h-3" />
                   <span>Editor (Raw)</span>
                 </button>
+              </div>
+            )}
+
+            {selectedFile === 'server.properties' && (
+              <div className="flex items-center gap-1.5 text-[11px]">
+                <span className="text-neutral-500">Vorlage:</span>
+                {[
+                  {
+                    label: 'SMP Standard',
+                    apply: { difficulty: 'normal', pvp: 'true', 'max-players': '20', 'view-distance': '10', gamemode: 'survival' }
+                  },
+                  {
+                    label: 'Performance (12+ Spieler)',
+                    apply: { difficulty: 'hard', pvp: 'true', 'max-players': '50', 'view-distance': '8', 'simulation-distance': '6' }
+                  },
+                  {
+                    label: 'Kreativ / Bauwelt',
+                    apply: { difficulty: 'peaceful', pvp: 'false', 'max-players': '25', 'view-distance': '14', gamemode: 'creative' }
+                  }
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => {
+                      let next = fileContent;
+                      for (const [k, v] of Object.entries(preset.apply)) {
+                        const re = new RegExp(`^${k}=.*$`, 'm');
+                        next = re.test(next) ? next.replace(re, `${k}=${v}`) : `${next.trimEnd()}\n${k}=${v}\n`;
+                      }
+                      setFileContent(next);
+                    }}
+                    className="px-2 py-1 rounded bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-neutral-300 hover:text-emerald-300 cursor-pointer transition-colors"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -164,7 +200,7 @@ export const ConfigFileEditor: React.FC<ConfigFileEditorProps> = ({
           <div className="p-6 space-y-6 overflow-y-auto max-h-[500px]">
             <div>
               <h3 className="text-sm font-semibold text-neutral-200 mb-1">Häufige Server-Einstellungen</h3>
-              <p className="text-xs text-neutral-400">Passe die Kernparameter bequem über das Formular an.</p>
+              <p className="text-xs text-neutral-400">Passe die Kernparameter bequem über das Formular oder per Beispiel-Vorlage an.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

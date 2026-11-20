@@ -25,9 +25,12 @@ import {
   Archive
 } from 'lucide-react';
 import { ServerInstance } from '../types/game';
+import { UserAccount } from '../types/auth';
+import { hasPermission, getEffectiveRole, getRoleLabel } from '../utils/permissions';
 
 interface ServerListProps {
   servers: ServerInstance[];
+  currentUser?: UserAccount;
   onSelectServer: (server: ServerInstance) => void;
   onStartServer: (id: string) => void;
   onStopServer: (id: string) => void;
@@ -40,6 +43,7 @@ interface ServerListProps {
 
 export const ServerList: React.FC<ServerListProps> = ({
   servers,
+  currentUser,
   onSelectServer,
   onStartServer,
   onStopServer,
@@ -49,6 +53,11 @@ export const ServerList: React.FC<ServerListProps> = ({
   onOpenCreateModal,
   onOpenSetupWizard
 }) => {
+  const canCreate = !currentUser || hasPermission(currentUser, 'servers.create');
+  const canDelete = !currentUser || hasPermission(currentUser, 'servers.delete');
+  const canPower = !currentUser || hasPermission(currentUser, 'servers.power');
+  const canBackup = !currentUser || hasPermission(currentUser, 'servers.backups');
+  const canAdminSystem = !currentUser || hasPermission(currentUser, 'admin.system');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'offline'>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -236,7 +245,7 @@ export const ServerList: React.FC<ServerListProps> = ({
             <Users className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-xl font-bold font-mono text-neutral-100 tabular-nums">
-            <span className="text-xs text-neutral-500 font-normal">Noch nicht abgefragt</span>
+            {totalPlayers} <span className="text-xs text-neutral-500 font-normal">{onlineCount === 0 ? '(Offline)' : 'Online'}</span>
           </div>
         </div>
 
@@ -252,13 +261,15 @@ export const ServerList: React.FC<ServerListProps> = ({
 
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
           <div className="text-neutral-400 mb-1 flex items-center justify-between">
-            <span>Host Node Runtime</span>
+            <span>{canAdminSystem ? 'Host Node Runtime' : 'Benutzer-Bereich'}</span>
             <Layers className="w-4 h-4 text-purple-400" />
           </div>
           <div className="text-sm font-semibold font-mono text-neutral-100 mt-1">
-            Node.js v24.2.0
+            {canAdminSystem ? 'Debian / Node.js' : getRoleLabel(getEffectiveRole(currentUser))}
           </div>
-          <div className="text-[11px] text-neutral-500">Cross-Platform Ready</div>
+          <div className="text-[11px] text-neutral-500">
+            {canAdminSystem ? 'Admin System-Zugriff' : 'Kunden-Instanzen'}
+          </div>
         </div>
       </div>
 
@@ -298,10 +309,10 @@ export const ServerList: React.FC<ServerListProps> = ({
             <option value="simulation">Simulation</option>
           </select>
 
-          {onOpenSetupWizard && (
+          {onOpenSetupWizard && canAdminSystem && (
             <button
               onClick={onOpenSetupWizard}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-950 hover:bg-neutral-850 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-semibold cursor-pointer transition-colors shrink-0 shadow-sm"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-950 hover:bg-neutral-850 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-semibold cursor-pointer transition-colors shrink-0 shadow-sm whitespace-nowrap"
               title="Installations- und Einrichtungsassistent starten"
             >
               <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
@@ -309,13 +320,15 @@ export const ServerList: React.FC<ServerListProps> = ({
             </button>
           )}
 
-          <button
-            onClick={onOpenCreateModal}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shrink-0 shadow-sm shadow-emerald-600/20"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Server hinzufügen</span>
-          </button>
+          {canCreate && (
+            <button
+              onClick={onOpenCreateModal}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shrink-0 shadow-sm shadow-emerald-600/20 whitespace-nowrap"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Server hinzufügen</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -539,7 +552,7 @@ export const ServerList: React.FC<ServerListProps> = ({
                   {/* Right: Actions */}
                   <div className="flex items-center gap-2">
                     {/* Power Toggle */}
-                    {isRunning ? (
+                    {canPower && (isRunning ? (
                       <>
                         <button
                           onClick={() => onRestartServer(server.id)}
@@ -564,7 +577,7 @@ export const ServerList: React.FC<ServerListProps> = ({
                         <Play className="w-3 h-3 fill-current" />
                         <span>Start</span>
                       </button>
-                    )}
+                    ))}
 
                     {/* Manage Button */}
                     <button
@@ -576,18 +589,20 @@ export const ServerList: React.FC<ServerListProps> = ({
                     </button>
 
                     {/* Create Backup Button */}
-                    <button
-                      onClick={(e) => handleQuickBackup(e, server)}
-                      disabled={backingUpServerId === server.id}
-                      className="p-2 text-neutral-400 hover:text-emerald-400 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-50"
-                      title="Create Backup: Archiviert das Spieldatenverzeichnis"
-                      aria-label="Create Backup"
-                    >
-                      <Archive className={`w-4 h-4 ${backingUpServerId === server.id ? 'animate-spin text-emerald-400' : ''}`} />
-                    </button>
+                    {canBackup && (
+                      <button
+                        onClick={(e) => handleQuickBackup(e, server)}
+                        disabled={backingUpServerId === server.id}
+                        className="p-2 text-neutral-400 hover:text-emerald-400 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer disabled:opacity-50"
+                        title="Create Backup: Archiviert das Spieldatenverzeichnis"
+                        aria-label="Create Backup"
+                      >
+                        <Archive className={`w-4 h-4 ${backingUpServerId === server.id ? 'animate-spin text-emerald-400' : ''}`} />
+                      </button>
+                    )}
 
                     {/* Clone Server Button */}
-                    {onCloneServer && (
+                    {onCloneServer && canCreate && (
                       <button
                         onClick={() => onCloneServer(server.id)}
                         className="p-2 text-neutral-400 hover:text-sky-300 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
@@ -598,13 +613,15 @@ export const ServerList: React.FC<ServerListProps> = ({
                     )}
 
                     {/* Delete Server Button */}
-                    <button
-                      onClick={() => onDeleteServer(server.id)}
-                      className="p-2 text-neutral-500 hover:text-rose-400 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
-                      title="Instanz löschen"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {canDelete && (
+                      <button
+                        onClick={() => onDeleteServer(server.id)}
+                        className="p-2 text-neutral-500 hover:text-rose-400 rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+                        title="Instanz löschen"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               );

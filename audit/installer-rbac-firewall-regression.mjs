@@ -283,6 +283,9 @@ async function runTests() {
     const scriptText = fs.readFileSync(installScriptPath, 'utf8');
     execSync(`bash -n "${installScriptPath}"`, { stdio: 'pipe' });
 
+    assert.match(scriptText, /https:\/\/github\.com\/MeisterGamer\/sonora-Gameserver-Manager/, 'install.sh targets official GitHub repository');
+    assert.match(scriptText, /git clone --depth 1 --branch "\$REPO_BRANCH" "\$REPO_URL" "\$SOURCE_DIR"/, 'install.sh clones repository when executed standalone');
+    assert.match(scriptText, /archive\/refs\/heads\/\$\{REPO_BRANCH\}\.tar\.gz/, 'install.sh provides GitHub tarball fallback download');
     assert.match(scriptText, /ufw default deny incoming/, 'install.sh configures UFW default deny incoming');
     assert.match(scriptText, /ufw limit "\$\{SSH_PORT\}\/tcp"/, 'install.sh rate-limits SSH via UFW');
     assert.match(scriptText, /ufw --force enable/, 'install.sh enables UFW firewall');
@@ -292,7 +295,9 @@ async function runTests() {
     assert.match(scriptText, /\/etc\/fail2ban\/jail\.d\/sonora\.local/, 'install.sh configures Fail2ban SSH protection');
     assert.match(scriptText, /\/etc\/sudoers\.d\/sonora-firewall/, 'install.sh writes sudoers rule for automatic port management');
     assert.match(scriptText, /systemctl enable sonora-manager\.service/, 'install.sh enables systemd boot autostart');
-    console.log('✓ Test 5 passed: Debian install.sh syntax valid with Firewall, DDoS protection, Fail2ban & Autostart');
+    const helpOut = execSync(`bash "${installScriptPath}" --help`, { encoding: 'utf8' });
+    assert.match(helpOut, /MeisterGamer\/sonora-Gameserver-Manager/, 'install.sh --help displays GitHub repository URL');
+    console.log('✓ Test 5 passed: Debian install.sh syntax valid with GitHub Download, Firewall, DDoS protection, Fail2ban & Autostart');
   }
 
   console.log('ALL INSTALLER / RBAC / FIREWALL / DEBIAN INSTALL.SH TESTS PASSED');

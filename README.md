@@ -1,5 +1,24 @@
 # Sonora Gameserver Manager
 
+## Schnellinstallation für Debian 11/12/13 & Ubuntu LTS (Automatischer Download & Einrichtung)
+
+Direkt-Installation über `install.sh` direkt vom offiziellen GitHub-Repository (`https://github.com/MeisterGamer/sonora-Gameserver-Manager`) inklusive UFW-Firewall, DDoS-Schutz (Kernel-Sysctl, iptables, Fail2ban), Java/Node.js/SteamCMD und `systemd`-Autostart:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MeisterGamer/sonora-Gameserver-Manager/main/install.sh | sudo bash -s -- --start
+```
+
+Oder manuell herunterladen und starten:
+
+```bash
+wget -O install.sh https://raw.githubusercontent.com/MeisterGamer/sonora-Gameserver-Manager/main/install.sh
+sudo bash install.sh --start
+```
+
+Optionale Parameter: `--dir=/pfad/zum/ordner`, `--branch=main`, `--panel-port=3000`, `--sftp-port=2022`, `--ssh-port=22`, `--update`, `--no-firewall`, `--no-ddos`.
+
+---
+
 Current fix: Update 05 corrects systemd WorkingDirectory parsing. See [Linux Update 05](docs/LINUX-UPDATE05.md). The installation remains in the existing directory.
 
 

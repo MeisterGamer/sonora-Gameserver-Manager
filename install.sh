@@ -305,7 +305,13 @@ chmod -R 755 "$SOURCE_DIR"
 # 7. NPM Abhängigkeiten installieren & Production Build kompilieren
 echo -e "${BLUE}[7/11] Installiere NPM-Abhängigkeiten und erstelle Production-Build...${NC}"
 cd "$SOURCE_DIR"
-npm install --legacy-peer-deps || npm install --force
+npm install || npm install --legacy-peer-deps || npm install --force
+
+# Sicherstellen, dass Peer-Abhängigkeit react-is (für Recharts + Vite 8 Rolldown) vorhanden ist
+if [ ! -d "$SOURCE_DIR/node_modules/react-is" ]; then
+  echo -e "${YELLOW}Installiere fehlende Peer-Abhängigkeit react-is für Recharts...${NC}"
+  npm install --no-save react-is --legacy-peer-deps || npm install --no-save react-is --force
+fi
 
 echo -e "${YELLOW}Kompiliere Frontend-Assets (Vite Build)...${NC}"
 npm run build

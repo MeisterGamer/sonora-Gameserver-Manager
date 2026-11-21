@@ -14,6 +14,10 @@ import {
   ensureServerPropertiesPort,
   searchExecutableRecursive
 } from './installerHelpers';
+import {
+  isWindowsPeExecutable,
+  detectLinuxWindowsRuntimes
+} from './windowsRuntime';
 
 export type DiagnosticSeverity = 'ok' | 'warning' | 'error';
 export type DiagnosticCategory = 'files' | 'dependencies' | 'startup' | 'installation' | 'network';
@@ -485,16 +489,38 @@ export function configureServerDiagnostics(
         });
       } else {
         coreBinaryHealthy = true;
+        const isWinPeOnLinux = process.platform !== 'win32' && isWindowsPeExecutable(foundExec);
         checks.push({
           id: 'core_game_binary',
           category: 'files',
           title: 'Dedicated Server-Binary',
           status: 'ok',
-          message: `Ausführbare Spiel-Binary verifiziert (${path.basename(foundExec)}).`,
+          message: isWinPeOnLinux
+            ? `Windows-PE Server-Binary erkannt (${path.basename(foundExec)}) — Ausführung erfolgt über Wine/Container.`
+            : `Ausführbare Spiel-Binary verifiziert (${path.basename(foundExec)}).`,
           details: `Relativer Pfad: ${path.relative(srvDir, foundExec)}`,
           filePath: path.relative(srvDir, foundExec),
           fixable: false
         });
+
+        if (isWinPeOnLinux) {
+          const rt = detectLinuxWindowsRuntimes();
+          checks.push({
+            id: 'windows_compat_runtime',
+            category: 'dependencies',
+            title: 'Linux Windows-Runtime (Wine / Podman / Docker)',
+            status: rt.preferredRuntime !== 'none' ? 'ok' : 'error',
+            message:
+              rt.preferredRuntime !== 'none'
+                ? `Windows-.exe Kompatibilitäts-Runtime bereit (${rt.summary}).`
+                : `Windows-Binary "${path.basename(foundExec)}" benötigt Wine (+Xvfb) oder Podman/Docker unter Linux!`,
+            details:
+              rt.preferredRuntime !== 'none'
+                ? `Gewählte Runtime: ${rt.preferredRuntime.toUpperCase()} (Container-Image: ${rt.containerImage})`
+                : 'Installieren auf Debian/Ubuntu: sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine wine64 xvfb (oder: sudo apt-get install -y podman)',
+            fixable: false
+          });
+        }
       }
 
       // SteamCMD dependency check

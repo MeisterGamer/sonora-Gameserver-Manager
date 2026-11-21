@@ -8,6 +8,13 @@ import { configurePermissions, PermissionsController, SystemPermission } from '.
 import { configureFirewall, FirewallController } from './backend/firewall';
 import { configureServerDiagnostics, ServerDiagnosticsController } from './backend/serverDiagnostics';
 import { configureLogAnalyzer } from './backend/logAnalyzer';
+import { configureModIndex } from './backend/modIndex';
+import { configureHardwareHealth } from './backend/hardwareHealth';
+import {
+  isWindowsPeExecutable,
+  detectLinuxWindowsRuntimes,
+  buildWindowsExeLaunchPlan
+} from './backend/windowsRuntime';
 import {
   isJavaMinecraftSpec,
   isBedrockSpec,
@@ -448,6 +455,8 @@ interface ServerProcessInfo {
   startTime: number;
   port: number;
   ramGb: number;
+  windowsRuntime?: 'wine' | 'podman' | 'docker';
+  stopCommand?: { command: string; args: string[] };
 }
 
 const activeProcesses = new Map<string, ServerProcessInfo>();
@@ -1828,10 +1837,10 @@ async function installSteamGameServer(
     appendLog(serverId, 'INFO', `[STEAMCMD] Verwende Valve SteamCMD: ${steamCmdBin}`);
     setInstallProgress(serverId, 25, 'steamcmd', `SteamCMD initialisiert. Starte Download für ${gameName} (AppID ${effectiveAppId})...`);
 
-    const runSteamCmdOnce = async (forceLinuxPlatform: boolean): Promise<{ ok: boolean; code: number | null; invalidPlatform: boolean; noSubscription: boolean }> => {
+    const runSteamCmdOnce = async (platformOverride: 'linux' | 'windows' | null): Promise<{ ok: boolean; code: number | null; invalidPlatform: boolean; noSubscription: boolean }> => {
       return new Promise((resolve) => {
         const steamArgs = [
-          ...(forceLinuxPlatform ? ['+@sSteamCmdForcePlatformType', isWin ? 'windows' : 'linux'] : []),
+          ...(platformOverride ? ['+@sSteamCmdForcePlatformType', platformOverride] : []),
           '+force_install_dir', srvDir,
           '+login', 'anonymous',
           '+app_update', String(effectiveAppId), 'validate',
@@ -1896,11 +1905,33 @@ async function installSteamGameServer(
       });
     };
 
-    let attempt = await runSteamCmdOnce(true);
+    const primaryPlatform: 'linux' | 'windows' = isWin ? 'windows' : 'linux';
+    let attempt = await runSteamCmdOnce(primaryPlatform);
     // Exit code 7 or 8 is SteamCMD's normal self-update exit code; retry once cleanly!
     if (!attempt.ok && !attempt.invalidPlatform && !attempt.noSubscription && (attempt.code === 7 || attempt.code === 8)) {
       appendLog(serverId, 'INFO', `[STEAMCMD] SteamCMD-Selbstupdate abgeschlossen (Code ${attempt.code}) — starte Download erneut...`);
-      attempt = await runSteamCmdOnce(true);
+      attempt = await runSteamCmdOnce(primaryPlatform);
+    }
+
+    // Windows-only Steam dedicated server on Linux (e.g. V Rising, Enshrouded, Sons of the Forest, Space Engineers):
+    // If Linux depot fails with Invalid platform (or downloaded no binary) and Wine/Podman/Docker is available,
+    // automatically pull the Windows depot via +@sSteamCmdForcePlatformType windows!
+    if (!isWin && (!attempt.ok && attempt.invalidPlatform)) {
+      const winRuntimes = detectLinuxWindowsRuntimes();
+      if (winRuntimes.preferredRuntime !== 'none') {
+        appendLog(
+          serverId,
+          'INFO',
+          `[STEAMCMD] AppID ${effectiveAppId} ist ein Windows-Dedicated-Server — nutze ${winRuntimes.summary} und lade Windows-Depot (+@sSteamCmdForcePlatformType windows)...`
+        );
+        attempt = await runSteamCmdOnce('windows');
+      } else {
+        appendLog(
+          serverId,
+          'WARN',
+          `[STEAMCMD] AppID ${effectiveAppId} hat kein natives Linux-Depot und auf dem Host ist weder Wine noch Podman/Docker installiert.`
+        );
+      }
     }
 
     if (attempt.ok) {
@@ -1912,7 +1943,7 @@ async function installSteamGameServer(
           const entries = fs.readdirSync(dir, { withFileTypes: true });
           for (const entry of entries) {
             const full = path.join(dir, entry.name);
-            if (entry.isDirectory() && !['steamapps', 'logs', 'backups'].includes(entry.name)) {
+            if (entry.isDirectory() && !['steamapps', 'logs', 'backups', '.wineprefix'].includes(entry.name)) {
               makeExecutable(full, depth + 1);
             } else if (
               entry.name.endsWith('.sh') ||
@@ -1934,6 +1965,17 @@ async function installSteamGameServer(
       const detectedExec = findGameExecutable(srvDir, targetExecutable);
       if (detectedExec) {
         const relExec = path.relative(srvDir, detectedExec);
+        const isWinPeOnLinux = !isWin && isWindowsPeExecutable(detectedExec);
+        if (isWinPeOnLinux) {
+          const rt = detectLinuxWindowsRuntimes();
+          appendLog(
+            serverId,
+            rt.preferredRuntime !== 'none' ? 'INFO' : 'WARN',
+            rt.preferredRuntime !== 'none'
+              ? `[WIN-COMPAT] Windows-Binary "${relExec}" erkannt — wird beim Start automatisch via ${rt.summary} ausgeführt.`
+              : `[WIN-COMPAT] Windows-Binary "${relExec}" erkannt, aber weder Wine (+Xvfb) noch Podman/Docker ist installiert! Bitte installieren: sudo apt-get install -y wine xvfb (oder podman).`
+          );
+        }
         const currentServers = getServerRegistry();
         const srvIdx = currentServers.findIndex(s => s.id === serverId);
         if (srvIdx >= 0) {
@@ -2101,6 +2143,12 @@ function findGameExecutable(srvDir: string, preferredExec?: string): string | nu
       if (clean.endsWith('.sh')) candidates.unshift(clean.replace(/\.sh$/, '.exe'));
       if (clean.endsWith('.x86_64')) candidates.unshift(clean.replace(/\.x86_64$/, '.exe'));
       if (!clean.endsWith('.exe') && !clean.endsWith('.bat') && !clean.endsWith('.cmd')) candidates.push(clean + '.exe');
+    } else {
+      // On Linux, if a native .sh sibling exists alongside a requested .exe, prefer the native binary first
+      if (clean.endsWith('.exe')) {
+        candidates.unshift(clean.replace(/\.exe$/, '.sh'));
+        candidates.unshift(clean.replace(/\.exe$/, '.x86_64'));
+      }
     }
     for (const cand of candidates) {
       const directPath = path.join(srvDir, cand);
@@ -2108,27 +2156,7 @@ function findGameExecutable(srvDir: string, preferredExec?: string): string | nu
     }
   }
 
-  const commonExecs = [
-    // Windows executables
-    'PalServer.exe',
-    'Pal/Binaries/Win64/PalServer-Win64-Shipping.exe',
-    'Pal/Binaries/Win64/PalServer-Win64-Test.exe',
-    'RustDedicated.exe',
-    'valheim_server.exe',
-    'srcds.exe',
-    'cs2.exe',
-    'ArkAscendedServer.exe',
-    'enshrouded_server.exe',
-    '7DaysToDieServer.exe',
-    'DayZServer_x64.exe',
-    'SonsOfTheForestDS.exe',
-    'start-server.bat',
-    'TheForestDedicatedServer.exe',
-    'VRisingServer.exe',
-    'ConanSandboxServer.exe',
-    'FactoryServer.exe',
-    'ShooterGame/Binaries/Win64/ShooterGameServer.exe',
-    // Linux native SteamCMD & Dedicated executables
+  const linuxCommonExecs = [
     'PalServer.sh',
     'Pal/Binaries/Linux/PalServer-Linux-Shipping',
     'Pal/Binaries/Linux/PalServer-Linux-Test',
@@ -2166,21 +2194,50 @@ function findGameExecutable(srvDir: string, preferredExec?: string): string | nu
     'bedrock_server'
   ];
 
+  const windowsCommonExecs = [
+    'VRisingServer.exe',
+    'enshrouded_server.exe',
+    'SonsOfTheForestDS.exe',
+    'TheForestDedicatedServer.exe',
+    'ArkAscendedServer.exe',
+    'ShooterGame/Binaries/Win64/ArkAscendedServer.exe',
+    'ShooterGame/Binaries/Win64/ShooterGameServer.exe',
+    'ConanSandboxServer.exe',
+    'SpaceEngineersDedicated.exe',
+    'DedicatedServer64/SpaceEngineersDedicated.exe',
+    'PalServer.exe',
+    'Pal/Binaries/Win64/PalServer-Win64-Shipping.exe',
+    'Pal/Binaries/Win64/PalServer-Win64-Test.exe',
+    'RustDedicated.exe',
+    'valheim_server.exe',
+    'srcds.exe',
+    'cs2.exe',
+    '7DaysToDieServer.exe',
+    'DayZServer_x64.exe',
+    'start-server.bat',
+    'FactoryServer.exe'
+  ];
+
+  // On Linux, ALWAYS prefer native Linux executables first; fall back to Windows .exe (executed via Wine/Podman/Docker)
+  const commonExecs = isWin
+    ? [...windowsCommonExecs, ...linuxCommonExecs]
+    : [...linuxCommonExecs, ...windowsCommonExecs];
+
   for (const execName of commonExecs) {
     const full = path.join(srvDir, execName);
     if (fs.existsSync(full) && fs.statSync(full).isFile()) return full;
   }
 
-  // Recursive search for nested SteamCMD binaries (e.g. Pal/Binaries/Linux/..., ShooterGame/Binaries/...)
+  // Recursive search for nested SteamCMD binaries (e.g. Pal/Binaries/Linux/..., DedicatedServer64/...)
   const nestedFound = searchExecutableRecursive(srvDir, preferredExec ? [preferredExec, ...commonExecs] : commonExecs);
   if (nestedFound) return nestedFound;
 
-  // Fallback: search for any .exe, .bat, .cmd (Windows) or .sh, .x86_64 (Linux)
+  // Fallback: search for any native script/binary first, then .exe (which will run via Wine/Docker/Podman on Linux)
   try {
     const entries = fs.readdirSync(srvDir);
-    const match = entries.find(e => {
+    const nativeMatch = entries.find(e => {
       const lower = e.toLowerCase();
-      if (lower.includes('install') || lower.includes('steamcmd')) return false;
+      if (lower.includes('install') || lower.includes('steamcmd') || lower.includes('crashhandler') || lower.includes('unins')) return false;
       const fullPath = path.join(srvDir, e);
       if (!fs.statSync(fullPath).isFile()) return false;
       if (isWin) {
@@ -2188,7 +2245,17 @@ function findGameExecutable(srvDir: string, preferredExec?: string): string | nu
       }
       return (lower.endsWith('.sh') || lower.endsWith('.x86_64') || lower === 'bedrock_server');
     });
-    if (match) return path.join(srvDir, match);
+    if (nativeMatch) return path.join(srvDir, nativeMatch);
+
+    if (!isWin) {
+      const winExeMatch = entries.find(e => {
+        const lower = e.toLowerCase();
+        if (lower.includes('install') || lower.includes('steamcmd') || lower.includes('crashhandler') || lower.includes('unins') || lower.includes('vc_redist') || lower.includes('directx')) return false;
+        const fullPath = path.join(srvDir, e);
+        return fs.statSync(fullPath).isFile() && lower.endsWith('.exe');
+      });
+      if (winExeMatch) return path.join(srvDir, winExeMatch);
+    }
   } catch {}
 
   return null;
@@ -2756,12 +2823,53 @@ app.post('/api/servers/:id/power', async (req, res) => {
 
       try {
         const isWin = process.platform === 'win32';
-        const useBashWrapper = !isWin && isShebangScript(execPath);
-        const spawnCommand = useBashWrapper ? 'bash' : execPath;
-        const spawnArgs = useBashWrapper ? [execPath, ...parsedArgs] : parsedArgs;
-        const spawnEnv = buildSteamSpawnEnv(srvDir, steamCmdBin, effectiveAppId);
+        let spawnEnv = buildSteamSpawnEnv(srvDir, steamCmdBin, effectiveAppId);
+        let spawnCommand = execPath;
+        let spawnArgs = parsedArgs;
+        let windowsCompatRuntime: 'wine' | 'podman' | 'docker' | undefined;
+        let stopContainerCommand: { command: string; args: string[] } | undefined;
 
-        appendLog(serverId, 'INFO', `Führe aus: ${path.basename(execPath)} ${parsedArgs.join(' ')}`.trim());
+        if (!isWin && isWindowsPeExecutable(execPath)) {
+          // NEVER execute a Windows PE (.exe) binary directly under Linux (causes `MZ: not found` / Exit Code 2)!
+          // Route cleanly through Wine (+Xvfb) or Podman/Docker container.
+          const winPlan = buildWindowsExeLaunchPlan({
+            execPath,
+            srvDir,
+            parsedArgs,
+            serverId,
+            env: spawnEnv,
+            runtimePreference: (currentSrv as any)?.windowsRuntime || 'auto'
+          });
+
+          if (!winPlan.canLaunch) {
+            appendLog(serverId, 'ERROR', `[FEHLER] [${winPlan.errorCode}] ${winPlan.errorMessage}`);
+            if (winPlan.installHint) {
+              appendLog(serverId, 'WARN', `[WIN-COMPAT] ${winPlan.installHint}`);
+            }
+            return res.status(400).json({
+              success: false,
+              code: winPlan.errorCode,
+              error: `${winPlan.errorMessage} ${winPlan.installHint || ''}`.trim()
+            });
+          }
+
+          spawnCommand = winPlan.command;
+          spawnArgs = winPlan.args;
+          spawnEnv = winPlan.env;
+          windowsCompatRuntime = winPlan.runtime !== 'none' ? winPlan.runtime : undefined;
+          stopContainerCommand = winPlan.stopCommand;
+          appendLog(
+            serverId,
+            'INFO',
+            `[WIN-COMPAT] Windows-Binary "${path.basename(execPath)}" erkannt — starte über ${winPlan.runtimeLabel}.`
+          );
+        } else {
+          const useBashWrapper = !isWin && isShebangScript(execPath);
+          spawnCommand = useBashWrapper ? 'bash' : execPath;
+          spawnArgs = useBashWrapper ? [execPath, ...parsedArgs] : parsedArgs;
+        }
+
+        appendLog(serverId, 'INFO', `Führe aus: ${path.basename(spawnCommand)} ${spawnArgs.join(' ')}`.trim());
         const child = spawn(spawnCommand, spawnArgs, {
           cwd: srvDir,
           env: spawnEnv,
@@ -2777,10 +2885,12 @@ app.post('/api/servers/:id/power', async (req, res) => {
           pid: child.pid,
           startTime: Date.now(),
           port,
-          ramGb
+          ramGb,
+          windowsRuntime: windowsCompatRuntime,
+          stopCommand: stopContainerCommand
         });
 
-        appendLog(serverId, 'SUCCESS', `Server-Prozess gestartet (PID: ${child.pid}).`);
+        appendLog(serverId, 'SUCCESS', `Server-Prozess gestartet (PID: ${child.pid}${windowsCompatRuntime ? `, Runtime: ${windowsCompatRuntime}` : ''}).`);
 
         child.stdout.on('data', (data) => {
           const text = data.toString();
@@ -2810,10 +2920,10 @@ app.post('/api/servers/:id/power', async (req, res) => {
           }
         });
 
-        recordAuditLog({ serverId, action: 'start', user: reqUser?.username || 'System', details: `Dedicated Server gestartet (Port: ${port}, PID: ${child.pid})`, severity: 'success' });
+        recordAuditLog({ serverId, action: 'start', user: reqUser?.username || 'System', details: `Dedicated Server gestartet (Port: ${port}, PID: ${child.pid}${windowsCompatRuntime ? `, Runtime: ${windowsCompatRuntime}` : ''})`, severity: 'success' });
         dispatchWebhookEvent(serverId, 'onStart', 'Server Online', `Dedicated Gameserver wurde auf Port ${port} gestartet.`, 0x10b981);
 
-        return res.json({ success: true, message: 'Server gestartet', pid: child.pid });
+        return res.json({ success: true, message: 'Server gestartet', pid: child.pid, windowsRuntime: windowsCompatRuntime });
       } catch (err: any) {
         appendLog(serverId, 'ERROR', `Fehler beim Spawnen des Gameservers: ${err.message}`);
         return res.status(500).json({ success: false, error: err.message });
@@ -2832,8 +2942,17 @@ app.post('/api/servers/:id/power', async (req, res) => {
     recordAuditLog({ serverId, action: action === 'kill' ? 'kill' : 'stop', user: reqUser?.username || 'System', details: `Server-Prozess (${action}) angefordert`, severity: action === 'kill' ? 'warning' : 'info' });
     dispatchWebhookEvent(serverId, 'onStop', 'Server gestoppt', `Der Server wird heruntergefahren (${action}).`, 0xf59e0b);
 
+    const stopContainerIfAny = () => {
+      if (procInfo.stopCommand) {
+        try {
+          spawn(procInfo.stopCommand.command, procInfo.stopCommand.args, { stdio: 'ignore' });
+        } catch {}
+      }
+    };
+
     try {
       if (action === 'kill') {
+        stopContainerIfAny();
         if (process.platform === 'win32') {
           try { exec(`taskkill /pid ${procInfo.pid} /T /F`); } catch {}
         } else {
@@ -2846,6 +2965,7 @@ app.post('/api/servers/:id/power', async (req, res) => {
       if (procInfo.process.stdin && procInfo.process.stdin.writable) {
         procInfo.process.stdin.write('stop\n');
       }
+      stopContainerIfAny();
       setTimeout(() => {
         if (activeProcesses.has(serverId)) {
           if (process.platform === 'win32') {
@@ -2857,6 +2977,7 @@ app.post('/api/servers/:id/power', async (req, res) => {
       }, 3000);
       return res.json({ success: true, message: 'Stopp-Signal gesendet.' });
     } catch (e: any) {
+      stopContainerIfAny();
       if (process.platform === 'win32') {
         try { exec(`taskkill /pid ${procInfo.pid} /T /F`); } catch {}
       } else {
@@ -2871,6 +2992,9 @@ app.post('/api/servers/:id/power', async (req, res) => {
     recordAuditLog({ serverId, action: 'restart', user: reqUser?.username || 'System', details: 'Server-Neustart angefordert', severity: 'info' });
     const procInfo = activeProcesses.get(serverId);
     if (procInfo) {
+      if (procInfo.stopCommand) {
+        try { spawn(procInfo.stopCommand.command, procInfo.stopCommand.args, { stdio: 'ignore' }); } catch {}
+      }
       if (process.platform === 'win32') {
         try { exec(`taskkill /pid ${procInfo.pid} /T /F`); } catch {}
       } else {
@@ -5155,6 +5279,35 @@ const logAnalyzer = configureLogAnalyzer(app, {
   recordAuditLog
 });
 void logAnalyzer;
+
+// Mount Server-Side Mod Indexing Engine (Tags, Loaders & Minecraft Version Compatibility)
+const modIndex = configureModIndex(app, {
+  managerStateDir: MANAGER_STATE_DIR,
+  recordAuditLog
+});
+void modIndex;
+
+// Mount Hardware-Health Telemetry & Automatic Threshold Notification Engine (Disk-IO, Inodes, Temperature)
+const hardwareHealth = configureHardwareHealth(app, {
+  auth,
+  permissions,
+  dataDir: DATA_DIR,
+  managerStateDir: MANAGER_STATE_DIR,
+  getServerRegistry,
+  canUserAccessServer: canAccessServerWithRbac,
+  appendLog,
+  recordAuditLog,
+  dispatchWebhookEvent
+});
+void hardwareHealth;
+
+// Expose detected Linux Windows-Binary compatibility runtimes (Wine + Xvfb, Podman, Docker)
+app.get('/api/system/windows-runtime', (_req, res) => {
+  return res.json({
+    success: true,
+    ...detectLinuxWindowsRuntimes()
+  });
+});
 
 // Mount Vite middleware in development or serve static in production
 async function startServer() {

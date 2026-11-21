@@ -30,7 +30,8 @@ import {
   LineChart,
   KeyRound,
   CalendarClock,
-  Stethoscope
+  Stethoscope,
+  Thermometer
 } from 'lucide-react';
 import { ServerInstance, LogMessage, ModItem, JavaVersion } from '../types/game';
 import { UserAccount } from '../types/auth';
@@ -56,6 +57,7 @@ import { WebhooksView } from './WebhooksView';
 import { JavaRuntimeModal } from './JavaRuntimeModal';
 import { ServerDiagnosticsTool } from './ServerDiagnosticsTool';
 import { ConsoleLogAnalyzerBar } from './ConsoleLogAnalyzerBar';
+import { HardwareHealthView } from './HardwareHealthView';
 
 interface ServerDetailProps {
   server: ServerInstance;
@@ -111,8 +113,9 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   const canAdminSystem = !currentUser || hasPermission(currentUser, 'admin.system');
 
   const [activeTab, setActiveTab] = useState<
-    'console' | 'metrics' | 'performance' | 'network_overview' | 'diagnostics' | 'files' | 'sftp' | 'scheduler' | 'mods' | 'config' | 'network' | 'players' | 'backups' | 'updates' | 'audit' | 'webhooks' | 'crossplatform'
+    'console' | 'metrics' | 'performance' | 'hardware_health' | 'network_overview' | 'diagnostics' | 'files' | 'sftp' | 'scheduler' | 'mods' | 'config' | 'network' | 'players' | 'backups' | 'updates' | 'audit' | 'webhooks' | 'crossplatform'
   >('console');
+  const [hardwareAlertCount, setHardwareAlertCount] = useState<number>(0);
   const [isJavaModalOpen, setIsJavaModalOpen] = useState(false);
   const [isRetryingInstall, setIsRetryingInstall] = useState(false);
   const [isCreatingBackup, setIsCreatingBackup] = useState(false);
@@ -174,6 +177,40 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
       if (timer) clearInterval(timer);
     };
   }, [server.id, isRunning]);
+
+  // Background Hardware-Health threshold check so critical alerts notify the user on any tab
+  useEffect(() => {
+    let mounted = true;
+    const seenIds = new Set<string>();
+    let firstPoll = true;
+
+    const pollHardwareAlerts = async () => {
+      try {
+        const res = await fetch(`/api/servers/${encodeURIComponent(server.id)}/hardware-health`);
+        if (!res.ok || !mounted) return;
+        const data = await res.json();
+        if (!data?.success || !mounted) return;
+        setHardwareAlertCount(Number(data.unacknowledgedCount) || 0);
+        const alerts = Array.isArray(data.notifications) ? data.notifications : [];
+        for (const alert of alerts) {
+          if (alert.acknowledged || seenIds.has(alert.id)) continue;
+          seenIds.add(alert.id);
+          if ((!firstPoll || alert.severity === 'critical') && onNotify && activeTab !== 'hardware_health') {
+            const sev = alert.severity === 'critical' ? 'KRITISCH' : 'WARNUNG';
+            onNotify(`[Hardware-Health · ${sev}] ${alert.message}`);
+          }
+        }
+        firstPoll = false;
+      } catch {}
+    };
+
+    pollHardwareAlerts();
+    const timer = setInterval(pollHardwareAlerts, 20000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, [server.id, onNotify, activeTab]);
 
   const handleCreateBackup = async () => {
     setIsCreatingBackup(true);
@@ -653,6 +690,23 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           <span>Leistungs-Monitor</span>
         </button>
 
+        <button
+          onClick={() => setActiveTab('hardware_health')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+            activeTab === 'hardware_health'
+              ? 'bg-neutral-800 text-emerald-400 font-semibold'
+              : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
+          }`}
+        >
+          <Thermometer className="w-3.5 h-3.5 text-amber-400" />
+          <span>Hardware-Health</span>
+          {hardwareAlertCount > 0 && (
+            <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40">
+              {hardwareAlertCount}
+            </span>
+          )}
+        </button>
+
         {canSecurity && (
           <button
             onClick={() => setActiveTab('network_overview')}
@@ -875,6 +929,14 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         <PerformanceMonitorView
           server={server}
           onNotify={onNotify}
+        />
+      )}
+
+      {activeTab === 'hardware_health' && (
+        <HardwareHealthView
+          server={server}
+          onNotify={onNotify}
+          onAlertCountChange={setHardwareAlertCount}
         />
       )}
 

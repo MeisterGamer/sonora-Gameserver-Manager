@@ -31,6 +31,7 @@ SFTP_PORT="${SFTP_PORT:-2022}"
 SSH_PORT="${SSH_PORT:-22}"
 SKIP_FIREWALL=false
 SKIP_DDOS=false
+SKIP_WINE=false
 
 for arg in "$@"; do
   case "$arg" in
@@ -38,6 +39,7 @@ for arg in "$@"; do
     --update) FORCE_UPDATE=true ;;
     --no-firewall) SKIP_FIREWALL=true ;;
     --no-ddos) SKIP_DDOS=true ;;
+    --no-wine) SKIP_WINE=true ;;
     --panel-port=*) PANEL_PORT="${arg#*=}" ;;
     --sftp-port=*) SFTP_PORT="${arg#*=}" ;;
     --ssh-port=*) SSH_PORT="${arg#*=}" ;;
@@ -64,6 +66,7 @@ Optionen:
   --ssh-port=<PORT>      SSH-Port für UFW Rate-Limit & Fail2ban (Standard: 22)
   --no-firewall          Überspringt UFW-Firewall-Einrichtung
   --no-ddos              Überspringt Kernel-Sysctl, iptables DDoS-Chain & Fail2ban
+  --no-wine              Überspringt Wine/Xvfb & Podman Installation für Windows-.exe Gameserver
 HELP_EOF
       exit 0
       ;;
@@ -384,6 +387,15 @@ if [ -n "$EXPECTED_EXEC" ]; then
     exit 13
   fi
   chmod +x "${SRV_DIR}/${CLEAN_EXEC}" 2>/dev/null || true
+
+  # Windows PE (.exe / MZ-Header) Prüfung unter Linux: erfordert Wine (+Xvfb), Podman oder Docker
+  EXEC_MAGIC="$(head -c 2 "${SRV_DIR}/${CLEAN_EXEC}" 2>/dev/null || true)"
+  if [ "$EXEC_MAGIC" = "MZ" ] || [[ "${CLEAN_EXEC,,}" == *.exe ]]; then
+    if ! command -v wine64 >/dev/null 2>&1 && ! command -v wine >/dev/null 2>&1 && ! command -v podman >/dev/null 2>&1 && ! command -v docker >/dev/null 2>&1; then
+      echo "[PRE-START FEHLER] Windows-Executable (${CLEAN_EXEC}) erfordert Wine (+Xvfb) oder Podman/Docker unter Linux!" >&2
+      exit 14
+    fi
+  fi
 fi
 
 exit 0
@@ -401,7 +413,26 @@ WRAPPER_EOF
 elif [ -f /usr/games/steamcmd ]; then
   ln -sf /usr/games/steamcmd /usr/bin/steamcmd
 fi
-echo -e "${GREEN}✓ SteamCMD, Pre-Start-Verifikation & steamclient.so Laufzeit-Symlinks einsatzbereit.${NC}"
+
+# Windows-.exe Kompatibilitäts-Runtime für Windows-only Steam-Server (z. B. V Rising, Enshrouded, Sons of the Forest)
+# Installiert Wine (+ Xvfb für Headless-Unity/Unreal-Server) und Podman als konfliktfreien Container-Fallback auf Debian 11/12/13.
+if [ "$SKIP_WINE" = false ]; then
+  echo -e "${YELLOW}Richte Windows-.exe Laufzeit ein (Wine + Xvfb sowie Podman-Container-Fallback)...${NC}"
+  apt_install_preferred wine64 wine || apt_install_preferred wine || true
+  apt_install_preferred wine32 || true
+  apt_install_preferred xvfb || true
+  apt_install_preferred xauth || true
+  apt_install_preferred winbind || true
+  apt_install_preferred podman || true
+  if command -v wine64 &>/dev/null || command -v wine &>/dev/null; then
+    echo -e "${GREEN}✓ Wine ($(command -v wine64 || command -v wine))$(command -v xvfb-run &>/dev/null && echo ' + Xvfb Headless') erfolgreich eingerichtet.${NC}"
+  elif command -v podman &>/dev/null || command -v docker &>/dev/null; then
+    echo -e "${GREEN}✓ Container-Runtime ($(command -v podman || command -v docker)) für Windows-.exe Server eingerichtet.${NC}"
+  else
+    echo -e "${YELLOW}[WARN] Weder Wine noch Podman konnte aus den lokalen APT-Quellen installiert werden. Später nachinstallierbar via: apt-get install -y wine xvfb podman${NC}"
+  fi
+fi
+echo -e "${GREEN}✓ SteamCMD, Pre-Start-Verifikation, Wine/Podman-Support & steamclient.so Laufzeit-Symlinks einsatzbereit.${NC}"
 
 # 6. Node.js (v22 LTS mit lokalem APT-Fallback) & npm prüfen / installieren
 echo -e "${BLUE}[6/11] Prüfe Node.js & npm...${NC}"

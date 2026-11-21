@@ -19,6 +19,11 @@ import {
   verifySteamCmdInstallation,
   verifySteamAppDataDownloaded
 } from './installerHelpers';
+import {
+  detectLinuxWindowsRuntimes,
+  isWindowsPeExecutable
+} from './windowsRuntime';
+import { execSync } from 'node:child_process';
 
 export interface LogAnalyzerDeps {
   auth: AuthController;
@@ -274,6 +279,57 @@ export function configureLogAnalyzer(app: Express, deps: LogAnalyzerDeps) {
 
         deps.appendLog(server.id, 'SUCCESS', `[LOG-QUICK-FIX:${fixId}:OK] Steam-Bibliothekspfade & Symlinks auf Dateisystem repariert.`);
         return { fixId, status: 'fixed', message: 'Laufzeit-Bibliotheken (steamclient.so Symlinks & LD_LIBRARY_PATH) repariert.', filesystemChanges: changes };
+      }
+
+      if (fixId === 'windows_exe_on_linux') {
+        let runtimes = detectLinuxWindowsRuntimes();
+        const winePrefixDir = path.join(srvDir, '.wineprefix');
+        fs.mkdirSync(winePrefixDir, { recursive: true });
+        changes.push(`Wine-Prefix-Verzeichnis initialisiert (${path.relative(srvDir, winePrefixDir) || '.wineprefix'})`);
+
+        // If running as root on Debian/Ubuntu and neither Wine nor Podman/Docker is installed, try automatic APT setup
+        if (runtimes.preferredRuntime === 'none' && process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0) {
+          try {
+            execSync(
+              'DEBIAN_FRONTEND=noninteractive dpkg --add-architecture i386 2>/dev/null || true; apt-get update -y -q >/dev/null 2>&1 || true; apt-get install -y -q --no-install-recommends wine wine64 xvfb >/dev/null 2>&1 || apt-get install -y -q --no-install-recommends wine xvfb >/dev/null 2>&1 || apt-get install -y -q --no-install-recommends podman >/dev/null 2>&1',
+              { timeout: 120_000, stdio: 'ignore' }
+            );
+            runtimes = detectLinuxWindowsRuntimes();
+            if (runtimes.preferredRuntime !== 'none') {
+              changes.push(`Kompatibilitäts-Runtime automatisch installiert: ${runtimes.summary}`);
+            }
+          } catch {}
+        }
+
+        const execPath = deps.findGameExecutable(srvDir, server.linuxExecutable || server.executable);
+        if (execPath && isWindowsPeExecutable(execPath)) {
+          server.windowsRuntime = runtimes.preferredRuntime !== 'none' ? runtimes.preferredRuntime : 'auto';
+          deps.upsertServerInRegistry(server);
+          changes.push(`Windows-Runtime-Profil gesetzt: ${server.windowsRuntime} (${path.basename(execPath)})`);
+        }
+
+        if (runtimes.preferredRuntime !== 'none') {
+          deps.appendLog(
+            server.id,
+            'SUCCESS',
+            `[LOG-QUICK-FIX:${fixId}:OK] Windows-.exe Laufzeit bereit (${runtimes.summary}) — Server startet jetzt automatisch über ${runtimes.preferredRuntime}.`
+          );
+          return {
+            fixId,
+            status: 'fixed',
+            message: `Windows-Kompatibilitäts-Runtime aktiv (${runtimes.summary}). Server kann jetzt gestartet werden.`,
+            filesystemChanges: changes
+          };
+        }
+
+        const hint = 'sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine wine64 xvfb (oder: sudo apt-get install -y podman)';
+        deps.appendLog(server.id, 'WARN', `[WIN-COMPAT] Keine Wine/Podman/Docker-Runtime installiert. Bitte auf dem Host ausführen: ${hint}`);
+        return {
+          fixId,
+          status: 'failed',
+          message: `Weder Wine (+Xvfb) noch Podman/Docker auf dem Linux-Host gefunden. Bitte installieren: ${hint}`,
+          filesystemChanges: changes
+        };
       }
 
       if (fixId === 'missing_executable' || fixId === 'steam_app_incomplete') {

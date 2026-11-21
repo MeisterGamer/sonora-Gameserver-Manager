@@ -2,6 +2,7 @@ export type LogFixId =
   | 'jarfile_missing'
   | 'permission_denied'
   | 'missing_library'
+  | 'windows_exe_on_linux'
   | 'missing_executable'
   | 'steam_app_incomplete'
   | 'eula_not_accepted'
@@ -97,6 +98,25 @@ export const LOG_ERROR_RULES: LogPatternRule[] = [
       /unable to locate steamclient\.so/i,
       /steamclient\.so.*no such file/i,
       /lib32gcc|libstdc\+\+\.so.*not found/i
+    ]
+  },
+  {
+    fixId: 'windows_exe_on_linux',
+    title: 'Windows-Executable (.exe) unter Linux benötigt Wine oder Docker/Podman',
+    severity: 'critical',
+    category: 'runtime',
+    description:
+      'Eine Windows-PE-Datei (z. B. VRisingServer.exe, enshrouded_server.exe, SonsOfTheForestDS.exe) wurde unter Linux ohne Kompatibilitätsschicht gestartet (MZ-Header / Exec format error).',
+    filesystemAction:
+      'Prüft/installiert Wine + Xvfb oder Podman/Docker, initialisiert das isolierte .wineprefix-Verzeichnis im Serverordner und konfiguriert den Wine/Container-Start.',
+    fixLabel: 'Quick-Fix: Wine/Container-Runtime einrichten',
+    patterns: [
+      /\.exe:\s*\d+:\s*MZ/i,
+      /\.exe:\s*\d+:\s*Syntax error:\s*word unexpected/i,
+      /windows_exe_needs_wine_or_container/i,
+      /cannot execute binary file:\s*exec format error/i,
+      /\bexec format error\b/i,
+      /windows-binary\s+"[^"]+"\s+kann unter linux nicht direkt ausgeführt werden/i
     ]
   },
   {

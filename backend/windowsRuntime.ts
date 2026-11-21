@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 
@@ -230,12 +231,13 @@ export function buildWindowsExeLaunchPlan(params: BuildWindowsLaunchParams): Win
 
     const wineEnv: Record<string, string | undefined> = {
       ...params.env,
+      HOME: params.env.HOME || os.homedir() || params.srvDir,
+      XDG_RUNTIME_DIR: params.env.XDG_RUNTIME_DIR || '/tmp',
       WINEPREFIX: winePrefix,
       WINEARCH: 'win64',
       WINEDEBUG: process.env.WINEDEBUG || '-all',
       WINEDLLOVERRIDES: 'mscoree,mshtml=',
-      SDL_VIDEODRIVER: 'dummy',
-      DISPLAY: params.env.DISPLAY || ':99'
+      SDL_VIDEODRIVER: 'dummy'
     };
 
     const wineExecArgs = isBatchFile
@@ -243,17 +245,20 @@ export function buildWindowsExeLaunchPlan(params: BuildWindowsLaunchParams): Win
       : [params.execPath, ...params.parsedArgs];
 
     if (runtimes.hasXvfb && runtimes.xvfbRunBin) {
+      // Let xvfb-run --auto-servernum allocate a conflict-free DISPLAY cleanly (avoid stale :99 lock collisions)
+      delete wineEnv.DISPLAY;
       return {
         canLaunch: true,
         runtime: 'wine',
         runtimeLabel: `Wine (${path.basename(runtimes.wineBin)}) + Xvfb Headless`,
         command: runtimes.xvfbRunBin,
-        args: ['--auto-servernum', '--server-args=-screen 0 1024x768x24', runtimes.wineBin, ...wineExecArgs],
+        args: ['--auto-servernum', '-s', '-screen 0 1024x768x24', runtimes.wineBin, ...wineExecArgs],
         env: wineEnv,
         winePrefix
       };
     }
 
+    wineEnv.DISPLAY = params.env.DISPLAY || ':99';
     return {
       canLaunch: true,
       runtime: 'wine',
@@ -451,6 +456,74 @@ echo "[FEHLER] [WINDOWS_EXE_NEEDS_WINE_OR_CONTAINER] Windows-Binary \\"$TARGET_E
 echo "Bitte installiere Wine + Xvfb (sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine xvfb) oder Podman (sudo apt-get install -y podman)." >&2
 exit 1
 `;
+}
+
+/**
+ * Boot-time sanitizer for Linux hosts:
+ *  - Strips `+x` (chmod 0644) from Windows `.exe`/`.dll`/`.bat`/`.cmd` files inside existing server directories
+ *    so POSIX `execvp`/`/bin/sh` can NEVER accidentally interpret an MZ binary as a shell script.
+ *  - Automatically rewrites any broken `start.sh` / `run.sh` that directly invokes a `.exe` without Wine/Podman/Docker.
+ */
+export function sanitizeExistingWindowsExeServers(dataDir: string): {
+  strippedExeCount: number;
+  repairedScriptsCount: number;
+} {
+  let strippedExeCount = 0;
+  let repairedScriptsCount = 0;
+  if (process.platform === 'win32' || !dataDir || !fs.existsSync(dataDir)) {
+    return { strippedExeCount, repairedScriptsCount };
+  }
+
+  try {
+    const serverEntries = fs.readdirSync(dataDir, { withFileTypes: true });
+    for (const srvEntry of serverEntries) {
+      if (!srvEntry.isDirectory()) continue;
+      const srvDir = path.join(dataDir, srvEntry.name);
+
+      const walkStripExe = (dir: string, depth = 0) => {
+        if (depth > 3) return;
+        let items: fs.Dirent[] = [];
+        try {
+          items = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const item of items) {
+          if (item.isDirectory()) {
+            if (!['steamapps', 'logs', 'backups', '.wineprefix', 'node_modules'].includes(item.name)) {
+              walkStripExe(path.join(dir, item.name), depth + 1);
+            }
+          } else if (item.isFile() && /\.(exe|dll|bat|cmd)$/i.test(item.name)) {
+            const full = path.join(dir, item.name);
+            try {
+              const mode = fs.statSync(full).mode & 0o777;
+              if ((mode & 0o111) !== 0) {
+                fs.chmodSync(full, 0o644);
+                strippedExeCount++;
+              }
+            } catch {}
+          }
+        }
+      };
+
+      walkStripExe(srvDir);
+
+      for (const scriptName of ['start.sh', 'run.sh']) {
+        const scriptPath = path.join(srvDir, scriptName);
+        const unwrappedExe = extractUnwrappedWindowsExeFromShellScript(scriptPath, srvDir);
+        if (unwrappedExe) {
+          const relExe = path.relative(srvDir, unwrappedExe).replace(/\\/g, '/');
+          try {
+            fs.writeFileSync(scriptPath, generateLinuxWindowsWrapperScript(relExe), 'utf8');
+            fs.chmodSync(scriptPath, 0o755);
+            repairedScriptsCount++;
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  return { strippedExeCount, repairedScriptsCount };
 }
 
 export interface PreFlightCheckResult {

@@ -11,11 +11,11 @@ export default defineConfig(() => {
         '@': path.resolve(import.meta.dirname, '.'),
       },
     },
+    optimizeDeps: {
+      include: ['react-is'],
+    },
     build: {
       chunkSizeWarningLimit: 1000,
-      rollupOptions: {
-        external: ['react-is'],
-      },
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

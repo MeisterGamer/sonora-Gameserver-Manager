@@ -17,7 +17,8 @@ import {
   isWindowsExeEnvFlagSet,
   runWindowsExePreFlightCheck,
   resolveEffectiveWindowsExecutable,
-  generateLinuxWindowsWrapperScript
+  generateLinuxWindowsWrapperScript,
+  sanitizeExistingWindowsExeServers
 } from './backend/windowsRuntime';
 import {
   isJavaMinecraftSpec,
@@ -1917,16 +1918,17 @@ async function installSteamGameServer(
       attempt = await runSteamCmdOnce(primaryPlatform);
     }
 
-    // Windows-only Steam dedicated server on Linux (e.g. V Rising, Enshrouded, Sons of the Forest, Space Engineers):
-    // If Linux depot fails with Invalid platform (or downloaded no binary) and Wine/Podman/Docker is available,
-    // automatically pull the Windows depot via +@sSteamCmdForcePlatformType windows!
-    if (!isWin && (!attempt.ok && attempt.invalidPlatform)) {
+    // Windows-only Steam dedicated server on Linux (e.g. V Rising, Enshrouded, Sons of the Forest, Space Engineers, ASA, Conan Exiles):
+    // SteamCMD with `+force_platform_type linux` either fails with `Invalid platform` OR exits 0 with an empty Linux depot (no executable found).
+    // In BOTH cases, automatically pull the Windows depot via `+@sSteamCmdForcePlatformType windows` when Wine/Podman/Docker is available!
+    const linuxAttemptDownloadedExec = !isWin && attempt.ok && Boolean(findGameExecutable(srvDir, targetExecutable));
+    if (!isWin && ((!attempt.ok && attempt.invalidPlatform) || (attempt.ok && !linuxAttemptDownloadedExec))) {
       const winRuntimes = detectLinuxWindowsRuntimes();
       if (winRuntimes.preferredRuntime !== 'none') {
         appendLog(
           serverId,
           'INFO',
-          `[STEAMCMD] AppID ${effectiveAppId} ist ein Windows-Dedicated-Server — nutze ${winRuntimes.summary} und lade Windows-Depot (+@sSteamCmdForcePlatformType windows)...`
+          `[STEAMCMD] AppID ${effectiveAppId} hat kein natives Linux-Depot — nutze ${winRuntimes.summary} und lade Windows-Depot (+@sSteamCmdForcePlatformType windows)...`
         );
         attempt = await runSteamCmdOnce('windows');
       } else {
@@ -2001,6 +2003,14 @@ async function installSteamGameServer(
         if (srvIdx >= 0) {
           currentServers[srvIdx].linuxExecutable = relExec;
           currentServers[srvIdx].steamAppId = effectiveAppId;
+          if (isWinPeOnLinux) {
+            const detectedRt = detectLinuxWindowsRuntimes();
+            if (detectedRt.preferredRuntime !== 'none') {
+              currentServers[srvIdx].windowsRuntime = detectedRt.preferredRuntime;
+              currentServers[srvIdx].useWindowsContainer =
+                detectedRt.preferredRuntime === 'podman' || detectedRt.preferredRuntime === 'docker';
+            }
+          }
           if (!currentServers[srvIdx].linuxStartArgs && game?.defaultStartArgs?.linux) {
             currentServers[srvIdx].linuxStartArgs = game.defaultStartArgs.linux;
           }
@@ -2736,6 +2746,12 @@ app.post('/api/servers/:id/power', async (req, res) => {
           });
         });
 
+        child.on('error', (spawnErr) => {
+          activeProcesses.delete(serverId);
+          serverMetricsMap.delete(serverId);
+          appendLog(serverId, 'ERROR', `[FEHLER] Java-Prozess konnte nicht gestartet werden: ${spawnErr.message}`);
+        });
+
         child.on('exit', (code, signal) => {
           activeProcesses.delete(serverId);
           serverMetricsMap.delete(serverId);
@@ -2963,6 +2979,12 @@ app.post('/api/servers/:id/power', async (req, res) => {
           text.split('\n').forEach((line: string) => {
             if (line.trim()) appendLog(serverId, 'WARN', line.trim());
           });
+        });
+
+        child.on('error', (spawnErr) => {
+          activeProcesses.delete(serverId);
+          serverMetricsMap.delete(serverId);
+          appendLog(serverId, 'ERROR', `[FEHLER] Gameserver-Prozess konnte nicht gestartet werden (${path.basename(spawnCommand)}): ${spawnErr.message}`);
         });
 
         child.on('exit', (code, signal) => {
@@ -5440,6 +5462,16 @@ app.get('/api/servers/:id/preflight', (req, res) => {
 
 // Mount Vite middleware in development or serve static in production
 async function startServer() {
+  // Auto-sanitize existing Windows .exe servers on Linux boot (removes unsafe +x bits & fixes broken start.sh wrappers)
+  try {
+    const sanitized = sanitizeExistingWindowsExeServers(DATA_DIR);
+    if (sanitized.strippedExeCount > 0 || sanitized.repairedScriptsCount > 0) {
+      console.log(
+        `[Sonora WinCompat] Boot-Bereinigung abgeschlossen: ${sanitized.strippedExeCount} .exe-Rechte korrigiert (chmod 644), ${sanitized.repairedScriptsCount} Startskripte repariert.`
+      );
+    }
+  } catch {}
+
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (req, res) => {

@@ -14,12 +14,18 @@ import { ALL_STEAM_GAMES } from '../src/data/steamGames.ts';
 async function runTests() {
   console.log('=== Steam Dedicated Servers / Debian 13 install.sh / Vite Config Regression Suite ===');
 
-  // 1. Verify vite.config.ts build configuration (react-is external + chunkSizeWarningLimit: 1000)
+  // 1. Verify vite.config.ts build configuration (react-is bundled for browser + chunkSizeWarningLimit: 1000)
   {
     const viteCfgText = fs.readFileSync(path.resolve(process.cwd(), 'vite.config.ts'), 'utf8');
+    const pkgJson = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8'));
     assert.match(viteCfgText, /chunkSizeWarningLimit\s*:\s*1000/, 'vite.config.ts must configure chunkSizeWarningLimit: 1000');
-    assert.match(viteCfgText, /external\s*:\s*\[\s*['"]react-is['"]\s*\]/, "vite.config.ts must include 'react-is' in build.rollupOptions.external");
-    console.log('✓ Test 1 passed: vite.config.ts configures react-is external and chunkSizeWarningLimit: 1000');
+    assert.equal(
+      /external\s*:\s*\[[^\]]*['"]react-is['"]/.test(viteCfgText),
+      false,
+      "vite.config.ts must NOT mark 'react-is' as external (causes browser TypeError: Failed to resolve module specifier \"react-is\")"
+    );
+    assert.ok(pkgJson.dependencies?.['react-is'], "package.json must include 'react-is' in dependencies so Vite bundles it cleanly");
+    console.log('✓ Test 1 passed: vite.config.ts bundles react-is cleanly (not externalized) and keeps chunkSizeWarningLimit: 1000');
   }
 
   // 2. Verify install.sh prioritizes ufw over iptables-persistent and uses local apt repository fallbacks

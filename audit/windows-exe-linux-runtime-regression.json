@@ -12,12 +12,16 @@
     "extractUnwrappedWindowsExeFromShellScript detects broken start.sh directly invoking VRisingServer.exe",
     "resolveEffectiveWindowsExecutable marks broken start.sh wrapper as Windows PE target",
     "generateLinuxWindowsWrapperScript passes bash -n and routes through wine/podman/docker",
+    "sanitizeExistingWindowsExeServers strips +x from VRisingServer.exe (0644) and repairs broken start.sh",
+    "Wine + Xvfb launch plan avoids hardcoding stale DISPLAY=:99 and always sets HOME",
     "Real-time Log-Analyzer detects VRisingServer.exe MZ / Syntax error crash as windows_exe_on_linux",
     "server.ts routes Windows PE .exe executables (and broken .sh wrappers) through buildWindowsExeLaunchPlan with hard spawn guard",
     "serverDiagnostics.ts generates Wine/Podman/Docker-safe start.sh wrapper for .exe servers",
     "server.ts SteamCMD retries with +@sSteamCmdForcePlatformType windows when Linux depot is invalid and Wine/Podman/Docker exists",
-    "install.sh installs Wine + Xvfb + Podman and verifies MZ PE binaries in sonora-verify-steam.sh",
-    "install.sh passes bash -n syntax validation"
+    "install.sh installs Wine + Xvfb + Podman/Docker, Hardware-Health tools, and verifies MZ PE binaries in sonora-verify-steam.sh",
+    "install.sh never runs chmod -R 755 over data/servers .exe files and auto-repairs existing .exe servers with sonora-run-win-exe.sh",
+    "install.sh passes bash -n syntax validation",
+    "start-manager.sh passes bash -n, loads .env, and preserves /usr/lib/wine:/usr/games in PATH"
   ],
   "passed": true
 }

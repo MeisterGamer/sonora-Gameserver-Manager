@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Sonora Gameserver Manager — All-in-One Download & Setup Installer (Debian/Ubuntu)
+# Sonora Gameserver Manager — All-in-One Komplett-Installer (Debian 11/12/13 & Ubuntu LTS)
 # Repository: https://github.com/MeisterGamer/sonora-Gameserver-Manager
 #
 # Direkt-Installation (Einzeiler für frische Debian 11/12/13 & Ubuntu LTS Server):
@@ -10,9 +10,11 @@
 #   wget -O install.sh https://raw.githubusercontent.com/MeisterGamer/sonora-Gameserver-Manager/main/install.sh
 #   sudo bash install.sh --start
 #
-# 100% Komplettsystem: GitHub-Download & Einrichtung, Prozesssteuerung, Dateien,
-# Backups, Paper/Forge/Bedrock/Steam, Rechtesystem (RBAC), automatische Firewall
-# (UFW/iptables), Kernel- & Netzwerk-DDoS-Schutz (sysctl + iptables + fail2ban)
+# 100% Komplettsystem: GitHub-Download & Einrichtung, Node.js, Java 21-25,
+# Valve SteamCMD + 32-Bit Multiarch + Pre-Start-Verifikation, Wine + Xvfb +
+# Podman/Docker Windows-.exe Kompatibilitätsschicht, automatische Reparatur
+# bestehender .exe-Server (kein MZ: not found), Hardware-Health Sensoren,
+# Rechtesystem (RBAC), UFW-Firewall, DDoS-Schutz (sysctl + iptables + fail2ban)
 # & systemd-Autostart.
 # ==============================================================================
 
@@ -32,6 +34,7 @@ SSH_PORT="${SSH_PORT:-22}"
 SKIP_FIREWALL=false
 SKIP_DDOS=false
 SKIP_WINE=false
+WINE_CONTAINER_IMAGE="${SONORA_WINE_CONTAINER_IMAGE:-scottyhardy/docker-wine:latest}"
 
 for arg in "$@"; do
   case "$arg" in
@@ -48,7 +51,7 @@ for arg in "$@"; do
     --repo=*) REPO_URL="${arg#*=}" ;;
     -h|--help)
       cat <<HELP_EOF
-Sonora Gameserver Manager — Debian Download & Setup Installer
+Sonora Gameserver Manager — Debian All-in-One Komplett-Installer
 Repository: ${REPO_WEB_URL}
 
 Verwendung:
@@ -66,7 +69,7 @@ Optionen:
   --ssh-port=<PORT>      SSH-Port für UFW Rate-Limit & Fail2ban (Standard: 22)
   --no-firewall          Überspringt UFW-Firewall-Einrichtung
   --no-ddos              Überspringt Kernel-Sysctl, iptables DDoS-Chain & Fail2ban
-  --no-wine              Überspringt Wine/Xvfb & Podman Installation für Windows-.exe Gameserver
+  --no-wine              Überspringt Wine/Xvfb & Podman/Docker Installation für Windows-.exe Gameserver
 HELP_EOF
       exit 0
       ;;
@@ -84,19 +87,20 @@ NC='\033[0m'
 
 echo -e "${CYAN}${BOLD}"
 echo "╔══════════════════════════════════════════════════════════════════════════╗"
-echo "║        SONORA GAMESERVER MANAGER — DEBIAN DOWNLOAD & SETUP              ║"
-echo "║  GitHub Auto-Download • Firewall (UFW) • DDoS-Schutz • Autostart        ║"
+echo "║      SONORA GAMESERVER MANAGER — VOLLSTÄNDIGE DEBIAN-INSTALLATION       ║"
+echo "║  GitHub • SteamCMD • Wine/Podman • Hardware-Health • UFW • DDoS • Boot  ║"
 echo "╚══════════════════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
-echo -e "${GREEN}${BOLD}Installationsumfang (Debian 11/12/13 & Ubuntu LTS):${NC}"
+echo -e "${GREEN}${BOLD}Installationsumfang (Debian 11/12/13 & Ubuntu LTS — 100% vollständig):${NC}"
 echo -e "  ✓ Automatischer Download & Einrichtung von: ${REPO_WEB_URL}"
-echo -e "  ✓ Echte Prozesssteuerung (Minecraft Paper/Purpur/Fabric/Forge/Bedrock + 160+ Steam-Spiele)"
-echo -e "  ✓ Datei-Manager, ZIP/Unzip, Server-Diagnose-Tool (Quick-Fix) & SFTP-Zugang (Port ${SFTP_PORT})"
-echo -e "  ✓ Rechtesystem (Admin / Moderator / Kunde) & Kundenverwaltung (UserCP/CRM)"
-echo -e "  ✓ UFW-Firewall mit automatischer Port-Freigabe bei Server-Erstellung & Port-Löschung beim Entfernen"
-echo -e "  ✓ Mehrstufiger DDoS-Schutz: Kernel-Sysctl-Hardening, iptables Anti-Flood-Chain & Fail2ban"
-echo -e "  ✓ systemd-Hintergrunddienst mit automatischem Boot-Autostart & Watchdog-Neustart"
+echo -e "  ✓ Node.js 22 LTS, Java 21 LTS + portables JDK 25 & Vite Production-Build"
+echo -e "  ✓ Valve SteamCMD, 32-Bit Multiarch (Debian 13 t64) & Pre-Start-Verifikation"
+echo -e "  ✓ Windows-.exe Laufzeit: Wine + Xvfb + Podman/Docker-Fallback & Wrapper-Reparatur"
+echo -e "  ✓ Hardware-Health Sensoren (lm-sensors, sysstat, smartmontools) & Mod-Indizierung"
+echo -e "  ✓ Datei-Manager, ZIP/Unzip, Server-Diagnose-Tool, Log-Analyzer & SFTP (Port ${SFTP_PORT})"
+echo -e "  ✓ UFW-Firewall (automatische Port-Freigabe), Kernel-/iptables-DDoS-Schutz & Fail2ban"
+echo -e "  ✓ systemd-Hintergrunddienst mit Boot-Autostart & Watchdog-Neustart"
 echo ""
 
 # 1. Root-Rechte prüfen
@@ -105,16 +109,16 @@ if [ "$EUID" -ne 0 ]; then
   echo -e "Bitte starte das Skript erneut mit: ${BOLD}sudo bash install.sh --start${NC}"
   exit 1
 fi
-echo -e "${GREEN}[1/11] Root-Rechte bestätigt (OS: $(grep -E '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)).${NC}"
+echo -e "${GREEN}[1/12] Root-Rechte bestätigt (OS: $(grep -E '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -s)).${NC}"
 
-# 2. Debian/Ubuntu Paketlisten aktualisieren & Basistools + Firewall/DDoS-Pakete installieren
+# 2. Debian/Ubuntu Paketlisten aktualisieren & Basistools + Firewall/DDoS/Hardware-Health installieren
 # Debian 13 (Trixie) Fix: ufw deklariert "Breaks: iptables-persistent".
 # Wir priorisieren konsequent UFW statt iptables-persistent, um Paketkonflikte auf Debian 13
 # vollständig zu vermeiden. Die SONORA_DDOS-Regeln werden stattdessen konfliktfrei über den
 # eigenen systemd-Dienst sonora-ddos.service bootfest persistiert.
 # Zusätzlich nutzen apt_has_candidate / apt_install_preferred lokale APT-Repositories als Fallback,
 # wenn bestimmte Paketversionen (z. B. OpenJDK 21, NodeSource, Debian-13 t64-Pakete) fehlen.
-echo -e "${BLUE}[2/11] Aktualisiere Paketlisten und installiere Debian-Basiskomponenten, Git, Firewall (UFW) & DDoS-Tools...${NC}"
+echo -e "${BLUE}[2/12] Aktualisiere Paketlisten und installiere Basiskomponenten, UFW-Firewall, DDoS- & Hardware-Health-Tools...${NC}"
 export DEBIAN_FRONTEND=noninteractive
 
 apt_has_candidate() {
@@ -144,7 +148,7 @@ fi
 apt-get -f install -y -q >/dev/null 2>&1 || true
 apt-get update -y -q || true
 
-for base_pkg in curl wget git unzip tar ca-certificates gnupg lsb-release build-essential net-tools iproute2 sudo; do
+for base_pkg in curl wget git unzip tar ca-certificates gnupg lsb-release build-essential net-tools iproute2 sudo jq procps file screen tmux; do
   apt_install_preferred "$base_pkg" || true
 done
 
@@ -153,8 +157,13 @@ apt_install_preferred ufw || apt-get install -y -q ufw || true
 apt_install_preferred iptables || true
 apt_install_preferred fail2ban || true
 
+# Hardware-Health Telemetrie-Tools (Disk-IO, Inodes & CPU/NVMe-Temperatur)
+apt_install_preferred lm-sensors || true
+apt_install_preferred sysstat || true
+apt_install_preferred smartmontools || true
+
 # 3. Repository-Download & Quellverzeichnis ermitteln (In-Place vs. GitHub-Auto-Download)
-echo -e "${BLUE}[3/11] Prüfe Projektdateien / Lade Sonora Gameserver Manager von GitHub...${NC}"
+echo -e "${BLUE}[3/12] Prüfe Projektdateien / Lade Sonora Gameserver Manager von GitHub...${NC}"
 SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 SCRIPT_DIR=""
 if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
@@ -249,7 +258,7 @@ if [ ! -f "$SOURCE_DIR/.env" ]; then
 fi
 
 # 4. Java 21 LTS & portables JDK 25 prüfen / bereitstellen
-echo -e "${BLUE}[4/11] Prüfe Java-Laufzeitumgebung (Java 21 LTS bis 25)...${NC}"
+echo -e "${BLUE}[4/12] Prüfe Java-Laufzeitumgebung (Java 21 LTS bis 25)...${NC}"
 NEED_JAVA=true
 if command -v java &>/dev/null; then
   JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}')
@@ -272,10 +281,10 @@ mkdir -p "$RUNTIME_ROOT/jdks"
 (cd "$SOURCE_DIR" && node -e 'import("./backend/java.ts").then(m=>m.ensureJdk(process.cwd()+"/.runtime/jdks",25)).catch(()=>{})') 2>/dev/null || true
 
 # 5. Valve SteamCMD & 32-Bit Multiarch-Bibliotheken einrichten (Debian 11/12/13 t64 & i386)
-echo -e "${BLUE}[5/11] Prüfe Valve SteamCMD & 32-Bit Laufzeitbibliotheken...${NC}"
+echo -e "${BLUE}[5/12] Prüfe Valve SteamCMD & 32-Bit Laufzeitbibliotheken...${NC}"
 dpkg --add-architecture i386 2>/dev/null || true
 if [ -f /etc/apt/sources.list ] && grep -qi "debian" /etc/os-release 2>/dev/null; then
-  # Debian benötigt i386-Bibliotheken für SteamCMD
+  # Debian benötigt i386-Bibliotheken für SteamCMD & Wine
   apt-get update -y -q 2>/dev/null || true
 else
   add-apt-repository -y multiverse 2>/dev/null || true
@@ -386,15 +395,20 @@ if [ -n "$EXPECTED_EXEC" ]; then
     echo "[PRE-START FEHLER] Erwartete Server-Executable fehlt oder ist leer: ${SRV_DIR}/${CLEAN_EXEC}" >&2
     exit 13
   fi
-  chmod +x "${SRV_DIR}/${CLEAN_EXEC}" 2>/dev/null || true
 
-  # Windows PE (.exe / MZ-Header) Prüfung unter Linux: erfordert Wine (+Xvfb), Podman oder Docker
+  # Windows PE (.exe / MZ-Header) Prüfung unter Linux:
+  # NIEMALS chmod +x auf .exe setzen (verhindert /bin/sh Fallback `MZ: not found`), stattdessen chmod 644 & Pre-Flight-Check!
   EXEC_MAGIC="$(head -c 2 "${SRV_DIR}/${CLEAN_EXEC}" 2>/dev/null || true)"
   if [ "$EXEC_MAGIC" = "MZ" ] || [[ "${CLEAN_EXEC,,}" == *.exe ]]; then
-    if ! command -v wine64 >/dev/null 2>&1 && ! command -v wine >/dev/null 2>&1 && ! command -v podman >/dev/null 2>&1 && ! command -v docker >/dev/null 2>&1; then
+    chmod 0644 "${SRV_DIR}/${CLEAN_EXEC}" 2>/dev/null || true
+    if ! command -v wine64 >/dev/null 2>&1 && [ ! -x /usr/lib/wine/wine64 ] && \
+       ! command -v wine >/dev/null 2>&1 && [ ! -x /usr/lib/wine/wine ] && \
+       ! command -v podman >/dev/null 2>&1 && ! command -v docker >/dev/null 2>&1; then
       echo "[PRE-START FEHLER] Windows-Executable (${CLEAN_EXEC}) erfordert Wine (+Xvfb) oder Podman/Docker unter Linux!" >&2
       exit 14
     fi
+  else
+    chmod +x "${SRV_DIR}/${CLEAN_EXEC}" 2>/dev/null || true
   fi
 fi
 
@@ -413,29 +427,144 @@ WRAPPER_EOF
 elif [ -f /usr/games/steamcmd ]; then
   ln -sf /usr/games/steamcmd /usr/bin/steamcmd
 fi
+echo -e "${GREEN}✓ SteamCMD, Pre-Start-Verifikation & steamclient.so Laufzeit-Symlinks einsatzbereit.${NC}"
 
-# Windows-.exe Kompatibilitäts-Runtime für Windows-only Steam-Server (z. B. V Rising, Enshrouded, Sons of the Forest)
-# Installiert Wine (+ Xvfb für Headless-Unity/Unreal-Server) und Podman als konfliktfreien Container-Fallback auf Debian 11/12/13.
+# 6. Vollständige Windows-.exe Kompatibilitäts-Runtime (Wine + Xvfb + Podman/Docker-Fallback)
+echo -e "${BLUE}[6/12] Richte Windows-.exe Laufzeit ein (Wine + Xvfb, Podman/Docker-Fallback & Wrapper-Helper)...${NC}"
+DETECTED_WIN_RUNTIME="none"
+DETECTED_WIN_SUMMARY="Nicht installiert (--no-wine oder APT nicht verfügbar)"
+
 if [ "$SKIP_WINE" = false ]; then
-  echo -e "${YELLOW}Richte Windows-.exe Laufzeit ein (Wine + Xvfb sowie Podman-Container-Fallback)...${NC}"
+  # Wine (Debian 11/12/13 kompatibel) + Xvfb Headless + Hilfspakete
   apt_install_preferred wine64 wine || apt_install_preferred wine || true
   apt_install_preferred wine32 || true
   apt_install_preferred xvfb || true
   apt_install_preferred xauth || true
   apt_install_preferred winbind || true
-  apt_install_preferred podman || true
-  if command -v wine64 &>/dev/null || command -v wine &>/dev/null; then
-    echo -e "${GREEN}✓ Wine ($(command -v wine64 || command -v wine))$(command -v xvfb-run &>/dev/null && echo ' + Xvfb Headless') erfolgreich eingerichtet.${NC}"
-  elif command -v podman &>/dev/null || command -v docker &>/dev/null; then
-    echo -e "${GREEN}✓ Container-Runtime ($(command -v podman || command -v docker)) für Windows-.exe Server eingerichtet.${NC}"
-  else
-    echo -e "${YELLOW}[WARN] Weder Wine noch Podman konnte aus den lokalen APT-Quellen installiert werden. Später nachinstallierbar via: apt-get install -y wine xvfb podman${NC}"
-  fi
-fi
-echo -e "${GREEN}✓ SteamCMD, Pre-Start-Verifikation, Wine/Podman-Support & steamclient.so Laufzeit-Symlinks einsatzbereit.${NC}"
+  apt_install_preferred cabextract || true
+  apt_install_preferred libfreetype6 || true
+  apt_install_preferred libfreetype6:i386 || true
 
-# 6. Node.js (v22 LTS mit lokalem APT-Fallback) & npm prüfen / installieren
-echo -e "${BLUE}[6/11] Prüfe Node.js & npm...${NC}"
+  # Debian 13 (Trixie) Symlink-Fix: falls wine64/wine nur unter /usr/lib/wine liegt, in /usr/local/bin verfügbar machen
+  if ! command -v wine64 &>/dev/null && [ -x /usr/lib/wine/wine64 ]; then
+    ln -sf /usr/lib/wine/wine64 /usr/local/bin/wine64
+  fi
+  if ! command -v wine &>/dev/null && [ -x /usr/lib/wine/wine ]; then
+    ln -sf /usr/lib/wine/wine /usr/local/bin/wine
+  fi
+
+  # Podman als rootless/daemonless Container-Engine (plus Docker-Fallback, falls weder Wine noch Podman verfügbar)
+  apt_install_preferred podman || true
+  if ! command -v wine64 &>/dev/null && ! command -v wine &>/dev/null && ! command -v podman &>/dev/null && ! command -v docker &>/dev/null; then
+    apt_install_preferred docker.io || true
+    if command -v docker &>/dev/null; then
+      systemctl enable --now docker >/dev/null 2>&1 || true
+    fi
+  fi
+
+  # Erkannte Laufzeit ermitteln & testen
+  WINE_CMD="$(command -v wine64 2>/dev/null || command -v wine 2>/dev/null || true)"
+  if [ -n "$WINE_CMD" ]; then
+    DETECTED_WIN_RUNTIME="wine"
+    WINE_VER="$("$WINE_CMD" --version 2>/dev/null || echo 'installiert')"
+    if command -v xvfb-run &>/dev/null; then
+      DETECTED_WIN_SUMMARY="Wine (${WINE_VER}) + Xvfb Headless"
+    else
+      DETECTED_WIN_SUMMARY="Wine (${WINE_VER})"
+    fi
+    echo -e "${GREEN}✓ ${DETECTED_WIN_SUMMARY} erfolgreich eingerichtet.${NC}"
+  elif command -v podman &>/dev/null; then
+    DETECTED_WIN_RUNTIME="podman"
+    DETECTED_WIN_SUMMARY="Podman ($(podman --version 2>/dev/null || echo 'installiert'))"
+    echo -e "${GREEN}✓ Container-Runtime ${DETECTED_WIN_SUMMARY} für Windows-.exe Server eingerichtet.${NC}"
+    timeout 180 podman pull "$WINE_CONTAINER_IMAGE" >/dev/null 2>&1 || true
+  elif command -v docker &>/dev/null; then
+    DETECTED_WIN_RUNTIME="docker"
+    DETECTED_WIN_SUMMARY="Docker ($(docker --version 2>/dev/null || echo 'installiert'))"
+    systemctl enable --now docker >/dev/null 2>&1 || true
+    echo -e "${GREEN}✓ Container-Runtime ${DETECTED_WIN_SUMMARY} für Windows-.exe Server eingerichtet.${NC}"
+    timeout 180 docker pull "$WINE_CONTAINER_IMAGE" >/dev/null 2>&1 || true
+  else
+    echo -e "${YELLOW}[WARN] Weder Wine noch Podman/Docker konnte aus den lokalen APT-Quellen installiert werden. Nachinstallierbar via: apt-get install -y wine xvfb podman${NC}"
+  fi
+else
+  echo -e "${YELLOW}ℹ Windows-.exe Laufzeit-Installation übersprungen (--no-wine).${NC}"
+fi
+
+# Systemweiten universellen Windows-.exe Launcher installieren (/usr/local/sbin/sonora-run-win-exe.sh)
+cat <<WIN_RUNNER_EOF > /usr/local/sbin/sonora-run-win-exe.sh
+#!/usr/bin/env bash
+# Universeller Linux-Launcher für Windows-PE (.exe) Dedicated Server (Wine + Xvfb / Podman / Docker)
+set -euo pipefail
+
+if [ "\$#" -lt 1 ]; then
+  echo "Verwendung: sonora-run-win-exe.sh <PFAD_ZUR_EXE> [SERVER_ARGS...]" >&2
+  exit 1
+fi
+
+EXE_PATH="\$1"
+shift
+SRV_DIR="\$(cd "\$(dirname "\$EXE_PATH")" && pwd -P)"
+EXE_BASE="\$(basename "\$EXE_PATH")"
+cd "\$SRV_DIR"
+
+# Execute-Bit von .exe entfernen, damit /bin/sh niemals MZ-Binary als Skript interpretiert
+chmod 0644 "\$SRV_DIR/\$EXE_BASE" 2>/dev/null || true
+
+export WINEPREFIX="\$SRV_DIR/.wineprefix"
+export WINEARCH=win64
+export WINEDEBUG="\${WINEDEBUG:--all}"
+export WINEDLLOVERRIDES="mscoree,mshtml="
+export SDL_VIDEODRIVER=dummy
+
+WINE_BIN=""
+for cand in wine64 /usr/bin/wine64 /usr/local/bin/wine64 /usr/lib/wine/wine64 wine /usr/bin/wine /usr/local/bin/wine /usr/lib/wine/wine; do
+  if command -v "\$cand" >/dev/null 2>&1; then
+    WINE_BIN="\$(command -v "\$cand")"
+    break
+  elif [ -x "\$cand" ]; then
+    WINE_BIN="\$cand"
+    break
+  fi
+done
+
+if [ -n "\$WINE_BIN" ]; then
+  mkdir -p "\$WINEPREFIX"
+  if command -v xvfb-run >/dev/null 2>&1; then
+    exec xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" "\$WINE_BIN" "\$SRV_DIR/\$EXE_BASE" "\$@"
+  fi
+  exec "\$WINE_BIN" "\$SRV_DIR/\$EXE_BASE" "\$@"
+fi
+
+if command -v podman >/dev/null 2>&1; then
+  exec podman run --rm -i --network host -v "\$SRV_DIR:/srv/game:Z" -w /srv/game \\
+    -e WINEPREFIX=/srv/game/.wineprefix -e WINEARCH=win64 -e WINEDEBUG=-all -e WINEDLLOVERRIDES="mscoree,mshtml=" \\
+    "${WINE_CONTAINER_IMAGE}" xvfb-run --auto-servernum wine64 "/srv/game/\$EXE_BASE" "\$@"
+fi
+
+if command -v docker >/dev/null 2>&1; then
+  exec docker run --rm -i --network host -v "\$SRV_DIR:/srv/game:rw" -w /srv/game \\
+    -e WINEPREFIX=/srv/game/.wineprefix -e WINEARCH=win64 -e WINEDEBUG=-all -e WINEDLLOVERRIDES="mscoree,mshtml=" \\
+    "${WINE_CONTAINER_IMAGE}" xvfb-run --auto-servernum wine64 "/srv/game/\$EXE_BASE" "\$@"
+fi
+
+echo "[FEHLER] [WINDOWS_EXE_NEEDS_WINE_OR_CONTAINER] Windows-Binary \"\$EXE_BASE\" kann unter Linux nicht direkt gestartet werden (Wine/Podman/Docker fehlt)." >&2
+exit 1
+WIN_RUNNER_EOF
+chmod 0755 /usr/local/sbin/sonora-run-win-exe.sh 2>/dev/null || true
+
+# .env automatisch mit erkannter Windows-Runtime synchronisieren (wenn Runtime vorhanden)
+if [ "$DETECTED_WIN_RUNTIME" != "none" ] && [ -f "$SOURCE_DIR/.env" ]; then
+  grep -q '^SONORA_WIN_RUNTIME=' "$SOURCE_DIR/.env" \
+    && sed -i "s/^SONORA_WIN_RUNTIME=.*/SONORA_WIN_RUNTIME=${DETECTED_WIN_RUNTIME}/" "$SOURCE_DIR/.env" \
+    || echo "SONORA_WIN_RUNTIME=${DETECTED_WIN_RUNTIME}" >> "$SOURCE_DIR/.env"
+  grep -q '^SONORA_ALLOW_WIN_EXE=' "$SOURCE_DIR/.env" \
+    && sed -i "s/^SONORA_ALLOW_WIN_EXE=.*/SONORA_ALLOW_WIN_EXE=true/" "$SOURCE_DIR/.env" \
+    || echo "SONORA_ALLOW_WIN_EXE=true" >> "$SOURCE_DIR/.env"
+fi
+
+# 7. Node.js (v22 LTS mit lokalem APT-Fallback) & Verzeichnisstruktur / .exe-Reparatur
+echo -e "${BLUE}[7/12] Prüfe Node.js, npm & repariere bestehende Server-Verzeichnisse...${NC}"
 NEED_NODE=true
 if command -v node &>/dev/null; then
   NODE_VER=$(node -v | sed 's/v//')
@@ -472,10 +601,52 @@ mkdir -p "$DATA_ROOT/backups"
 mkdir -p "$DATA_ROOT/manager"
 mkdir -p "$RUNTIME_ROOT/jdks"
 mkdir -p "$SOURCE_DIR/steamcmd"
-chmod -R 755 "$SOURCE_DIR"
 
-# 7. NPM Abhängigkeiten installieren & Production Build kompilieren
-echo -e "${BLUE}[7/11] Installiere NPM-Abhängigkeiten und erstelle Production-Build...${NC}"
+# WICHTIG: Niemals blind `chmod -R 755` auf Windows-.exe Dateien anwenden!
+# Nur Skripte im Projektstamm ausführbar machen und bestehende Windows-.exe Server automatisch reparieren.
+chmod 0755 "$SOURCE_DIR" "$DATA_ROOT" "$DATA_ROOT/servers" "$DATA_ROOT/backups" "$DATA_ROOT/manager" "$RUNTIME_ROOT" "$RUNTIME_ROOT/jdks" 2>/dev/null || true
+chmod 0755 "$SOURCE_DIR/install.sh" "$SOURCE_DIR/start-manager.sh" 2>/dev/null || true
+
+REPAIRED_WIN_SERVERS=0
+repair_existing_windows_servers() {
+  local servers_dir="$1"
+  [ -d "$servers_dir" ] || return 0
+
+  # 1. Execute-Bit von allen .exe/.dll/.bat/.cmd Dateien entfernen (verhindert /bin/sh MZ: not found Crash)
+  find "$servers_dir" -maxdepth 4 -type f \( -iname '*.exe' -o -iname '*.dll' -o -iname '*.bat' -o -iname '*.cmd' \) -exec chmod 0644 {} + 2>/dev/null || true
+
+  # 2. Bestehende Windows-.exe Server-Instanzen (z. B. VRisingServer.exe) mit sicherem Wine/Podman/Docker-Wrapper versehen
+  local srv_dir exe_file rel_exe script_name target_script
+  for srv_dir in "$servers_dir"/*; do
+    [ -d "$srv_dir" ] || continue
+    exe_file="$(find "$srv_dir" -maxdepth 3 -type f -iname '*.exe' ! -iname '*CrashHandler*' ! -iname '*Uninstall*' 2>/dev/null | head -n 1 || true)"
+    if [ -n "$exe_file" ]; then
+      rel_exe="${exe_file#${srv_dir}/}"
+      for script_name in start.sh run.sh; do
+        target_script="${srv_dir}/${script_name}"
+        if [ ! -f "$target_script" ] || (grep -qi '\.exe' "$target_script" 2>/dev/null && ! grep -qiE 'wine|podman|docker|sonora-run-win-exe' "$target_script" 2>/dev/null); then
+          cat <<SAFE_SH_EOF > "$target_script"
+#!/usr/bin/env bash
+# Auto-repaired by Sonora install.sh (Wine / Podman / Docker Compatibility Wrapper)
+set -euo pipefail
+SRV_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd -P)"
+exec /usr/local/sbin/sonora-run-win-exe.sh "\$SRV_DIR/${rel_exe}" "\$@"
+SAFE_SH_EOF
+          chmod 0755 "$target_script" 2>/dev/null || true
+        fi
+      done
+      REPAIRED_WIN_SERVERS=$((REPAIRED_WIN_SERVERS + 1))
+    fi
+  done
+}
+
+repair_existing_windows_servers "$DATA_ROOT/servers"
+if [ "$REPAIRED_WIN_SERVERS" -gt 0 ]; then
+  echo -e "${GREEN}✓ ${REPAIRED_WIN_SERVERS} bestehende Windows-.exe Server-Instanz(en) automatisch bereinigt (chmod 644 + Wine/Podman/Docker-Wrapper).${NC}"
+fi
+
+# 8. NPM Abhängigkeiten installieren & Production Build kompilieren
+echo -e "${BLUE}[8/12] Installiere NPM-Abhängigkeiten und erstelle Production-Build...${NC}"
 cd "$SOURCE_DIR"
 npm install || npm install --legacy-peer-deps || npm install --force
 
@@ -489,8 +660,8 @@ echo -e "${YELLOW}Kompiliere Frontend-Assets (Vite Build)...${NC}"
 npm run build
 echo -e "${GREEN}✓ Production-Build erfolgreich erstellt.${NC}"
 
-# 8. Debian Firewall (UFW) + automatische Port-Steuerung einrichten
-echo -e "${BLUE}[8/11] Konfiguriere Debian UFW-Firewall & automatische Port-Freigabe...${NC}"
+# 9. Debian Firewall (UFW) + automatische Port-Steuerung einrichten
+echo -e "${BLUE}[9/12] Konfiguriere Debian UFW-Firewall & automatische Port-Freigabe...${NC}"
 if [ "$SKIP_FIREWALL" = false ] && command -v ufw &>/dev/null; then
   ufw default deny incoming >/dev/null 2>&1 || true
   ufw default allow outgoing >/dev/null 2>&1 || true
@@ -519,8 +690,8 @@ SUDOERS_EOF
   chmod 0440 /etc/sudoers.d/sonora-firewall 2>/dev/null || true
 fi
 
-# 9. Mehrstufiger DDoS-Schutz: Kernel-Sysctl Hardening & iptables Anti-Flood Chain
-echo -e "${BLUE}[9/11] Richte Kernel- & Netzwerk-DDoS-Schutz (sysctl + iptables) ein...${NC}"
+# 10. Mehrstufiger DDoS-Schutz: Kernel-Sysctl Hardening & iptables Anti-Flood Chain
+echo -e "${BLUE}[10/12] Richte Kernel- & Netzwerk-DDoS-Schutz (sysctl + iptables) ein...${NC}"
 if [ "$SKIP_DDOS" = false ]; then
   cat <<'SYSCTL_EOF' > /etc/sysctl.d/99-sonora-ddos.conf
 # ==============================================================================
@@ -556,7 +727,7 @@ net.ipv4.tcp_keepalive_probes = 5
 net.ipv4.tcp_keepalive_intvl = 15
 net.ipv4.tcp_rfc1337 = 1
 
-# Größere Socket-Puffer für UDP-Gameserver (Minecraft Bedrock, Rust, Palworld, CS2)
+# Größere Socket-Puffer für UDP-Gameserver (Minecraft Bedrock, Rust, Palworld, CS2, V Rising)
 net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
 SYSCTL_EOF
@@ -610,8 +781,8 @@ DDOS_UNIT_EOF
     echo -e "${GREEN}✓ iptables Anti-DDoS Chain (SONORA_DDOS) installiert & via sonora-ddos.service bootfest persistiert.${NC}"
   fi
 
-  # 10. Fail2ban gegen SSH- & Brute-Force-Angriffe konfigurieren
-  echo -e "${BLUE}[10/11] Konfiguriere Fail2ban Intrusion-Prevention...${NC}"
+  # 11. Fail2ban gegen SSH- & Brute-Force-Angriffe konfigurieren
+  echo -e "${BLUE}[11/12] Konfiguriere Fail2ban Intrusion-Prevention...${NC}"
   if command -v fail2ban-client &>/dev/null; then
     mkdir -p /etc/fail2ban/jail.d
     cat <<F2B_EOF > /etc/fail2ban/jail.d/sonora.local
@@ -635,8 +806,8 @@ else
   echo -e "${YELLOW}ℹ DDoS-Schutz & Fail2ban übersprungen (--no-ddos).${NC}"
 fi
 
-# 11. systemd Service Unit mit Autostart einrichten (start-manager.sh)
-echo -e "${BLUE}[11/11] Richte systemd Autostart-Dienst ein...${NC}"
+# 12. systemd Service Unit mit Autostart einrichten (start-manager.sh)
+echo -e "${BLUE}[12/12] Richte systemd Autostart-Dienst ein...${NC}"
 chmod +x "$SOURCE_DIR/start-manager.sh"
 
 SERVICE_FILE="/etc/systemd/system/sonora-manager.service"
@@ -650,10 +821,12 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$SOURCE_DIR
-Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+EnvironmentFile=-$SOURCE_DIR/.env
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/wine:/usr/games"
 Environment=NODE_ENV=production
 Environment=PORT=${PANEL_PORT}
 Environment=SFTP_PORT=${SFTP_PORT}
+Environment=SONORA_WIN_RUNTIME=${DETECTED_WIN_RUNTIME}
 ExecStart="$SOURCE_DIR/start-manager.sh"
 Restart=always
 RestartSec=5
@@ -667,8 +840,10 @@ EOF
 systemctl daemon-reload 2>/dev/null || true
 systemctl enable sonora-manager.service 2>/dev/null || true
 
-# Optionaler Sofortstart (Standard START=false; per --start aktivierbar)
+# Optionaler Sofortstart (Standard START=false; per --start aktivierbar; laufender Dienst bei --update automatisch neu geladen)
 if $START; then
+  systemctl restart sonora-manager.service 2>/dev/null || true
+elif [ "$FORCE_UPDATE" = true ] && systemctl is-active --quiet sonora-manager.service 2>/dev/null; then
   systemctl restart sonora-manager.service 2>/dev/null || true
 fi
 
@@ -676,12 +851,14 @@ SERVER_IP=$(curl -s -m 4 https://ifconfig.me 2>/dev/null || curl -s -m 4 https:/
 
 echo ""
 echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}   ✓ SONORA GAMESERVER MANAGER FÜR DEBIAN ERFOLGREICH INSTALLIERT!        ${NC}"
+echo -e "${GREEN}${BOLD}   ✓ SONORA GAMESERVER MANAGER VOLLSTÄNDIG INSTALLIERT & EINSATZBEREIT!   ${NC}"
 echo -e "${GREEN}${BOLD}══════════════════════════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "  📦 ${BOLD}GitHub-Quelle:${NC}          ${REPO_WEB_URL} (${REPO_BRANCH})"
 echo -e "  🌐 ${BOLD}Web-Panel aufrufen:${NC}     http://${SERVER_IP}:${PANEL_PORT}"
 echo -e "  🔐 ${BOLD}SFTP-Server-Port:${NC}       ${SERVER_IP}:${SFTP_PORT}"
+echo -e "  🍷 ${BOLD}Windows-.exe Runtime:${NC}   ${DETECTED_WIN_SUMMARY}"
+echo -e "  🎮 ${BOLD}SteamCMD Pre-Start:${NC}     Aktiv (/usr/local/sbin/sonora-verify-steam.sh)"
 echo -e "  🛡️  ${BOLD}Firewall (UFW):${NC}         Aktiv (automatische Port-Freigabe & -Löschung pro Server)"
 echo -e "  🔥 ${BOLD}DDoS-Schutz:${NC}            Aktiv (sysctl 99-sonora-ddos.conf + iptables SONORA_DDOS + Fail2ban)"
 echo -e "  🚀 ${BOLD}Boot-Autostart:${NC}         Aktiviert (systemd: sonora-manager.service)"
@@ -704,4 +881,4 @@ echo -e "  • Aktualisieren:   ${BOLD}cd ${SOURCE_DIR} && sudo bash install.sh 
 echo -e "  • Firewall-Status: ${BOLD}ufw status verbose${NC}"
 echo -e "  • DDoS-Statistik:  ${BOLD}iptables -L SONORA_DDOS -v -n${NC}"
 echo ""
-echo -e "${GREEN}Der Sonora Gameserver Manager ist einsatzbereit eingerichtet.${NC}"
+echo -e "${GREEN}Der Sonora Gameserver Manager ist vollständig eingerichtet.${NC}"

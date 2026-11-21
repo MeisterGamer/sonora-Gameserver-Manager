@@ -9,7 +9,8 @@ import {
   buildWindowsExeLaunchPlan,
   extractUnwrappedWindowsExeFromShellScript,
   resolveEffectiveWindowsExecutable,
-  generateLinuxWindowsWrapperScript
+  generateLinuxWindowsWrapperScript,
+  sanitizeExistingWindowsExeServers
 } from '../backend/windowsRuntime.ts';
 import { analyzeConsoleLogs } from '../src/utils/logPatterns.ts';
 
@@ -149,6 +150,36 @@ try {
     safeWrapperContent.includes('WINDOWS_EXE_NEEDS_WINE_OR_CONTAINER') &&
     extractUnwrappedWindowsExeFromShellScript(safeWrapperFile, tmpDir) === null
   );
+
+  // --- 5c. Boot-time sanitizer strips +x from VRisingServer.exe & repairs broken start.sh ---
+  const mockDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sonora-sanitize-data-'));
+  try {
+    const mockSrv = path.join(mockDataDir, 'srv_mwoz1wng');
+    fs.mkdirSync(mockSrv, { recursive: true });
+    const mockExe = path.join(mockSrv, 'VRisingServer.exe');
+    fs.writeFileSync(mockExe, Buffer.from([0x4d, 0x5a, 0x90, 0x00]));
+    fs.chmodSync(mockExe, 0o755);
+    const mockStartSh = path.join(mockSrv, 'start.sh');
+    fs.writeFileSync(mockStartSh, '#!/usr/bin/env bash\nexec "./VRisingServer.exe" "$@"\n', 'utf8');
+
+    const sanitizeResult = sanitizeExistingWindowsExeServers(mockDataDir);
+    const fixedMode = fs.statSync(mockExe).mode & 0o777;
+    const fixedScript = fs.readFileSync(mockStartSh, 'utf8');
+    check('sanitizeExistingWindowsExeServers strips +x from VRisingServer.exe (0644) and repairs broken start.sh',
+      sanitizeResult.strippedExeCount === 1 &&
+      sanitizeResult.repairedScriptsCount === 1 &&
+      (fixedMode & 0o111) === 0 &&
+      fixedScript.includes('WINE_BIN') &&
+      extractUnwrappedWindowsExeFromShellScript(mockStartSh, mockSrv) === null
+    );
+  } finally {
+    fs.rmSync(mockDataDir, { recursive: true, force: true });
+  }
+
+  check('Wine + Xvfb launch plan avoids hardcoding stale DISPLAY=:99 and always sets HOME',
+    winePlan.env.DISPLAY === undefined &&
+    Boolean(winePlan.env.HOME)
+  );
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }
@@ -181,15 +212,32 @@ check('server.ts SteamCMD retries with +@sSteamCmdForcePlatformType windows when
 );
 
 const installSh = fs.readFileSync('install.sh', 'utf8');
-check('install.sh installs Wine + Xvfb + Podman and verifies MZ PE binaries in sonora-verify-steam.sh',
+check('install.sh installs Wine + Xvfb + Podman/Docker, Hardware-Health tools, and verifies MZ PE binaries in sonora-verify-steam.sh',
   installSh.includes('apt_install_preferred wine64 wine') &&
   installSh.includes('apt_install_preferred xvfb') &&
   installSh.includes('apt_install_preferred podman') &&
+  installSh.includes('apt_install_preferred docker.io') &&
+  installSh.includes('apt_install_preferred lm-sensors') &&
   installSh.includes('EXEC_MAGIC="$(head -c 2')
+);
+check('install.sh never runs chmod -R 755 over data/servers .exe files and auto-repairs existing .exe servers with sonora-run-win-exe.sh',
+  !installSh.includes('chmod -R 755 "$SOURCE_DIR"') &&
+  installSh.includes('repair_existing_windows_servers()') &&
+  installSh.includes('/usr/local/sbin/sonora-run-win-exe.sh') &&
+  installSh.includes('/usr/lib/wine/wine64') &&
+  installSh.includes('/usr/lib/wine:/usr/games') &&
+  installSh.includes('SONORA_ALLOW_WIN_EXE=true')
 );
 
 execSync('bash -n install.sh', { stdio: 'pipe' });
 check('install.sh passes bash -n syntax validation', true);
+
+execSync('bash -n start-manager.sh', { stdio: 'pipe' });
+const startMgrSh = fs.readFileSync('start-manager.sh', 'utf8');
+check('start-manager.sh passes bash -n, loads .env, and preserves /usr/lib/wine:/usr/games in PATH',
+  startMgrSh.includes('/usr/lib/wine:/usr/games') &&
+  startMgrSh.includes('.env')
+);
 
 console.log(`${checks.length} Windows-.exe on Linux (Wine / Podman / Docker) regression checks passed.`);
 fs.writeFileSync('audit/windows-exe-linux-runtime-regression.json', JSON.stringify({ checks, passed: true }, null, 2));

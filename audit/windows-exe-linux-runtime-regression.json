@@ -9,8 +9,12 @@
     "Podman launch plan uses --network host, mounts /srv/game:Z, and provides stopCommand",
     "Docker launch plan mounts /srv/game:rw and runs wine64 inside container",
     "Without Wine/Podman/Docker, launch plan blocks direct .exe execution with clear error code & Debian install hint",
+    "extractUnwrappedWindowsExeFromShellScript detects broken start.sh directly invoking VRisingServer.exe",
+    "resolveEffectiveWindowsExecutable marks broken start.sh wrapper as Windows PE target",
+    "generateLinuxWindowsWrapperScript passes bash -n and routes through wine/podman/docker",
     "Real-time Log-Analyzer detects VRisingServer.exe MZ / Syntax error crash as windows_exe_on_linux",
-    "server.ts routes Windows PE .exe executables through buildWindowsExeLaunchPlan on Linux",
+    "server.ts routes Windows PE .exe executables (and broken .sh wrappers) through buildWindowsExeLaunchPlan with hard spawn guard",
+    "serverDiagnostics.ts generates Wine/Podman/Docker-safe start.sh wrapper for .exe servers",
     "server.ts SteamCMD retries with +@sSteamCmdForcePlatformType windows when Linux depot is invalid and Wine/Podman/Docker exists",
     "install.sh installs Wine + Xvfb + Podman and verifies MZ PE binaries in sonora-verify-steam.sh",
     "install.sh passes bash -n syntax validation"

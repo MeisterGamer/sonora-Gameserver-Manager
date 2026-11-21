@@ -125,8 +125,24 @@ export function detectLinuxWindowsRuntimes(
     };
   }
 
-  const wine64Bin = probe('wine64', ['/usr/bin/wine64', '/usr/local/bin/wine64', '/opt/wine-staging/bin/wine64', '/opt/wine-stable/bin/wine64']);
-  const wine32Bin = probe('wine', ['/usr/bin/wine', '/usr/local/bin/wine', '/opt/wine-staging/bin/wine', '/opt/wine-stable/bin/wine']);
+  const wine64Bin = probe('wine64', [
+    '/usr/bin/wine64',
+    '/usr/local/bin/wine64',
+    '/usr/lib/wine/wine64',
+    '/usr/bin/wine64-stable',
+    '/usr/bin/wine64-development',
+    '/opt/wine-staging/bin/wine64',
+    '/opt/wine-stable/bin/wine64'
+  ]);
+  const wine32Bin = probe('wine', [
+    '/usr/bin/wine',
+    '/usr/local/bin/wine',
+    '/usr/lib/wine/wine',
+    '/usr/bin/wine-stable',
+    '/usr/bin/wine-development',
+    '/opt/wine-staging/bin/wine',
+    '/opt/wine-stable/bin/wine'
+  ]);
   const wineBin = wine64Bin || wine32Bin;
   const xvfbRunBin = probe('xvfb-run', ['/usr/bin/xvfb-run', '/usr/local/bin/xvfb-run']);
   const podmanBin = probe('podman', ['/usr/bin/podman', '/usr/local/bin/podman']);
@@ -297,7 +313,7 @@ export function buildWindowsExeLaunchPlan(params: BuildWindowsLaunchParams): Win
   }
 
   const installHint =
-    'Debian/Ubuntu installieren: sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine wine64 xvfb  (oder Container-Runtime: sudo apt-get install -y podman)';
+    'Debian/Ubuntu installieren: sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine xvfb  (oder Container-Runtime: sudo apt-get install -y podman)';
 
   return {
     canLaunch: false,
@@ -312,3 +328,277 @@ export function buildWindowsExeLaunchPlan(params: BuildWindowsLaunchParams): Win
     installHint
   };
 }
+
+/**
+ * Inspects a Linux shell script (e.g. start.sh / VRisingServer.sh) to detect if it tries to
+ * directly execute a Windows `.exe` file without Wine / Podman / Docker / Proton.
+ * If so, returns the resolved path to that `.exe` file so Sonora can intercept and launch it
+ * safely via Wine/Podman/Docker instead of crashing with `MZ: not found` (Exit Code 2).
+ */
+export function extractUnwrappedWindowsExeFromShellScript(
+  scriptPath: string,
+  srvDir: string
+): string | null {
+  try {
+    if (!scriptPath || !fs.existsSync(scriptPath) || !fs.statSync(scriptPath).isFile()) {
+      return null;
+    }
+    const stat = fs.statSync(scriptPath);
+    if (stat.size === 0 || stat.size > 65536) return null;
+    const content = fs.readFileSync(scriptPath, 'utf8');
+    // Only inspect text scripts
+    if (content.includes('\0')) return null;
+    // If the script already invokes wine, podman, docker, or proton, it's already wrapped
+    if (/\b(wine64|wine|podman|docker|proton|xvfb-run)\b/i.test(content)) {
+      return null;
+    }
+    const match = content.match(/(?:^|[\s"'=])((?:\.\/|\/)?[^\s"'`;&|]+\.exe)\b/im);
+    if (!match) return null;
+    const rawTarget = match[1].replace(/^['"]|['"]$/g, '');
+    const candidates = [
+      path.isAbsolute(rawTarget) ? rawTarget : path.resolve(path.dirname(scriptPath), rawTarget),
+      path.resolve(srvDir, rawTarget.replace(/^\.\//, ''))
+    ];
+    for (const cand of candidates) {
+      if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+        return cand;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Resolves whether a target executable path is a Windows PE binary directly OR a broken
+ * shell wrapper script that attempts to execute a `.exe` directly on Linux.
+ */
+export function resolveEffectiveWindowsExecutable(
+  execPath: string | null | undefined,
+  srvDir: string
+): { isWindowsPe: boolean; targetExePath: string | null; viaBrokenShellWrapper: boolean } {
+  const clean = String(execPath || '').trim();
+  if (!clean) {
+    return { isWindowsPe: false, targetExePath: null, viaBrokenShellWrapper: false };
+  }
+  if (isWindowsPeExecutable(clean)) {
+    return { isWindowsPe: true, targetExePath: clean, viaBrokenShellWrapper: false };
+  }
+  const wrappedExe = extractUnwrappedWindowsExeFromShellScript(clean, srvDir);
+  if (wrappedExe) {
+    return { isWindowsPe: true, targetExePath: wrappedExe, viaBrokenShellWrapper: true };
+  }
+  return { isWindowsPe: false, targetExePath: null, viaBrokenShellWrapper: false };
+}
+
+/**
+ * Generates a safe Linux bash wrapper script (`start.sh` / `run.sh`) for a Windows `.exe`
+ * dedicated server that routes execution through Wine (+ Xvfb), Podman, or Docker and NEVER
+ * executes the `.exe` binary directly via `/bin/sh`.
+ */
+export function generateLinuxWindowsWrapperScript(
+  relExec: string,
+  containerImage: string = DEFAULT_WINE_CONTAINER_IMAGE
+): string {
+  const cleanRel = String(relExec || 'Server.exe').replace(/\\/g, '/').replace(/^\.\//, '');
+  const safeRel = cleanRel.replace(/["`$\\]/g, '');
+  const safeImage = String(containerImage || DEFAULT_WINE_CONTAINER_IMAGE).replace(/["`$\\]/g, '');
+
+  return `#!/usr/bin/env bash
+# Generated by Sonora Gameserver Manager (Linux Windows-PE Compatibility Wrapper)
+set -euo pipefail
+SRV_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd -P)"
+cd "$SRV_DIR"
+
+TARGET_EXE="${safeRel}"
+export WINEPREFIX="$SRV_DIR/.wineprefix"
+export WINEARCH=win64
+export WINEDEBUG="\${WINEDEBUG:--all}"
+export WINEDLLOVERRIDES="mscoree,mshtml="
+export SDL_VIDEODRIVER=dummy
+
+WINE_BIN=""
+for cand in wine64 /usr/bin/wine64 /usr/lib/wine/wine64 wine /usr/bin/wine /usr/lib/wine/wine; do
+  if command -v "$cand" >/dev/null 2>&1; then
+    WINE_BIN="$(command -v "$cand")"
+    break
+  elif [ -x "$cand" ]; then
+    WINE_BIN="$cand"
+    break
+  fi
+done
+
+if [ -n "$WINE_BIN" ]; then
+  mkdir -p "$WINEPREFIX"
+  if command -v xvfb-run >/dev/null 2>&1; then
+    exec xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" "$WINE_BIN" "$SRV_DIR/$TARGET_EXE" "$@"
+  fi
+  exec "$WINE_BIN" "$SRV_DIR/$TARGET_EXE" "$@"
+fi
+
+if command -v podman >/dev/null 2>&1; then
+  exec podman run --rm -i --network host -v "$SRV_DIR:/srv/game:Z" -w /srv/game \\
+    -e WINEPREFIX=/srv/game/.wineprefix -e WINEARCH=win64 -e WINEDEBUG=-all -e WINEDLLOVERRIDES="mscoree,mshtml=" \\
+    "${safeImage}" xvfb-run --auto-servernum wine64 "/srv/game/$TARGET_EXE" "$@"
+fi
+
+if command -v docker >/dev/null 2>&1; then
+  exec docker run --rm -i --network host -v "$SRV_DIR:/srv/game:rw" -w /srv/game \\
+    -e WINEPREFIX=/srv/game/.wineprefix -e WINEARCH=win64 -e WINEDEBUG=-all -e WINEDLLOVERRIDES="mscoree,mshtml=" \\
+    "${safeImage}" xvfb-run --auto-servernum wine64 "/srv/game/$TARGET_EXE" "$@"
+fi
+
+echo "[FEHLER] [WINDOWS_EXE_NEEDS_WINE_OR_CONTAINER] Windows-Binary \\"$TARGET_EXE\\" kann unter Linux nicht direkt gestartet werden." >&2
+echo "Bitte installiere Wine + Xvfb (sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine xvfb) oder Podman (sudo apt-get install -y podman)." >&2
+exit 1
+`;
+}
+
+export interface PreFlightCheckResult {
+  canLaunch: boolean;
+  isWindowsExecutable: boolean;
+  missingCompatibilityLayer: boolean;
+  executableName: string;
+  platform: NodeJS.Platform;
+  hasWine: boolean;
+  hasXvfb: boolean;
+  hasPodman: boolean;
+  hasDocker: boolean;
+  detectedRuntime: WindowsCompatRuntimeKind;
+  runtimeSummary: string;
+  envFlagEnabled: boolean;
+  warningTitle: string;
+  warningMessage: string;
+  installInstructions: {
+    debianWine: string;
+    podman: string;
+    docker: string;
+    envFlag: string;
+  };
+  checkedAt: string;
+}
+
+/**
+ * Checks whether a host environment variable flag explicitly permits Windows .exe paths on Linux.
+ */
+export function isWindowsExeEnvFlagSet(
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  const isTruthy = (val?: string) => {
+    const clean = String(val || '').trim().toLowerCase();
+    return clean === '1' || clean === 'true' || clean === 'yes' || clean === 'on';
+  };
+  if (
+    isTruthy(env.SONORA_ALLOW_WIN_EXE) ||
+    isTruthy(env.ALLOW_WINDOWS_EXE) ||
+    isTruthy(env.VITE_ALLOW_WINDOWS_EXE)
+  ) {
+    return true;
+  }
+  const rt = String(env.SONORA_WIN_RUNTIME || '').trim().toLowerCase();
+  return rt === 'wine' || rt === 'docker' || rt === 'podman';
+}
+
+/**
+ * Pre-Flight Checker that scans the environment for `wine` or `docker`/`podman`
+ * before allowing a user to launch a Windows executable (.exe) on Linux.
+ */
+export function runWindowsExePreFlightCheck(params: {
+  execPathOnDisk?: string | null;
+  configuredExecutable?: string | null;
+  srvDir?: string | null;
+  targetOS?: string | null;
+  detectedRuntimes?: DetectedWindowsRuntimes;
+  env?: Record<string, string | undefined>;
+  platform?: NodeJS.Platform;
+}): PreFlightCheckResult {
+  const platform = params.platform || process.platform;
+  const env = params.env || process.env;
+  const runtimes = params.detectedRuntimes || detectLinuxWindowsRuntimes(undefined, platform);
+  const envFlagEnabled = isWindowsExeEnvFlagSet(env);
+
+  const configured = String(params.configuredExecutable || '').trim();
+  const onDisk = String(params.execPathOnDisk || '').trim();
+  const resolved = onDisk && params.srvDir
+    ? resolveEffectiveWindowsExecutable(onDisk, params.srvDir)
+    : { isWindowsPe: Boolean(onDisk && isWindowsPeExecutable(onDisk)), targetExePath: onDisk || null, viaBrokenShellWrapper: false };
+  const effectivePath = resolved.targetExePath || onDisk || configured || 'server';
+  const executableName = path.basename(effectivePath);
+
+  const isWinByDisk = resolved.isWindowsPe;
+  const isWinByName = /\.exe$/i.test(configured) || /\.exe$/i.test(onDisk);
+  const isWindowsExecutable = isWinByDisk || isWinByName;
+
+  const installInstructions = {
+    debianWine: 'sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine xvfb',
+    podman: 'sudo apt-get update && sudo apt-get install -y podman',
+    docker: 'sudo apt-get update && sudo apt-get install -y docker.io && sudo systemctl enable --now docker',
+    envFlag: 'SONORA_ALLOW_WIN_EXE=true'
+  };
+
+  const checkedAt = new Date().toISOString();
+
+  if (platform === 'win32' || !isWindowsExecutable) {
+    return {
+      canLaunch: true,
+      isWindowsExecutable,
+      missingCompatibilityLayer: false,
+      executableName,
+      platform,
+      hasWine: runtimes.hasWine,
+      hasXvfb: runtimes.hasXvfb,
+      hasPodman: runtimes.hasPodman,
+      hasDocker: runtimes.hasDocker,
+      detectedRuntime: runtimes.preferredRuntime,
+      runtimeSummary: runtimes.summary,
+      envFlagEnabled,
+      warningTitle: '',
+      warningMessage: '',
+      installInstructions,
+      checkedAt
+    };
+  }
+
+  const hasCompatLayer = runtimes.hasWine || runtimes.hasPodman || runtimes.hasDocker;
+
+  if (!hasCompatLayer) {
+    return {
+      canLaunch: false,
+      isWindowsExecutable: true,
+      missingCompatibilityLayer: true,
+      executableName,
+      platform,
+      hasWine: false,
+      hasXvfb: runtimes.hasXvfb,
+      hasPodman: false,
+      hasDocker: false,
+      detectedRuntime: 'none',
+      runtimeSummary: runtimes.summary,
+      envFlagEnabled,
+      warningTitle: `Pre-Flight Check fehlgeschlagen: Kompatibilitätsschicht für "${executableName}" fehlt`,
+      warningMessage:
+        `Die Windows-Executable "${executableName}" kann unter Linux nicht ohne Wine oder Docker/Podman gestartet werden. Der Pre-Flight Checker hat weder "wine" noch "docker" oder "podman" im System gefunden. Installiere eine der folgenden Kompatibilitätsschichten und führe den Check erneut aus.`,
+      installInstructions,
+      checkedAt
+    };
+  }
+
+  return {
+    canLaunch: true,
+    isWindowsExecutable: true,
+    missingCompatibilityLayer: false,
+    executableName,
+    platform,
+    hasWine: runtimes.hasWine,
+    hasXvfb: runtimes.hasXvfb,
+    hasPodman: runtimes.hasPodman,
+    hasDocker: runtimes.hasDocker,
+    detectedRuntime: runtimes.preferredRuntime,
+    runtimeSummary: runtimes.summary,
+    envFlagEnabled,
+    warningTitle: '',
+    warningMessage: '',
+    installInstructions,
+    checkedAt
+  };
+}
+

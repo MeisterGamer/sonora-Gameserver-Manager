@@ -21,7 +21,9 @@ import {
 } from './installerHelpers';
 import {
   detectLinuxWindowsRuntimes,
-  isWindowsPeExecutable
+  isWindowsPeExecutable,
+  resolveEffectiveWindowsExecutable,
+  generateLinuxWindowsWrapperScript
 } from './windowsRuntime';
 import { execSync } from 'node:child_process';
 
@@ -291,7 +293,7 @@ export function configureLogAnalyzer(app: Express, deps: LogAnalyzerDeps) {
         if (runtimes.preferredRuntime === 'none' && process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() === 0) {
           try {
             execSync(
-              'DEBIAN_FRONTEND=noninteractive dpkg --add-architecture i386 2>/dev/null || true; apt-get update -y -q >/dev/null 2>&1 || true; apt-get install -y -q --no-install-recommends wine wine64 xvfb >/dev/null 2>&1 || apt-get install -y -q --no-install-recommends wine xvfb >/dev/null 2>&1 || apt-get install -y -q --no-install-recommends podman >/dev/null 2>&1',
+              'dpkg --add-architecture i386 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive apt-get update -qq && (DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wine xvfb || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq podman)',
               { timeout: 120_000, stdio: 'ignore' }
             );
             runtimes = detectLinuxWindowsRuntimes();
@@ -302,10 +304,27 @@ export function configureLogAnalyzer(app: Express, deps: LogAnalyzerDeps) {
         }
 
         const execPath = deps.findGameExecutable(srvDir, server.linuxExecutable || server.executable);
-        if (execPath && isWindowsPeExecutable(execPath)) {
+        const resolvedWin = resolveEffectiveWindowsExecutable(execPath, srvDir);
+        const targetWinExe = resolvedWin.targetExePath || (execPath && isWindowsPeExecutable(execPath) ? execPath : null);
+        if (targetWinExe) {
+          const relExe = path.relative(srvDir, targetWinExe).replace(/\\/g, '/');
+          // Remove +x bit from .exe on Linux so /bin/sh never executes MZ binary as a script
+          try {
+            fs.chmodSync(targetWinExe, 0o644);
+            changes.push(`Execute-Bit von Windows-PE entfernt (chmod 644 ${relExe})`);
+          } catch {}
+          // Rewrite start.sh / run.sh with safe Wine/Podman/Docker wrapper
+          const safeWrapper = generateLinuxWindowsWrapperScript(relExe);
+          for (const scriptName of ['start.sh', 'run.sh']) {
+            const p = path.join(srvDir, scriptName);
+            fs.writeFileSync(p, safeWrapper, 'utf8');
+            try { fs.chmodSync(p, 0o755); } catch {}
+          }
+          changes.push(`start.sh & run.sh mit Wine/Podman/Docker-Wrapper für ${relExe} aktualisiert`);
+          server.linuxExecutable = relExe;
           server.windowsRuntime = runtimes.preferredRuntime !== 'none' ? runtimes.preferredRuntime : 'auto';
           deps.upsertServerInRegistry(server);
-          changes.push(`Windows-Runtime-Profil gesetzt: ${server.windowsRuntime} (${path.basename(execPath)})`);
+          changes.push(`Windows-Runtime-Profil gesetzt: ${server.windowsRuntime} (${path.basename(targetWinExe)})`);
         }
 
         if (runtimes.preferredRuntime !== 'none') {
@@ -322,7 +341,7 @@ export function configureLogAnalyzer(app: Express, deps: LogAnalyzerDeps) {
           };
         }
 
-        const hint = 'sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine wine64 xvfb (oder: sudo apt-get install -y podman)';
+        const hint = 'sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y wine xvfb (oder: sudo apt-get install -y podman)';
         deps.appendLog(server.id, 'WARN', `[WIN-COMPAT] Keine Wine/Podman/Docker-Runtime installiert. Bitte auf dem Host ausführen: ${hint}`);
         return {
           fixId,
@@ -363,9 +382,13 @@ export function configureLogAnalyzer(app: Express, deps: LogAnalyzerDeps) {
 
         const detectedExec = deps.findGameExecutable(srvDir, server.linuxExecutable);
         if (detectedExec) {
-          try { fs.chmodSync(detectedExec, 0o755); } catch {}
+          if (process.platform !== 'win32' && isWindowsPeExecutable(detectedExec)) {
+            try { fs.chmodSync(detectedExec, 0o644); } catch {}
+          } else {
+            try { fs.chmodSync(detectedExec, 0o755); } catch {}
+          }
           server.linuxExecutable = path.relative(srvDir, detectedExec);
-          changes.push(`Executable verifiziert & ausführbar: ${server.linuxExecutable}`);
+          changes.push(`Executable verifiziert: ${server.linuxExecutable}`);
         }
         deps.ensureSteamClientSymlinks(deps.detectSteamCmd(), srvDir);
         server.isInstalled = true;

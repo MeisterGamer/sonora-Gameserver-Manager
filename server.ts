@@ -13,7 +13,11 @@ import { configureHardwareHealth } from './backend/hardwareHealth';
 import {
   isWindowsPeExecutable,
   detectLinuxWindowsRuntimes,
-  buildWindowsExeLaunchPlan
+  buildWindowsExeLaunchPlan,
+  isWindowsExeEnvFlagSet,
+  runWindowsExePreFlightCheck,
+  resolveEffectiveWindowsExecutable,
+  generateLinuxWindowsWrapperScript
 } from './backend/windowsRuntime';
 import {
   isJavaMinecraftSpec,
@@ -1946,6 +1950,12 @@ async function installSteamGameServer(
             if (entry.isDirectory() && !['steamapps', 'logs', 'backups', '.wineprefix'].includes(entry.name)) {
               makeExecutable(full, depth + 1);
             } else if (
+              !isWin &&
+              /\.(exe|dll|bat|cmd)$/i.test(entry.name)
+            ) {
+              // NEVER mark Windows PE (.exe) as +x on Linux — prevents /bin/sh fallback (`MZ: not found`)
+              try { fs.chmodSync(full, 0o644); } catch {}
+            } else if (
               entry.name.endsWith('.sh') ||
               entry.name.endsWith('.x86_64') ||
               entry.name.includes('Server') ||
@@ -1967,6 +1977,16 @@ async function installSteamGameServer(
         const relExec = path.relative(srvDir, detectedExec);
         const isWinPeOnLinux = !isWin && isWindowsPeExecutable(detectedExec);
         if (isWinPeOnLinux) {
+          try { fs.chmodSync(detectedExec, 0o644); } catch {}
+          // Write Wine/Podman/Docker-aware start.sh & run.sh so standalone execution never fails with MZ: not found
+          try {
+            const safeWrapper = generateLinuxWindowsWrapperScript(relExec);
+            for (const scriptName of ['start.sh', 'run.sh']) {
+              const sp = path.join(srvDir, scriptName);
+              fs.writeFileSync(sp, safeWrapper, 'utf8');
+              try { fs.chmodSync(sp, 0o755); } catch {}
+            }
+          } catch {}
           const rt = detectLinuxWindowsRuntimes();
           appendLog(
             serverId,
@@ -2800,9 +2820,32 @@ app.post('/api/servers/:id/power', async (req, res) => {
 
       appendLog(serverId, 'INFO', `[PRE-START CHECK] Verifiziert: Executable "${path.basename(execPath)}" bereit${preStartCheck.manifest.fullyInstalled ? ` (Steam AppManifest StateFlags=4)` : ''}.`);
 
-      try {
-        fs.chmodSync(execPath, 0o755);
-      } catch {}
+      const isWinHost = process.platform === 'win32';
+      const resolvedWinTarget = !isWinHost
+        ? resolveEffectiveWindowsExecutable(execPath, srvDir)
+        : { isWindowsPe: false, targetExePath: null, viaBrokenShellWrapper: false };
+
+      if (!isWinHost && resolvedWinTarget.isWindowsPe && resolvedWinTarget.targetExePath) {
+        // Strip +x on .exe files on Linux so POSIX execvp/sh NEVER attempts to interpret MZ binary as a script
+        try { fs.chmodSync(resolvedWinTarget.targetExePath, 0o644); } catch {}
+        if (resolvedWinTarget.viaBrokenShellWrapper) {
+          const relWinExe = path.relative(srvDir, resolvedWinTarget.targetExePath).replace(/\\/g, '/');
+          appendLog(
+            serverId,
+            'WARN',
+            `[WIN-COMPAT] Wrapper-Skript "${path.basename(execPath)}" versuchte "${relWinExe}" direkt ohne Wine/Container auszuführen — leite automatisch über Wine/Podman/Docker um.`
+          );
+          try {
+            const safeWrapper = generateLinuxWindowsWrapperScript(relWinExe);
+            fs.writeFileSync(execPath, safeWrapper, 'utf8');
+            fs.chmodSync(execPath, 0o755);
+          } catch {}
+        }
+      } else {
+        try {
+          fs.chmodSync(execPath, 0o755);
+        } catch {}
+      }
 
       if (!isBedrock) {
         ensureSteamClientSymlinks(steamCmdBin, srvDir);
@@ -2822,18 +2865,19 @@ app.post('/api/servers/:id/power', async (req, res) => {
           });
 
       try {
-        const isWin = process.platform === 'win32';
+        const isWin = isWinHost;
         let spawnEnv = buildSteamSpawnEnv(srvDir, steamCmdBin, effectiveAppId);
         let spawnCommand = execPath;
         let spawnArgs = parsedArgs;
         let windowsCompatRuntime: 'wine' | 'podman' | 'docker' | undefined;
         let stopContainerCommand: { command: string; args: string[] } | undefined;
 
-        if (!isWin && isWindowsPeExecutable(execPath)) {
+        if (!isWin && resolvedWinTarget.isWindowsPe && resolvedWinTarget.targetExePath) {
           // NEVER execute a Windows PE (.exe) binary directly under Linux (causes `MZ: not found` / Exit Code 2)!
           // Route cleanly through Wine (+Xvfb) or Podman/Docker container.
+          const effectiveWinExe = resolvedWinTarget.targetExePath;
           const winPlan = buildWindowsExeLaunchPlan({
-            execPath,
+            execPath: effectiveWinExe,
             srvDir,
             parsedArgs,
             serverId,
@@ -2861,12 +2905,23 @@ app.post('/api/servers/:id/power', async (req, res) => {
           appendLog(
             serverId,
             'INFO',
-            `[WIN-COMPAT] Windows-Binary "${path.basename(execPath)}" erkannt — starte über ${winPlan.runtimeLabel}.`
+            `[WIN-COMPAT] Windows-Binary "${path.basename(effectiveWinExe)}" erkannt — starte über ${winPlan.runtimeLabel}.`
           );
         } else {
           const useBashWrapper = !isWin && isShebangScript(execPath);
           spawnCommand = useBashWrapper ? 'bash' : execPath;
           spawnArgs = useBashWrapper ? [execPath, ...parsedArgs] : parsedArgs;
+        }
+
+        // Absolute last-line-of-defense guard: NEVER directly spawn a Windows PE binary on Linux
+        if (!isWin && isWindowsPeExecutable(spawnCommand)) {
+          const guardMsg = `Windows-Binary "${path.basename(spawnCommand)}" darf unter Linux nicht direkt gestartet werden (erfordert Wine + Xvfb oder Docker/Podman).`;
+          appendLog(serverId, 'ERROR', `[FEHLER] [WINDOWS_EXE_NEEDS_WINE_OR_CONTAINER] ${guardMsg}`);
+          return res.status(400).json({
+            success: false,
+            code: 'WINDOWS_EXE_NEEDS_WINE_OR_CONTAINER',
+            error: guardMsg
+          });
         }
 
         appendLog(serverId, 'INFO', `Führe aus: ${path.basename(spawnCommand)} ${spawnArgs.join(' ')}`.trim());
@@ -3204,11 +3259,6 @@ app.post('/api/servers/create', async (req, res) => {
   }
 
   const serverId = server.id;
-  const srvDir = path.join(DATA_DIR, serverId);
-  if (!fs.existsSync(srvDir)) {
-    fs.mkdirSync(srvDir, { recursive: true });
-  }
-
   const createSpec = {
     category: server.category,
     gameId: server.gameId,
@@ -3217,6 +3267,35 @@ app.post('/api/servers/create', async (req, res) => {
   };
   const isJavaMc = isJavaMinecraftSpec(createSpec);
   const isBedrock = isBedrockSpec(createSpec);
+
+  // Enforce Linux executable policy: `.exe` paths on non-Windows targets are only permitted
+  // if a Windows container (Docker/Podman) or an explicit environment variable flag is active.
+  const targetOsNormalized = String(server.targetOS || 'linux').trim().toLowerCase();
+  const requestedExecPath = String(server.linuxExecutable || '').trim();
+  if (!isJavaMc && !isBedrock && targetOsNormalized !== 'windows' && /\.exe$/i.test(requestedExecPath)) {
+    const requestedRuntime = String(server.windowsRuntime || '').trim().toLowerCase();
+    const hasWindowsContainer =
+      server.useWindowsContainer === true ||
+      requestedRuntime === 'docker' ||
+      requestedRuntime === 'podman';
+    const hasEnvFlag =
+      server.allowWindowsExeFlag === true ||
+      isWindowsExeEnvFlagSet();
+
+    if (!hasWindowsContainer && !hasEnvFlag) {
+      return res.status(400).json({
+        success: false,
+        code: 'LINUX_EXECUTABLE_REQUIRED',
+        error:
+          `Start-Datei "${requestedExecPath}" endet auf .exe und ist unter Linux nur mit Windows-Container (Docker/Podman) oder aktivem Umgebungs-Flag (SONORA_ALLOW_WIN_EXE=true) zulässig. Bitte verwende ein Linux-kompatibles Shell-Skript (.sh) oder eine Linux-Binary.`
+      });
+    }
+  }
+
+  const srvDir = path.join(DATA_DIR, serverId);
+  if (!fs.existsSync(srvDir)) {
+    fs.mkdirSync(srvDir, { recursive: true });
+  }
 
   if (isJavaMc) {
     const eulaPath = path.join(srvDir, 'eula.txt');
@@ -5305,7 +5384,57 @@ void hardwareHealth;
 app.get('/api/system/windows-runtime', (_req, res) => {
   return res.json({
     success: true,
-    ...detectLinuxWindowsRuntimes()
+    ...detectLinuxWindowsRuntimes(),
+    allowWindowsExeEnvFlag: isWindowsExeEnvFlagSet()
+  });
+});
+
+// Pre-Flight Checker: scan environment for wine / docker / podman before launching a Windows .exe
+app.get('/api/servers/:id/preflight', (req, res) => {
+  const user = auth.getSessionUser(req);
+  if (auth.listUsers().length > 0 && !user) {
+    return res.status(401).json({ success: false, error: 'Anmeldung erforderlich.' });
+  }
+
+  const serverId = String(req.params.id || '').trim();
+  if (!serverId) {
+    return res.status(400).json({ success: false, error: 'Ungültige Server-ID.' });
+  }
+
+  const registry = getServerRegistry();
+  const srv = registry.find((s: any) => s.id === serverId);
+  if (!srv) {
+    return res.status(404).json({ success: false, error: 'Server nicht gefunden.' });
+  }
+
+  if (user && !canAccessServerWithRbac(user, srv)) {
+    return res.status(403).json({ success: false, error: 'Kein Zugriff auf diesen Server.' });
+  }
+
+  const srvDir = path.join(DATA_DIR, serverId);
+  const isJavaMc = isJavaMinecraftSpec({
+    category: srv.category,
+    gameId: srv.gameId,
+    minecraftType: srv.minecraftType,
+    steamAppId: srv.steamAppId
+  });
+
+  const configuredExecutable = String(srv.linuxExecutable || srv.executable || '').trim();
+  const execPathOnDisk = !isJavaMc && fs.existsSync(srvDir)
+    ? findGameExecutable(srvDir, configuredExecutable || undefined)
+    : null;
+
+  const preflight = runWindowsExePreFlightCheck({
+    execPathOnDisk,
+    configuredExecutable,
+    srvDir,
+    targetOS: srv.targetOS
+  });
+
+  return res.json({
+    success: true,
+    serverId,
+    ...preflight
   });
 });
 

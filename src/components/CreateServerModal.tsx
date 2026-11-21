@@ -12,12 +12,19 @@ import {
   RotateCw,
   AlertTriangle,
   Play,
-  CheckCheck
+  CheckCheck,
+  Terminal,
+  Box,
+  ShieldAlert
 } from 'lucide-react';
 import { GameDefinition, ServerInstance, PlatformOS, JavaVersion } from '../types/game';
 import { MINECRAFT_TYPES, MINECRAFT_VERSIONS, MINECRAFT_SERVER_PROPERTIES_DEFAULT } from '../data/minecraftTypes';
 import { AdminSettings } from '../types/adminSettings';
 import { getStoredAdminSettings } from '../data/adminSettingsStore';
+import {
+  validateServerExecutablePath,
+  isExeFilePath
+} from '../utils/executableValidation';
 
 interface CreateServerModalProps {
   isOpen: boolean;
@@ -56,6 +63,23 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
   const [mcVersion, setMcVersion] = useState<string>(currentSettings.defaultMinecraftVersion || '1.21.4');
   const [mcJava, setMcJava] = useState<JavaVersion>(currentSettings.defaultJavaVersion || 'Java 21');
 
+  // Executable & Windows-Container / Env-Flag validation state
+  const initialGame = preselectedGame || availableGames[0];
+  const [executablePath, setExecutablePath] = useState<string>(
+    initialGame?.executable?.linux?.replace(/^\.\//, '') || ''
+  );
+  const [useWindowsContainer, setUseWindowsContainer] = useState<boolean>(false);
+  const [windowsContainerRuntime, setWindowsContainerRuntime] = useState<'podman' | 'docker'>('podman');
+  const [hostEnvAllowsWinExe, setHostEnvAllowsWinExe] = useState<boolean>(
+    String((import.meta as any).env?.VITE_ALLOW_WINDOWS_EXE || '').toLowerCase() === 'true'
+  );
+  const [hostRuntimeInfo, setHostRuntimeInfo] = useState<{
+    hasWine: boolean;
+    hasPodman: boolean;
+    hasDocker: boolean;
+    summary: string;
+  } | null>(null);
+
   const handleMcVersionChange = (newVer: string) => {
     setMcVersion(newVer);
     if (newVer.startsWith('26.')) {
@@ -77,13 +101,52 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
       setPort(preselectedGame.defaultPort);
       setRamGb(preselectedGame.recommendedRamGb || currentSettings.defaultRamAllocationGb || 6);
       setInstanceName(`${preselectedGame.name} Server`);
+      setExecutablePath(preselectedGame.executable?.linux?.replace(/^\.\//, '') || '');
+      setUseWindowsContainer(false);
     }
   }, [preselectedGame]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/system/windows-runtime');
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled || !data?.success) return;
+        const viteFlag = String((import.meta as any).env?.VITE_ALLOW_WINDOWS_EXE || '').toLowerCase() === 'true';
+        setHostEnvAllowsWinExe(Boolean(data.allowWindowsExeEnvFlag) || viteFlag);
+        setHostRuntimeInfo({
+          hasWine: Boolean(data.hasWine),
+          hasPodman: Boolean(data.hasPodman),
+          hasDocker: Boolean(data.hasDocker),
+          summary: String(data.summary || '')
+        });
+        if (data.hasDocker && !data.hasPodman) {
+          setWindowsContainerRuntime('docker');
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
   const activeGame = availableGames.find(g => g.id === selectedGameId) || availableGames[0];
   const isMinecraft = activeGame?.category === 'minecraft';
+
+  const execValidation = isMinecraft
+    ? { valid: true, isWindowsExe: false, requiresLinuxExecutable: false as boolean }
+    : validateServerExecutablePath({
+        executablePath,
+        targetOS,
+        useWindowsContainer,
+        envFlagAllowWindowsExe: hostEnvAllowsWinExe,
+        windowsRuntimeMode: useWindowsContainer ? windowsContainerRuntime : 'none'
+      });
 
   const handleGameChange = (gameId: string) => {
     setSelectedGameId(gameId);
@@ -92,12 +155,22 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
       setPort(g.defaultPort);
       setRamGb(g.recommendedRamGb || 4);
       setInstanceName(`${g.name} Server`);
+      const nextExec =
+        targetOS === 'windows'
+          ? g.executable?.windows?.replace(/^\.\//, '') || ''
+          : g.executable?.linux?.replace(/^\.\//, '') || '';
+      setExecutablePath(nextExec);
+      setUseWindowsContainer(false);
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!instanceName.trim() || !activeGame) return;
+    if (!isMinecraft && !execValidation.valid) {
+      setProvisionError(execValidation.error || 'Ungültiger Executable-Pfad für das gewählte Ziel-Betriebssystem.');
+      return;
+    }
 
     const mcEngine = isMinecraft
       ? (activeGame.id.startsWith('mc_') ? activeGame.id.replace('mc_', '') : 'paper')
@@ -113,8 +186,13 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
       category: activeGame.category,
       minecraftType: mcEngine,
       steamAppId: activeGame.steamAppId,
-      linuxExecutable: activeGame.executable?.linux?.replace(/^\.\//, ''),
+      linuxExecutable: isMinecraft
+        ? activeGame.executable?.linux?.replace(/^\.\//, '')
+        : executablePath.trim().replace(/^\.\//, ''),
       linuxStartArgs: activeGame.defaultStartArgs?.linux,
+      useWindowsContainer: !isMinecraft ? useWindowsContainer : false,
+      windowsRuntime: !isMinecraft ? (useWindowsContainer ? windowsContainerRuntime : 'auto') : 'none',
+      allowWindowsExeFlag: !isMinecraft ? hostEnvAllowsWinExe : false,
       status: 'offline',
       allocatedRamGb: ramGb,
       port,
@@ -519,6 +597,134 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             </div>
           </div>
 
+          {/* Executable Path & Linux / Windows-Container Validation (Non-Minecraft) */}
+          {!isMinecraft && (
+            <div className="p-3.5 rounded-lg bg-neutral-950 border border-neutral-800 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor="serverExecutablePathInput"
+                  className="text-neutral-200 font-semibold flex items-center gap-1.5"
+                >
+                  <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Start-Executable / Linux-Skript</span>
+                </label>
+                {hostEnvAllowsWinExe && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                    Env-Flag aktiv (SONORA_ALLOW_WIN_EXE)
+                  </span>
+                )}
+              </div>
+
+              <input
+                id="serverExecutablePathInput"
+                type="text"
+                required
+                value={executablePath}
+                onChange={(e) => setExecutablePath(e.target.value)}
+                placeholder={targetOS === 'windows' ? 'z. B. Server.exe' : 'z. B. start.sh oder Linux-Binary'}
+                className={`w-full px-3 py-1.5 bg-neutral-900 border rounded font-mono text-xs text-neutral-100 focus:outline-none ${
+                  !execValidation.valid
+                    ? 'border-rose-500 focus:border-rose-400'
+                    : 'border-neutral-800 focus:border-emerald-500'
+                }`}
+              />
+
+              {/* Validation Error when .exe is used on Linux without Container or Env Flag */}
+              {!execValidation.valid && execValidation.error && (
+                <div
+                  role="alert"
+                  data-testid="exe-validation-error"
+                  className="p-3 rounded-lg bg-rose-950/40 border border-rose-500/50 space-y-2.5 text-rose-200"
+                >
+                  <div className="flex items-start gap-2">
+                    <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <p className="text-[11px] leading-relaxed">{execValidation.error}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pl-6">
+                    {execValidation.suggestedLinuxPath && (
+                      <button
+                        type="button"
+                        onClick={() => setExecutablePath(execValidation.suggestedLinuxPath || 'start.sh')}
+                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-semibold cursor-pointer transition-colors"
+                      >
+                        Auf Linux-Skript wechseln ({execValidation.suggestedLinuxPath})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setUseWindowsContainer(true)}
+                      className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-100 border border-neutral-700 rounded text-[11px] font-medium cursor-pointer transition-colors flex items-center gap-1"
+                    >
+                      <Box className="w-3 h-3 text-sky-400" />
+                      <span>Windows-Container (Docker/Podman) aktivieren</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Valid .exe info notice when Windows Container or Env Flag is set */}
+              {execValidation.valid && execValidation.isWindowsExe && execValidation.info && (
+                <div
+                  data-testid="exe-validation-allowed"
+                  className="p-2.5 rounded-lg bg-sky-950/30 border border-sky-500/35 text-[11px] text-sky-200 flex items-start gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                  <span>{execValidation.info}</span>
+                </div>
+              )}
+
+              {/* Windows-based Container Toggle (Docker/Podman) for Linux hosts */}
+              {targetOS !== 'windows' && (
+                <div className="pt-1 border-t border-neutral-800/80 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <label
+                      htmlFor="useWindowsContainerCheckbox"
+                      className="flex items-center gap-2 text-neutral-300 cursor-pointer"
+                    >
+                      <input
+                        id="useWindowsContainerCheckbox"
+                        type="checkbox"
+                        checked={useWindowsContainer}
+                        onChange={(e) => setUseWindowsContainer(e.target.checked)}
+                        className="accent-sky-500 cursor-pointer"
+                      />
+                      <span>Windows-Container verwenden (erlaubt .exe über Docker/Podman)</span>
+                    </label>
+
+                    {useWindowsContainer && (
+                      <select
+                        aria-label="Container-Engine"
+                        value={windowsContainerRuntime}
+                        onChange={(e) => setWindowsContainerRuntime(e.target.value as 'podman' | 'docker')}
+                        className="px-2 py-1 bg-neutral-900 border border-neutral-700 rounded text-[11px] font-mono text-sky-300 focus:outline-none focus:border-sky-500 cursor-pointer"
+                      >
+                        <option value="podman">Podman {hostRuntimeInfo?.hasPodman ? '(erkannt)' : ''}</option>
+                        <option value="docker">Docker {hostRuntimeInfo?.hasDocker ? '(erkannt)' : ''}</option>
+                      </select>
+                    )}
+                  </div>
+
+                  {hostRuntimeInfo && (isExeFilePath(executablePath) || useWindowsContainer) && (
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-neutral-400">
+                      <span>Host-Scan:</span>
+                      <span className={hostRuntimeInfo.hasWine ? 'text-emerald-400' : 'text-neutral-500'}>
+                        Wine: {hostRuntimeInfo.hasWine ? 'OK' : 'fehlt'}
+                      </span>
+                      <span>·</span>
+                      <span className={hostRuntimeInfo.hasPodman ? 'text-emerald-400' : 'text-neutral-500'}>
+                        Podman: {hostRuntimeInfo.hasPodman ? 'OK' : 'fehlt'}
+                      </span>
+                      <span>·</span>
+                      <span className={hostRuntimeInfo.hasDocker ? 'text-emerald-400' : 'text-neutral-500'}>
+                        Docker: {hostRuntimeInfo.hasDocker ? 'OK' : 'fehlt'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* RAM Slider */}
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -591,7 +797,8 @@ export const CreateServerModal: React.FC<CreateServerModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded cursor-pointer transition-colors shadow-sm shadow-emerald-600/30"
+              disabled={!isMinecraft && !execValidation.valid}
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed text-white font-semibold rounded cursor-pointer transition-colors shadow-sm shadow-emerald-600/30"
             >
               Server jetzt bereitstellen
             </button>

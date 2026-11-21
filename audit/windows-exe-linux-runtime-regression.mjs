@@ -6,7 +6,10 @@ import { execSync } from 'node:child_process';
 import {
   isWindowsPeExecutable,
   detectLinuxWindowsRuntimes,
-  buildWindowsExeLaunchPlan
+  buildWindowsExeLaunchPlan,
+  extractUnwrappedWindowsExeFromShellScript,
+  resolveEffectiveWindowsExecutable,
+  generateLinuxWindowsWrapperScript
 } from '../backend/windowsRuntime.ts';
 import { analyzeConsoleLogs } from '../src/utils/logPatterns.ts';
 
@@ -119,6 +122,33 @@ try {
     blockedPlan.errorCode === 'WINDOWS_EXE_NEEDS_WINE_OR_CONTAINER' &&
     Boolean(blockedPlan.installHint && blockedPlan.installHint.includes('wine') && blockedPlan.installHint.includes('podman'))
   );
+
+  // --- 5b. Broken .sh wrapper calling ./VRisingServer.exe directly is intercepted & wrapped safely ---
+  const brokenStartSh = path.join(tmpDir, 'start.sh');
+  fs.writeFileSync(brokenStartSh, '#!/usr/bin/env bash\ncd "$(dirname "$0")"\nexec "./VRisingServer.exe" "$@"\n', 'utf8');
+  const unwrapped = extractUnwrappedWindowsExeFromShellScript(brokenStartSh, tmpDir);
+  check('extractUnwrappedWindowsExeFromShellScript detects broken start.sh directly invoking VRisingServer.exe',
+    unwrapped === vrisingExe
+  );
+  const resolvedWrapped = resolveEffectiveWindowsExecutable(brokenStartSh, tmpDir);
+  check('resolveEffectiveWindowsExecutable marks broken start.sh wrapper as Windows PE target',
+    resolvedWrapped.isWindowsPe === true &&
+    resolvedWrapped.viaBrokenShellWrapper === true &&
+    resolvedWrapped.targetExePath === vrisingExe
+  );
+
+  // Generated wrapper script must pass `bash -n` and NEVER directly invoke `./VRisingServer.exe` without Wine/Podman/Docker
+  const safeWrapperContent = generateLinuxWindowsWrapperScript('VRisingServer.exe');
+  const safeWrapperFile = path.join(tmpDir, 'safe-start.sh');
+  fs.writeFileSync(safeWrapperFile, safeWrapperContent, 'utf8');
+  execSync(`bash -n "${safeWrapperFile}"`, { stdio: 'pipe' });
+  check('generateLinuxWindowsWrapperScript passes bash -n and routes through wine/podman/docker',
+    safeWrapperContent.includes('WINE_BIN') &&
+    safeWrapperContent.includes('podman run') &&
+    safeWrapperContent.includes('docker run') &&
+    safeWrapperContent.includes('WINDOWS_EXE_NEEDS_WINE_OR_CONTAINER') &&
+    extractUnwrappedWindowsExeFromShellScript(safeWrapperFile, tmpDir) === null
+  );
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }
@@ -136,10 +166,15 @@ check('Real-time Log-Analyzer detects VRisingServer.exe MZ / Syntax error crash 
 
 // --- 7. Integration & install.sh Verification ---
 const serverSrc = fs.readFileSync('server.ts', 'utf8');
-check('server.ts routes Windows PE .exe executables through buildWindowsExeLaunchPlan on Linux',
-  serverSrc.includes('isWindowsPeExecutable(execPath)') &&
+check('server.ts routes Windows PE .exe executables (and broken .sh wrappers) through buildWindowsExeLaunchPlan with hard spawn guard',
+  serverSrc.includes('resolveEffectiveWindowsExecutable(execPath, srvDir)') &&
   serverSrc.includes('buildWindowsExeLaunchPlan(') &&
+  serverSrc.includes('isWindowsPeExecutable(spawnCommand)') &&
   serverSrc.includes('/api/system/windows-runtime')
+);
+const diagSrc = fs.readFileSync('backend/serverDiagnostics.ts', 'utf8');
+check('serverDiagnostics.ts generates Wine/Podman/Docker-safe start.sh wrapper for .exe servers',
+  diagSrc.includes('generateLinuxWindowsWrapperScript(relExec)')
 );
 check('server.ts SteamCMD retries with +@sSteamCmdForcePlatformType windows when Linux depot is invalid and Wine/Podman/Docker exists',
   serverSrc.includes("runSteamCmdOnce('windows')")

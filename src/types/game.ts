@@ -88,6 +88,9 @@ export interface ServerInstance {
   steamAppId?: number;
   linuxExecutable?: string;
   linuxStartArgs?: string;
+  useWindowsContainer?: boolean;
+  windowsRuntime?: 'auto' | 'wine' | 'podman' | 'docker' | 'none';
+  allowWindowsExeFlag?: boolean;
   status: ServerStatus;
   allocatedRamGb: number;
   port: number;

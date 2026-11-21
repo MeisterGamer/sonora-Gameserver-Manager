@@ -58,6 +58,7 @@ import { JavaRuntimeModal } from './JavaRuntimeModal';
 import { ServerDiagnosticsTool } from './ServerDiagnosticsTool';
 import { ConsoleLogAnalyzerBar } from './ConsoleLogAnalyzerBar';
 import { HardwareHealthView } from './HardwareHealthView';
+import { WindowsPreFlightBanner, PreFlightCheckData } from './WindowsPreFlightBanner';
 
 interface ServerDetailProps {
   server: ServerInstance;
@@ -121,8 +122,65 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   const [isCreatingBackup, setIsCreatingBackup] = useState(false);
   const [backupSuccessMessage, setBackupSuccessMessage] = useState<string | null>(null);
   const [backupErrorMessage, setBackupErrorMessage] = useState<string | null>(null);
+  const [preFlightData, setPreFlightData] = useState<PreFlightCheckData | null>(null);
+  const [isCheckingPreFlight, setIsCheckingPreFlight] = useState<boolean>(false);
+  const [preFlightLaunchBlocked, setPreFlightLaunchBlocked] = useState<boolean>(false);
 
   const isRunning = server.status === 'running';
+
+  const runPreFlightCheck = async (): Promise<PreFlightCheckData | null> => {
+    setIsCheckingPreFlight(true);
+    try {
+      const res = await fetch(`/api/servers/${encodeURIComponent(server.id)}/preflight`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data?.success) {
+        setPreFlightData(data);
+        if (data.canLaunch) {
+          setPreFlightLaunchBlocked(false);
+        }
+        return data as PreFlightCheckData;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      setIsCheckingPreFlight(false);
+    }
+  };
+
+  useEffect(() => {
+    setPreFlightLaunchBlocked(false);
+    runPreFlightCheck();
+  }, [server.id, server.linuxExecutable]);
+
+  const handleStartWithPreFlight = async () => {
+    const check = await runPreFlightCheck();
+    if (check && check.isWindowsExecutable && !check.canLaunch) {
+      setPreFlightLaunchBlocked(true);
+      onNotify?.(
+        check.warningMessage ||
+          `Pre-Flight Check fehlgeschlagen: "${check.executableName}" erfordert Wine oder Docker/Podman unter Linux.`
+      );
+      return;
+    }
+    setPreFlightLaunchBlocked(false);
+    onStartServer(server.id);
+  };
+
+  const handleRestartWithPreFlight = async () => {
+    const check = await runPreFlightCheck();
+    if (check && check.isWindowsExecutable && !check.canLaunch) {
+      setPreFlightLaunchBlocked(true);
+      onNotify?.(
+        check.warningMessage ||
+          `Pre-Flight Check fehlgeschlagen: "${check.executableName}" erfordert Wine oder Docker/Podman unter Linux.`
+      );
+      return;
+    }
+    setPreFlightLaunchBlocked(false);
+    onRestartServer(server.id);
+  };
 
   // Real-time server telemetry and metrics polling
   const [liveStats, setLiveStats] = useState<{
@@ -430,6 +488,17 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </div>
       )}
 
+      {/* 4. Windows Executable Pre-Flight Checker Banner (Wine / Docker / Podman) */}
+      <WindowsPreFlightBanner
+        preflight={preFlightData}
+        isScanning={isCheckingPreFlight}
+        launchBlocked={preFlightLaunchBlocked}
+        onRescan={() => {
+          void runPreFlightCheck();
+        }}
+        onNotify={onNotify}
+      />
+
       {/* Top Header Bar */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -478,21 +547,22 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           <div className="flex items-center gap-2">
             {server.status === 'offline' ? (
               <button
-                onClick={() => onStartServer(server.id)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-sm shadow-emerald-600/30"
+                onClick={handleStartWithPreFlight}
+                disabled={isCheckingPreFlight}
+                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-sm shadow-emerald-600/30"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Server starten</span>
+                <span>{isCheckingPreFlight ? 'Pre-Flight...' : 'Server starten'}</span>
               </button>
             ) : (
               <>
                 <button
-                  onClick={() => onRestartServer(server.id)}
-                  disabled={server.status !== 'running'}
+                  onClick={handleRestartWithPreFlight}
+                  disabled={server.status !== 'running' || isCheckingPreFlight}
                   className="flex items-center gap-1.5 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg text-xs font-medium cursor-pointer transition-colors disabled:opacity-50"
                   title="Sanfter Neustart"
                 >
-                  <RotateCw className="w-3.5 h-3.5" />
+                  <RotateCw className={`w-3.5 h-3.5 ${isCheckingPreFlight ? 'animate-spin' : ''}`} />
                   <span>Neustarten</span>
                 </button>
                 <button
@@ -900,15 +970,15 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
             onSendCommand={(cmd) => onSendCommand(server.id, cmd)}
             logs={logs}
             onClearLogs={onClearLogs}
-            onStartServer={() => onStartServer(server.id)}
+            onStartServer={handleStartWithPreFlight}
             onStopServer={() => onStopServer(server.id)}
-            onRestartServer={() => onRestartServer(server.id)}
+            onRestartServer={handleRestartWithPreFlight}
           />
           <ConsoleLogAnalyzerBar
             server={server}
             logs={logs}
             canQuickFix={canQuickFix}
-            onStartServer={() => onStartServer(server.id)}
+            onStartServer={handleStartWithPreFlight}
             onNotify={onNotify}
             onServerUpdated={onServerUpdated}
             onOpenDiagnostics={() => setActiveTab('diagnostics')}
